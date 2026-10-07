@@ -242,6 +242,12 @@ def make_router(page_path: Path) -> APIRouter:
     async def page():
         return FileResponse(page_path, headers={"Cache-Control": "no-store"})
 
+    @r.get("/settings/api/links")
+    async def links():
+        """会話画面・設定画面から、状態・ログの管理画面（supervisor）へのリンクを作るため"""
+        p = cfg()["ports"].get("console")
+        return JSONResponse({"console": f"http://127.0.0.1:{p}/" if p else None}, headers={"Cache-Control": "no-store"})
+
     @r.get("/settings/api/vision")
     async def vision_flag():
         """会話画面が、画像の添付ボタンを出すかどうか"""

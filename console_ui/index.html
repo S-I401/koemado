@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>状態・ログ - koemado</title>
+<style>
+:root {
+  --bg: #f4f6fa; --panel: #ffffff; --text: #1d2433; --muted: #5d6880; --line: #d9dfeb;
+  --accent: #3b6fe0; --accent-text: #ffffff; --ok: #1c8a4b; --warn: #b36b00; --err: #c0392b; --chip: #e8edf7; --logbg: #101521; --logtext: #d7dcea;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12151c; --panel: #1b2029; --text: #e6eaf2; --muted: #98a3b8; --line: #2c3442;
+    --accent: #6c93f2; --accent-text: #0e1320; --ok: #4cc27f; --warn: #e0a040; --err: #ee7b6e; --chip: #262d3b; --logbg: #0a0d14; --logtext: #d7dcea;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 "Yu Gothic UI", "Meiryo", system-ui, sans-serif; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+header h1 { font-size: 18px; margin: 0; flex: 1; }
+header a { color: var(--accent); }
+nav { display: flex; gap: 4px; padding: 8px 16px 0; flex-wrap: wrap; }
+nav button { border: 1px solid var(--line); border-bottom: none; background: var(--chip); color: var(--text); padding: 8px 18px; border-radius: 8px 8px 0 0; cursor: pointer; font-size: 15px; }
+nav button.active { background: var(--panel); font-weight: 700; }
+main { padding: 0 16px 48px; max-width: 1100px; margin: 0 auto; }
+section.tab { display: none; background: var(--panel); border: 1px solid var(--line); border-radius: 0 8px 8px 8px; padding: 16px 20px; margin-top: -1px; }
+section.tab.active { display: block; }
+h2 { font-size: 16px; margin: 20px 0 8px; border-left: 4px solid var(--accent); padding-left: 8px; }
+h2:first-child { margin-top: 0; }
+button.btn { padding: 6px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--chip); color: var(--text); cursor: pointer; font: inherit; }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button.danger { color: var(--err); }
+button:disabled { opacity: .5; cursor: default; }
+.note { color: var(--muted); font-size: 13px; }
+.msg { margin: 8px 0; padding: 8px 12px; border-radius: 6px; font-size: 14px; }
+.msg.error { background: color-mix(in srgb, var(--err) 15%, transparent); color: var(--err); }
+.msg.warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+.msg.ok { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+.msg.info { background: var(--chip); color: var(--muted); }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+td, th { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: left; vertical-align: top; }
+.dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; background: var(--muted); }
+.dot.ready, .dot.external { background: var(--ok); } .dot.starting { background: var(--warn); animation: pulse 1s infinite; }
+.dot.failed, .dot.crashed, .dot.no_response { background: var(--err); }
+@keyframes pulse { 50% { opacity: .3; } }
+.bar { height: 8px; background: var(--chip); border-radius: 4px; overflow: hidden; min-width: 120px; }
+.bar > div { height: 100%; background: var(--accent); }
+.boot { text-align: center; padding: 28px 12px; }
+.boot .big { font-size: 22px; font-weight: 700; }
+.tools { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 8px; }
+.tools input[type=text], .tools select { padding: 5px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+#logbox { background: var(--logbg); color: var(--logtext); border-radius: 8px; padding: 8px 10px; height: 62vh; overflow: auto; font: 12.5px/1.45 Consolas, "Cascadia Mono", monospace; white-space: pre-wrap; word-break: break-all; }
+.ln .t { color: #7f8aa6; } .ln .s { color: #7aa2f7; margin: 0 6px; }
+.ln.WARNING { color: #f0c36a; } .ln.ERROR { color: #ff8f84; }
+.ln.hit { background: rgba(255, 230, 120, .18); }
+.chips span { display: inline-block; padding: 1px 10px; border-radius: 999px; background: var(--chip); font-size: 12px; margin-right: 4px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>koemado 状態・ログ</h1>
+  <a id="lnkChat" href="#" target="_self">会話画面へ</a>
+  <a id="lnkSettings" href="#" target="_self">設定</a>
+</header>
+<nav id="tabs">
+  <button data-tab="status" class="active">状態</button>
+  <button data-tab="logs">ログ</button>
+</nav>
+<main>
+<div id="toast"></div>
+
+<section class="tab active" id="tab-status">
+  <div id="bootBox" class="boot" hidden>
+    <div class="big" id="bootTitle">起動中…</div>
+    <p class="note" id="bootSub">LLM のモデルを読み込んでいます。初回や大きいモデル（Strata など）は数分かかります。このままお待ちください。</p>
+    <div class="bar" style="max-width:420px;margin:0 auto"><div id="bootBar"></div></div>
+    <p class="note" id="bootLast"></p>
+  </div>
+  <div id="failBox"></div>
+  <h2>サービス</h2>
+  <table id="svcTable"></table>
+  <p class="note" id="restartNote"></p>
+  <h2>この PC</h2>
+  <table id="resTable"></table>
+  <h2>操作</h2>
+  <p>
+    <button class="btn" id="btnRestartAll">全体を再起動</button>
+    <button class="btn danger" id="btnShutdown">終了（すべて止める）</button>
+    <button class="btn primary" id="btnReport">不具合報告用にまとめてダウンロード</button>
+  </p>
+  <p class="note">不具合報告は、直近のログ全部と環境情報（GPU・ドライバ・メモリ・プロファイル・バージョン）を 1 つの zip にします。API キーは伏せ字、個人のパスは取り除いてあります。送る前に中身を確認できます。</p>
+  <div id="opMsg"></div>
+</section>
+
+<section class="tab" id="tab-logs">
+  <div class="tools" id="svcTabs"></div>
+  <div class="tools">
+    <select id="lvl"><option value="">すべてのレベル</option><option value="WARNING">WARNING 以上</option><option value="ERROR">ERROR のみ</option></select>
+    <input type="text" id="q" placeholder="文字列で絞り込み" style="flex:1 1 200px">
+    <label style="display:flex;gap:4px;align-items:center"><input type="checkbox" id="follow" checked> 自動スクロール</label>
+    <button class="btn" id="btnPause">一時停止</button>
+    <button class="btn" id="btnCopy">コピー</button>
+    <button class="btn" id="btnDl">ダウンロード</button>
+  </div>
+  <div id="logbox"></div>
+  <p class="note" id="logInfo"></p>
+</section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (t) => { const d = document.createElement("div"); d.textContent = t ?? ""; return d.innerHTML; };
+const STATE = { stopped: "停止", starting: "起動中…", ready: "準備完了", external: "外部サーバー（接続済み）", no_response: "応答なし", crashed: "異常終了（再起動待ち）", failed: "起動できません" };
+const boot = new URLSearchParams(location.search).get("boot") === "1";
+let S = null, wasNotReady = false, firstLoad = true;
+
+async function api(path, method = "GET") {
+  const r = await fetch("/api" + path, { method, headers: { "X-Console-Request": "1", "Content-Type": "application/json" }, body: method === "POST" ? "{}" : undefined });
+  if (!r.ok) { let d = r.statusText; try { d = (await r.json()).detail || d; } catch (e) {} throw new Error(d); }
+  return r.json();
+}
+function toast(kind, text) { msg($("opMsg"), kind, text); }
+function msg(el, kind, text) { el.innerHTML = ""; if (!text) return; const d = document.createElement("div"); d.className = "msg " + kind; d.textContent = text; el.appendChild(d); }
+function fmtDur(s) { if (s == null) return ""; if (s < 90) return s + " 秒"; if (s < 5400) return Math.round(s / 60) + " 分"; return (s / 3600).toFixed(1) + " 時間"; }
+
+document.querySelectorAll("#tabs button").forEach((b) => b.onclick = () => {
+  document.querySelectorAll("#tabs button").forEach((x) => x.classList.toggle("active", x === b));
+  document.querySelectorAll("section.tab").forEach((x) => x.classList.toggle("active", x.id === "tab-" + b.dataset.tab));
+  if (b.dataset.tab === "logs") { render(true); }
+});
+
+async function poll() {
+  try {
+    S = await api("/state");
+    $("lnkChat").href = S.chat_url; $("lnkSettings").href = S.settings_url;
+    renderStatus();
+    if (boot && !S.ready && S.phase !== "failed") wasNotReady = true;
+    if (boot && S.ready && (wasNotReady || firstLoad && false)) { location.href = S.chat_url; return; }
+    if (boot && S.ready && firstLoad) { /* すでに準備完了で開いた: 少し待ってから会話画面へ */ setTimeout(() => { location.href = S.chat_url; }, 800); }
+  } catch (e) {
+    $("svcTable").innerHTML = '<tr><td><div class="msg error">管理プロセスに接続できません（終了した可能性があります）。start.bat で起動し直してください。</div></td></tr>';
+  }
+  firstLoad = false;
+}
+function renderStatus() {
+  const starting = S.phase === "starting" || S.phase === "idle";
+  $("bootBox").hidden = !(starting || (boot && !S.ready && S.phase !== "failed"));
+  const done = S.services.filter((v) => v.state === "ready" || v.state === "external").length;
+  $("bootBar").style.width = (done / S.services.length * 100) + "%";
+  const cur = S.services.find((v) => v.state === "starting");
+  $("bootTitle").textContent = cur ? `起動中… ${cur.label}（${fmtDur(cur.starting_for)}）` : "起動中…";
+  $("bootSub").textContent = cur && cur.key === "llm" ? "LLM のモデルを読み込んでいます。初回や大きいモデル（Strata など）は数分かかります。PC が少し重くなります。このままお待ちください。" : "もうすぐ使えます。このままお待ちください。";
+  const failed = S.services.filter((v) => v.state === "failed" || v.state === "crashed" || v.state === "no_response");
+  $("failBox").innerHTML = (S.phase === "failed" && S.phase_msg ? `<div class="msg error"><strong>${esc(S.phase_msg)}</strong> 下の「ログ」を確認してください。<button class="btn" id="goLog">失敗したログを見る</button></div>` : "")
+    + failed.filter((v) => v.message && v.message !== S.phase_msg).map((v) => `<div class="msg ${v.state === "no_response" ? "warn" : "error"}">${esc(v.message)}</div>`).join("");
+  if ($("goLog")) { const bad = (S.services.find((v) => v.state === "failed") || {}).key || "all"; $("goLog").onclick = () => { svc = bad; document.querySelector('#tabs button[data-tab="logs"]').click(); buildSvcTabs(); render(true); reconnect(); }; }
+  $("svcTable").innerHTML = '<tr><th>サービス</th><th>状態</th><th>ポート</th><th>起動からの時間</th><th>再起動</th><th></th></tr>' + S.services.map((v) => `<tr>
+    <td><span class="dot ${v.state}"></span>${esc(v.label)}</td>
+    <td>${esc(STATE[v.state] || v.state)}${v.state === "starting" && v.starting_for != null ? "（" + fmtDur(v.starting_for) + "）" : ""}</td>
+    <td>${v.port ?? ""}</td><td>${fmtDur(v.uptime)}</td><td>${v.restarts ? v.restarts + " 回" : "-"}</td>
+    <td>${v.state === "external" ? "" : `<button class="btn" data-rs="${v.key}">再起動</button> <button class="btn" data-log="${v.key}">ログ</button>`}</td></tr>`).join("");
+  document.querySelectorAll("[data-rs]").forEach((b) => b.onclick = async () => {
+    if (!confirm("再起動します。よろしいですか？（会話は一度切れます）")) return;
+    try { await api("/restart/" + b.dataset.rs, "POST"); toast("info", "再起動しています…"); poll(); } catch (e) { toast("error", e.message); }
+  });
+  document.querySelectorAll("[data-log]").forEach((b) => b.onclick = () => { svc = b.dataset.log; document.querySelector('#tabs button[data-tab="logs"]').click(); buildSvcTabs(); render(true); reconnect(); });
+  const g = S.gpu, r = S.ram;
+  $("resTable").innerHTML = `<tr><td>VRAM</td><td>${g ? `${(g.used_mib / 1024).toFixed(1)} / ${(g.total_mib / 1024).toFixed(1)} GiB 使用中` : "（nvidia-smi で取得できません）"}</td></tr>
+    <tr><td>メモリ</td><td>${(r.used_mib / 1024).toFixed(1)} / ${(r.total_mib / 1024).toFixed(1)} GiB 使用中</td></tr>
+    <tr><td>管理プロセス</td><td>起動から ${fmtDur(S.uptime)}　タスクトレイ: ${S.tray ? "表示中" : "なし"}</td></tr>`;
+  $("restartNote").textContent = `サービスが異常終了したときは、自動で再起動します（${Math.round(S.restart_limit[1] / 60)} 分に ${S.restart_limit[0]} 回まで。超えると止めて、ここに知らせます）。`;
+}
+$("btnRestartAll").onclick = async () => { if (!confirm("全体を再起動します。よろしいですか？")) return; try { await api("/restart/all", "POST"); toast("info", "全体を再起動しています…"); } catch (e) { toast("error", e.message); } };
+$("btnShutdown").onclick = async () => {
+  if (!confirm("koemado を終了します（すべてのサービスを止めます）。よろしいですか？")) return;
+  try { await api("/shutdown", "POST"); toast("ok", "終了しました。このタブは閉じて構いません。"); document.querySelectorAll("button").forEach((b) => b.disabled = true); clearInterval(timer); } catch (e) { toast("error", e.message); }
+};
+$("btnReport").onclick = () => { location.href = "/api/report"; };
+
+/* ---------------- ログ ---------------- */
+let svc = "all", buf = [], lastSeq = 0, es = null, paused = false, pending = [];
+const SVCS = [["all", "すべて"], ["llm", "LLM"], ["tts", "TTS"], ["stt", "STT"], ["app", "AIAvatarKit"], ["supervisor", "管理"]];
+function buildSvcTabs() {
+  $("svcTabs").innerHTML = SVCS.map(([k, l]) => `<button class="btn ${k === svc ? "primary" : ""}" data-svc="${k}">${l}</button>`).join("");
+  document.querySelectorAll("[data-svc]").forEach((b) => b.onclick = () => { svc = b.dataset.svc; buildSvcTabs(); reconnect(); });
+}
+async function reconnect() {
+  if (es) es.close();
+  buf = []; pending = []; lastSeq = 0;
+  const r = await (await fetch(`/api/logs?service=${svc}&limit=1500`)).json();
+  buf = r.entries; lastSeq = r.seq; render(true);
+  if (new URLSearchParams(location.search).get("nostream") === "1") return;     // スクリーンショット用: SSE を張らない
+  es = new EventSource(`/api/stream?service=${svc}&since=${lastSeq}`);
+  es.onmessage = (ev) => {
+    const items = JSON.parse(ev.data);
+    if (paused) { pending.push(...items); return; }
+    buf.push(...items); if (buf.length > 6000) buf = buf.slice(-5000); render(false);
+  };
+}
+const RANK = { INFO: 0, WARNING: 1, ERROR: 2 };
+function passes(e) {
+  const lv = $("lvl").value; if (lv && RANK[e.lvl] < RANK[lv]) return false;
+  const q = $("q").value.trim().toLowerCase(); if (q && !(e.text.toLowerCase().includes(q) || e.svc.includes(q))) return false;
+  return true;
+}
+function lineHtml(e) {
+  const t = new Date(e.t * 1000).toLocaleTimeString("ja-JP", { hour12: false });
+  const q = $("q").value.trim();
+  return `<div class="ln ${e.lvl}${q ? " hit" : ""}"><span class="t">${t}</span>${svc === "all" ? `<span class="s">${esc(e.svc)}</span>` : " "}${esc(e.text)}</div>`;
+}
+function render(force) {
+  if ($("tab-logs").classList.contains("active") === false) return;
+  const box = $("logbox");
+  const rows = buf.filter(passes).slice(-2500);
+  box.innerHTML = rows.map(lineHtml).join("");
+  $("logInfo").textContent = `${rows.length} 行を表示${paused ? "（一時停止中。止めている間の " + pending.length + " 行は、再開すると出ます）" : ""}。ログはサービスごとに logs\\ フォルダにも保存されます（5MB でローテーション）。`;
+  if ($("follow").checked && !paused) box.scrollTop = box.scrollHeight;
+}
+$("lvl").onchange = () => render(true); $("q").oninput = () => render(true);
+$("btnPause").onclick = () => { paused = !paused; $("btnPause").textContent = paused ? "再開" : "一時停止"; if (!paused) { buf.push(...pending); pending = []; } render(true); };
+$("btnCopy").onclick = async () => {
+  const text = buf.filter(passes).map((e) => `${new Date(e.t * 1000).toLocaleTimeString("ja-JP", { hour12: false })} [${e.svc}] ${e.text}`).join("\n");
+  try { await navigator.clipboard.writeText(text); toast("ok", "表示中のログをコピーしました。"); } catch (e) { toast("error", "コピーできませんでした: " + e.message); }
+};
+$("btnDl").onclick = () => { location.href = `/api/logs/download?service=${svc}`; };
+$("logbox").addEventListener("wheel", () => { if ($("logbox").scrollTop + $("logbox").clientHeight < $("logbox").scrollHeight - 40) $("follow").checked = false; });
+
+buildSvcTabs(); reconnect();
+if (location.hash === "#logs") document.querySelector('#tabs button[data-tab="logs"]').click();
+poll(); const timer = setInterval(poll, 2000);
+</script>
+</body>
+</html>

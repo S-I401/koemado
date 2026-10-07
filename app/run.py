@@ -303,12 +303,18 @@ app.include_router(make_router(BASE_DIR / "settings_ui" / "index.html"))   # /se
 # 付属のブラウザ UI（setup.py が html/ に配置する）
 if not (BASE_DIR / "html").exists():
     raise SystemExit("html/ がありません。setup.bat を再実行してください。")
-# 付属 UI のタイトルを koemado にそろえる（取得元のサンプルの題名を置き換える。何度実行しても同じ）
-_index = BASE_DIR / "html" / "index.html"
+# 付属 UI を koemado 向けに整える（取得元のサンプルの題名を置き換え、管理画面へのリンクを足す。何度実行しても同じ）
+_html = BASE_DIR / "html"
 try:
-    _t = _index.read_text(encoding="utf-8")
-    if "AIAvatarKit WebSocket Example" in _t:
-        _index.write_text(_t.replace("AIAvatarKit WebSocket Example", "koemado"), encoding="utf-8")
+    _t = (_html / "index.html").read_text(encoding="utf-8")
+    _t2 = _t.replace("AIAvatarKit WebSocket Example", "koemado")
+    if "console-link.js" not in _t2:
+        _t2 = _t2.replace("</body>", '    <script src="console-link.js"></script>\n</body>', 1)
+    if _t2 != _t:
+        (_html / "index.html").write_text(_t2, encoding="utf-8")
+    _src = ROOT / "html-overrides" / "console-link.js"
+    if _src.exists():
+        (_html / "console-link.js").write_bytes(_src.read_bytes())
 except OSError:
     pass
 app.mount("/static", StaticFiles(directory="html"), name="static")

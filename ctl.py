@@ -1,10 +1,11 @@
 """起動・停止・状態確認（start.bat / stop.bat から呼ばれる）と、setup.py と共有する設定の処理。
 
 標準ライブラリだけで動く。設定の正本は config.json（setup.py が生成）。
-  python ctl.py start [--no-browser]
+  python ctl.py start [--no-browser]   従来どおり、各サービスをコンソールのウィンドウで起動する（start.bat --console）
   python ctl.py stop
   python ctl.py restart [llm|all]   設定変更のあとの再起動
   python ctl.py status
+  python ctl.py shortcuts            デスクトップとスタートメニューに、ウィンドウを出さずに起動する koemado のショートカットを作る
   python ctl.py _run NAME LOGFILE -- CMD ARGS...   （別ウィンドウ内の中継。内部用）
 """
 
@@ -390,6 +391,15 @@ def read_pids() -> dict:
 def stop(cfg: dict = None, quiet: bool = False, only: list[str] = None):
     cfg = cfg or load_config()
     say = (lambda *_: None) if quiet else print
+    info = supervisor_info()
+    if info and only is None:       # 常駐の管理プロセスがあれば、そちらが子プロセスごと止める
+        supervisor_post(info, "/api/shutdown")
+        for _ in range(60):
+            if not supervisor_info():
+                break
+            time.sleep(0.5)
+        say("  koemado（管理プロセスと全サービス）: 停止")
+        return
     pids = read_pids()
     names = [n for n in reversed(SERVICES) if (only is None or n in only)]
     ext_llm = llm_resolved(cfg)["mode"] == "external"
@@ -415,6 +425,55 @@ def stop(cfg: dict = None, quiet: bool = False, only: list[str] = None):
             pid_file().unlink()
         except FileNotFoundError:
             pass
+
+
+# ---------------------------------------------------------------- supervisor（常駐の管理プロセス）との連携 ----
+
+def supervisor_info() -> dict | None:
+    """動いている supervisor の {pid, port}。無ければ None"""
+    try:
+        info = json.loads((RUN_DIR / "supervisor.json").read_text(encoding="utf-8"))
+        with urllib.request.urlopen(f"http://127.0.0.1:{info['port']}/api/ping", timeout=2) as r:
+            if r.status == 200:
+                return info
+    except Exception:
+        pass
+    return None
+
+
+def supervisor_post(info: dict, path: str, timeout: float = 15.0) -> bool:
+    req = urllib.request.Request(f"http://127.0.0.1:{info['port']}{path}", method="POST", data=b"{}",
+                                 headers={"X-Console-Request": "1", "Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.status == 200
+    except Exception:
+        return False
+
+
+def create_shortcuts(root: Path = ROOT, folders: list[Path] | None = None) -> list[Path]:
+    """ウィンドウを出さずに起動するショートカット「koemado」を作る（既定: デスクトップとスタートメニュー）。作ったものを返す"""
+    vbs = root / "koemado.vbs"
+    if folders is None:
+        ps = ("[Environment]::GetFolderPath('Desktop'); "
+              "[IO.Path]::Combine([Environment]::GetFolderPath('Programs'))")
+        out = subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, text=True, errors="replace",
+                             stdin=subprocess.DEVNULL, creationflags=0x08000000).stdout.split()
+        folders = [Path(x) for x in out]
+    made = []
+    icon = root / "koemado.ico"
+    for d in folders:
+        d.mkdir(parents=True, exist_ok=True)
+        lnk = d / "koemado.lnk"
+        ps = ("$s=(New-Object -ComObject WScript.Shell).CreateShortcut('%s');"
+              "$s.TargetPath='%s';$s.Arguments='//nologo \"%s\"';$s.WorkingDirectory='%s';"
+              "$s.Description='koemado（声の窓）';%s$s.Save()") % (
+            str(lnk).replace("'", "''"), str(Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "wscript.exe").replace("'", "''"), str(vbs).replace("'", "''"),
+            str(root).replace("'", "''"), ("$s.IconLocation='%s';" % str(icon).replace("'", "''")) if icon.exists() else "")
+        subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, stdin=subprocess.DEVNULL, creationflags=0x08000000, check=False)
+        if lnk.exists():
+            made.append(lnk)
+    return made
 
 
 def wait_external_llm(cfg: dict, limit: int = None, what: str = "外部の LLM サーバー") -> bool:
@@ -495,6 +554,7 @@ def start(cfg: dict, open_browser: bool = True, only: list[str] = None) -> int:
 
     # 設定したポートを他のプログラムが使い始めていたら、空きに付け替える
     new_ports = pick_ports(cfg["ports"], taken_by_us={cfg["ports"][n] for n in SERVICES if n not in names and check_health(cfg, n)})
+    new_ports = {**cfg["ports"], **new_ports}      # supervisor の管理画面のポート（console）を落とさない
     if new_ports != cfg["ports"] and only is None:
         print("使用中のポートがあったため、付け替えました:", cfg["ports"], "->", new_ports)
         cfg["ports"] = new_ports
@@ -558,6 +618,9 @@ def start(cfg: dict, open_browser: bool = True, only: list[str] = None) -> int:
 
 def restart(cfg: dict, target: str) -> int:
     """設定を変えたあとの再起動。target: llm / all"""
+    info = supervisor_info()
+    if info:        # 常駐の管理プロセスがあれば、そちらに頼む（LLM だけの再起動も、管理プロセスが判断する）
+        return 0 if supervisor_post(info, "/api/restart/" + ("llm" if target == "llm" else "all")) else 1
     if target == "llm":
         if managed_strata(cfg):                  # Strata は LLM だけ再起動できないので、全体を再起動する
             target = "all"
@@ -670,6 +733,12 @@ def main(argv: list[str]) -> int:
     if cmd == "status":
         status(cfg)
         return 0
+    if cmd == "shortcuts":
+        made = create_shortcuts(ROOT)
+        print("ショートカットを作りました:" if made else "ショートカットを作れませんでした。")
+        for m in made:
+            print("  ", m)
+        return 0 if made else 1
     print(__doc__)
     return 2
 

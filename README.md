@@ -31,8 +31,8 @@ NVIDIA GPU が無い PC では、TTS が 1 文あたり十数秒かかり会話�
    - PC のスペック（GPU・VRAM・メモリ・空き容量・使用中のポート）を調べ、合うプロファイルを選んで、内容を表示します。**Enter** で導入を始めます。
    - uv（Python の管理ツール）が無ければ、リポジトリ内の `tools\` に自動で入れます。システム全体には何も入れません。
    - 途中で止まっても、もう一度 `setup.bat` を実行すれば続きから再開します（ダウンロード済みのものは取り直しません）。
-3. 導入が終わったら `start.bat` をダブルクリックします。LLM → TTS → STT → AIAvatarKit の順に別ウィンドウで起動し、準備ができたらブラウザで会話画面が開きます。
-4. 止めるときは `stop.bat` です。
+3. 導入が終わったら `start.bat`（またはデスクトップのショートカット）をダブルクリックします。**黒い画面は出ません。** ブラウザに「起動中…」の画面（管理画面）が開き、LLM → TTS → STT → AIAvatarKit の順に起動して、全部の準備ができたら自動で会話画面に切り替わります。
+4. 止めるときは、タスクトレイの koemado アイコン →「終了」、管理画面の「終了」ボタン、または `stop.bat` です。
 
 ### 導入前の確認
 
@@ -50,7 +50,7 @@ VRAM が 12〜19GB の PC では、専門家のキャッシュが小さくなる
 - 注意: 別のソフトウェアです（ライセンスは Strata 側）。1 リクエストずつしか処理しません。起動時に 1〜3 分 PC が重くなります。
 - 選択肢: **[1]** Strata を導入して使う（`<インストール先>\strata` に取得し、Strata のインストーラーを別ウィンドウで起動。モデルの選択とダウンロードはそちらの画面）／ **[2]** すでに入っている（URL を入力）／ **[3]** 同梱の LLM（選ばれているプロファイル名つき）で続ける。
 - `--yes` では約 70GB を勝手に入れません（選ばれた同梱プロファイルで続け、案内だけ表示）。`--llm strata` で [1]、`--llm external --llm-url http://127.0.0.1:8080/v1` で [2] を選べます。
-- [1] のあとは、`start.bat` が Strata を先に起動し、`/v1/models` が返るまで最大 10 分待ちます（進捗を表示）。ポートは Strata の `strata-*.json` から読みます。`stop.bat` は、`start.bat` が起動した Strata だけを止めます。
+- [1] のあとは、`start.bat` が Strata を先に起動し、`/v1/models` が返るまで最大 10 分待ちます（管理画面に進捗を表示）。ポートは Strata の `strata-*.json` から読みます。`stop.bat` は、`start.bat` が起動した Strata だけを止めます。
 - Strata が VRAM を専門家のキャッシュで埋めてしまわないよう、**この導入先の Strata の設定にだけ** `--vram-reserve-mib 3500`（TTS 用の余白）を入れます。LLM→TTS の直列化はオン、`reasoning_effort=none`、temperature 0.8 です。
 - 取得するコミットは固定しています（`82f46a8`）。Strata の更新は、`strata\UPDATE.bat` を自分で実行してください。
 - Strata のインストーラー（START-HERE.bat）は、Python が無い PC では Python 3.12 をユーザー領域に入れることがあります（Strata 側の挙動）。
@@ -96,11 +96,28 @@ LLM は llama.cpp の `llama-server` で動かします。PC のスペックか�
 
 ### 固定しているバージョン
 
-llama.cpp `b11443`（CUDA 12 ビルド）／ Irodori-TTS-Server `61012c7`（`uv.lock` に従う）／ Irodori-TTS v4.1 Small int8（`Aratako/Irodori-TTS-v4.1-Small-Quantized`）／ aiavatar 0.9.1 ／ fastmcp 4.0.11 ／ ddgs 9.16.0 ／ faster-whisper 1.2.1（small, CPU int8）。依存のバージョンは `app/requirements.txt` と `stt/requirements.txt` で固定しています。
+llama.cpp `b11443`（CUDA 12 ビルド）／ Irodori-TTS-Server `61012c7`（`uv.lock` に従う）／ Irodori-TTS v4.1 Small int8（`Aratako/Irodori-TTS-v4.1-Small-Quantized`）／ aiavatar 0.9.1 ／ fastmcp 4.0.11 ／ ddgs 9.16.0 ／ faster-whisper 1.2.1（small, CPU int8）／ pystray 0.19.5 ／ pillow 12.3.0。依存のバージョンは `app/requirements.txt` と `stt/requirements.txt` で固定しています。
+
+## 起動と管理画面
+
+`start.bat` は、ウィンドウを出さない常駐の管理プロセス（`supervisor.py`）を起動して、すぐに閉じます。管理プロセスが LLM（llama-server、または Strata）・TTS・STT・AIAvatarKit を**ウィンドウなし**で起動して見守ります（技術に明るくない人が、黒い画面がたくさん開いて驚かないように）。
+
+- **管理画面**: `http://127.0.0.1:8099/`（使用中なら空きポートを選び、`config.json` に保存。AIAvatarKit が落ちていても開けます。127.0.0.1 からだけ、Host / Origin も検査）。
+  - 「状態」: サービスごとの稼働状況・ポート・起動からの時間、VRAM と RAM、各サービスの再起動、全体の再起動・終了。起動中は「起動中…」と進捗を出し、準備ができたら自動で会話画面へ移ります（初回の Strata の長い読み込みもここで見られます）。起動に失敗したときは、失敗したサービスのログを開くボタンが出ます。
+  - 「ログ」: サービスごとのタブと「すべて」。自動で更新（SSE）、INFO / WARNING / ERROR の色分けと絞り込み、文字列検索、自動スクロールの一時停止、コピー、ダウンロード。
+  - **「不具合報告用にまとめてダウンロード」**: 直近のログ全部と環境情報（GPU・ドライバ・メモリ・プロファイル・バージョン）を 1 つの zip にします。**友人からのデバッグ報告は、これを送ってもらってください。**
+  ![状態](docs/screenshots/console_status.png)
+  ![ログ](docs/screenshots/console_logs.png)
+- ログは `logs\<サービス>.log` にも保存します（5MB でローテーション、4 世代）。**API キー・トークンらしい文字列（設定画面で入力したキーそのもの、`Bearer` の値、`api_key=` など）は伏せ字**にしてから保存・表示・ダウンロードします。
+- **異常終了したサービスは、自動で再起動します**（5 分に 3 回まで）。それ以上は止めて、管理画面に「〇〇が起動できません。ログを確認してください」と出します。
+- 子プロセスは Job Object で管理プロセスに結び付けています。管理プロセスが強制終了されても、OS がサービスをすべて止めます（孤児が残りません）。二重起動はしません（動いているときの `start.bat` は、画面を開くだけです）。
+- **タスクトレイ**にアイコンが出ます（メニュー: 会話画面を開く / 設定 / ログ・状態 / 再起動 / 終了）。トレイが使えない環境でも、本体は動き続けます（管理画面の「終了」と `stop.bat` で止められます）。
+- 会話画面と設定画面の右上に、管理画面へのリンクがあります。
+- `setup.bat` の最後に、デスクトップとスタートメニューに「koemado」のショートカットを作るか聞きます（ウィンドウを出さずに起動）。あとからは `app\.venv\Scripts\python.exe ctl.py shortcuts` で作れます。
 
 ## 使い方
 
-- 会話画面: `http://127.0.0.1:8100/static/index.html`（`start.bat` が開きます）。マイクの許可が必要です。
+- 会話画面: `http://127.0.0.1:8100/static/index.html`（管理画面の「起動中…」が自動で移ります）。マイクの許可が必要です。
 - **設定画面: `http://127.0.0.1:8100/settings`**（声・LLM・キャラクター・ツール。`configure.bat` でも同じ設定を対話式に変えられます）
 - 管理画面（計測・ログ）: `http://127.0.0.1:8100/admin`
 - ブラウザを使わずに試す: `app\.venv\Scripts\python.exe tools\e2e_test.py "こんにちは" --repeat 3`（WebSocket でテキストを送り、返答・表情タグ・音声・所要時間を表示）
@@ -147,7 +164,9 @@ llama.cpp `b11443`（CUDA 12 ビルド）／ Irodori-TTS-Server `61012c7`（`uv.
 | VRAM 不足（`CUDA out of memory`、LLM や TTS が起動しない） | ほかのアプリ（ゲーム・3D ソフト・ブラウザのハードウェアアクセラレーション）を閉じてください。設定画面の LLM で、より軽いプロファイル（low）にするか、`--n-cpu-moe` を増やす（`profiles.py`）と VRAM を減らせます |
 | 返答が遅い | 同梱の LLM は VRAM に載らない分を CPU で処理します。low にするか、外部の推論サーバーを使ってください。TTS は num_steps を小さくすると速くなります |
 | ポートが使用中 | `setup.bat` と `start.bat` が空きポートに自動で付け替えます（既定: LLM 8081 / TTS 8088 / STT 8002 / アプリ 8100。8000 と 8080 は避けます） |
-| 起動に失敗する | `logs\llm.log`、`logs\tts.log`、`logs\stt.log`、`logs\app.log` を確認してください |
+| 起動に失敗する | 管理画面（`http://127.0.0.1:8099/`、またはトレイの「ログ・状態」）の「ログ」を見てください。ファイルは `logs\llm.log`・`tts.log`・`stt.log`・`app.log`・`supervisor.log` です。報告するときは、管理画面の「不具合報告用にまとめてダウンロード」の zip を送ってください（キーは伏せ字です） |
+| 管理画面が開かない・管理プロセスが動かない | `start.bat --console`（または `debug-start.bat`）で、従来どおり各サービスを**コンソールのウィンドウ**で起動できます（エラーがそのまま見えます）。このときは管理画面・トレイはありません。止めるときは `stop.bat` |
+| トレイにアイコンが出ない | 本体は動いています。Windows のタスクバーの「^」（隠れているインジケーター）の中を見てください。管理画面の「終了」と `stop.bat` でも止められます |
 | 返答に思考が混ざる | 設定画面の「思考を止める方法」を変えてください（モデルによって `reasoning_effort` か `chat_template_kwargs` のどちらかが効きます） |
 
 ## ツール（Web 検索・MCP・スキル・外部エージェント）
@@ -231,9 +250,12 @@ Irodori-TTS（MIT ライセンス）には、ライセンスに加えて次の�
 
 ```
 setup.bat / setup.py   導入（スペック検出 → プロファイル選択 → 自動インストール）
-start.bat / stop.bat   起動・停止（ctl.py を呼ぶ）
+start.bat / stop.bat   起動・停止（start.bat は koemado.vbs 経由でウィンドウなしに supervisor を起動。--console / debug-start.bat は従来のコンソール起動）
+supervisor.py          常駐の管理プロセス（サービスの起動・見守り・自動再起動、ログ、管理画面、タスクトレイ）
+console_ui/            管理画面（状態・ログ）の画面
+koemado.vbs / .ico     ウィンドウなしの起動（ショートカットもこれを使う）、アイコン
 configure.bat / .py    設定の対話 CLI（設定画面の予備）
-ctl.py                 起動・停止・再起動・ダウンロードの共通処理
+ctl.py                 起動・停止・再起動・ダウンロード・ショートカット作成の共通処理（コンソール起動もここ）
 profiles.py            LLM プロファイル表と llama-server の引数
 settings_store.py      設定・キャラクターの読み書きと、成人チェック
 tools_store.py         MCP 設定（config/mcp.json）とスキル（skills/）の読み書き

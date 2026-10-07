@@ -67,6 +67,7 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
 <header>
   <h1>koemado 設定</h1>
   <div id="chips"></div>
+  <a id="lnkConsole" href="#" hidden>状態・ログ</a>
   <a href="/static/index.html">会話画面へ</a>
 </header>
 <nav id="tabs">
@@ -402,6 +403,7 @@ async function refresh(keepForms = false) {
 }
 
 function renderChips() {
+  if (S.ports && S.ports.console) { $("lnkConsole").href = "http://127.0.0.1:" + S.ports.console + "/"; $("lnkConsole").hidden = false; }
   const names = { llm: "LLM", tts: "TTS", stt: "STT", app: "アプリ" };
   $("chips").innerHTML = Object.entries(S.services).map(([k, v]) => `<span class="chip ${v ? "on" : "off"}">${names[k]}</span>`).join("");
 }

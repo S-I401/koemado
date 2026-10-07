@@ -555,19 +555,22 @@ class Installer:
         say("\n[配置] プログラムのファイルをインストール先にコピーします。")
         ignore = shutil.ignore_patterns(".venv", "__pycache__", ".env", ".env.local", "data", "html", "*.db", "*.db-*",
                                         "recorded_voices", "logs")
-        for name in ["ctl.py", "profiles.py", "settings_store.py", "configure.py", "setup.py", "start.bat", "stop.bat",
-                     "setup.bat", "configure.bat", "README.md", "LICENSE"]:
+        for name in ["ctl.py", "supervisor.py", "profiles.py", "settings_store.py", "tools_store.py", "configure.py", "setup.py",
+                     "start.bat", "debug-start.bat", "stop.bat", "setup.bat", "configure.bat", "koemado.ico", "koemado.vbs", "README.md", "LICENSE"]:
             if (SRC_DIR / name).exists():
                 shutil.copy2(SRC_DIR / name, self.root / name)
-        for d in ["app", "stt", "voices", "html-overrides", "tools"]:
+        for d in ["app", "stt", "voices", "html-overrides", "tools", "console_ui"]:
             shutil.copytree(SRC_DIR / d, self.root / d, dirs_exist_ok=True, ignore=ignore)
-        # キャラクターはユーザーが編集するので、無いファイルだけコピーする
-        for f in (SRC_DIR / "characters").rglob("*"):
-            if f.is_file():
-                dst = self.root / "characters" / f.relative_to(SRC_DIR / "characters")
-                if not dst.exists():
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copy2(f, dst)
+        # キャラクターとスキルはユーザーが編集するので、無いファイルだけコピーする
+        for sub in ("characters", "skills"):
+            if not (SRC_DIR / sub).exists():
+                continue
+            for f in (SRC_DIR / sub).rglob("*"):
+                if f.is_file():
+                    dst = self.root / sub / f.relative_to(SRC_DIR / sub)
+                    if not dst.exists():
+                        dst.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.copy2(f, dst)
 
     # ---- llama.cpp ----
     def install_llama(self):
@@ -882,6 +885,26 @@ def ask_llm_kind(args, offer_strata: bool, hw: dict, install: Path, profile: str
     return "external"
 
 
+def offer_shortcuts(install: Path, args):
+    """デスクトップとスタートメニューに、ウィンドウを出さずに起動する「koemado」のショートカットを作るか聞く"""
+    mode = args.shortcuts or ("no" if args.yes else "ask")
+    if mode == "ask":
+        try:
+            ans = input("\nデスクトップとスタートメニューに「koemado」のショートカットを作りますか？（ウィンドウを出さずに起動します）[y/N]: ").strip().lower()
+        except EOFError:
+            ans = ""
+        mode = "yes" if ans in ("y", "yes") else "no"
+    if mode != "yes":
+        say("  ショートカットは作りません（あとから `app\\.venv\\Scripts\\python.exe ctl.py shortcuts` で作れます）。")
+        return
+    made = ctl.create_shortcuts(install)
+    if made:
+        for m in made:
+            say(f"  ショートカットを作りました: {m}")
+    else:
+        say("  ショートカットを作れませんでした。start.bat から起動してください。")
+
+
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -896,6 +919,8 @@ def main():
     ap.add_argument("--vision", choices=["gpu", "cpu", "no"], help="--llm strata のときの画像認識: gpu（推奨。1 枚 0.1〜0.5 秒、VRAM 約 1.4GB）/ cpu（1 枚 10〜30 秒、VRAM を使わない）/ no（使わない。既定）")
     ap.add_argument("--llm-url", default="", help="external のときの base_url（/v1 まで）")
     ap.add_argument("--llm-model", default="", help="external のときのモデル名")
+    ap.add_argument("--shortcuts", choices=["yes", "no", "ask"], default=None,
+                    help="デスクトップとスタートメニューに koemado のショートカットを作る（既定: 聞く。--yes のときは作らない）")
     ap.add_argument("--llm-api-key", default="", help="external のときの API キー（任意。config/settings.json に保存される）")
     args = ap.parse_args()
 
@@ -996,8 +1021,12 @@ def main():
     say(f"\n=== 導入が完了しました（{(time.time() - started) / 60:.1f} 分）===")
     if kind == "strata":
         say("  ※ Strata のインストーラー（別ウィンドウ）が終わってから start.bat を実行してください。")
+    say("\n  次からは start.bat（またはデスクトップのショートカット）で起動します。黒い画面は出ません。")
+    say("  起動中の様子やログは、ブラウザの管理画面（状態・ログ）で見られます。止めるときは、タスクトレイのアイコン、管理画面の「終了」、または stop.bat です。")
     say(f"  起動: {install / 'start.bat'} をダブルクリック")
     say(f"  停止: {install / 'stop.bat'}")
+    say(f"  うまく動かないとき: {install / 'debug-start.bat'}（従来どおり、各サービスをコンソールで起動します）")
+    offer_shortcuts(install, args)
     say(f"  設定（声・LLM・キャラクター）: 起動後に http://127.0.0.1:{ports['app']}/settings、または {install / 'configure.bat'}")
     return 0
 
