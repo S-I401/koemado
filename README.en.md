@@ -7,7 +7,7 @@ You talk to it with a microphone (or type), a local LLM thinks up a reply, and I
 Nothing is sent to the cloud, unless you choose an external inference server yourself.
 
 ```
-Browser (mic) ─ AIAvatarKit ─ STT: faster-whisper (CPU)
+Browser / desktop character (mic) ─ AIAvatarKit ─ STT: faster-whisper (CPU)
                     │
                     ├─ LLM: llama.cpp llama-server (GGUF)   * can be replaced with an external inference server
                     └─ TTS: Irodori-TTS v4.1 Small (int8, CUDA)
@@ -56,8 +56,10 @@ On a PC without an NVIDIA GPU, TTS takes more than ten seconds per sentence and 
    - If it stops halfway, run `setup.bat` again and it resumes (finished downloads are not fetched again).
 3. When setup is done, double-click `start.bat` (or the desktop shortcut).
    **No black console window appears.**
-   Your browser opens a "starting..." page (the admin console), the services start in the order LLM, TTS, STT, AIAvatarKit, and when everything is ready it switches to the conversation screen automatically.
-4. To stop: tray icon of koemado, then Exit; the Exit button in the admin console; or `stop.bat`.
+   By default a character appears on your desktop and a "starting..." bubble shows progress (see "Desktop character").
+   The services start in the order LLM, TTS, STT, AIAvatarKit, and when everything is ready the character can talk.
+   If the display mode is "Browser", your browser opens the "starting..." page (the admin console) as before and switches to the conversation screen automatically.
+4. To stop: the character's right-click menu, then Quit; the tray icon of koemado, then Exit; the Exit button in the admin console; or `stop.bat`.
 
 ### Confirmation before installing
 
@@ -147,7 +149,7 @@ If there is not enough free disk space, it drops one level.
 
 ### Pinned versions
 
-llama.cpp `b11443` (CUDA 12 build) / Irodori-TTS-Server `61012c7` (follows `uv.lock`) / Irodori-TTS v4.1 Small int8 (`Aratako/Irodori-TTS-v4.1-Small-Quantized`) / aiavatar 0.9.1 / fastmcp 4.0.11 / ddgs 9.16.0 / faster-whisper 1.2.1 (small, CPU int8) / pystray 0.19.5 / pillow 12.3.0. Dependency versions are pinned in `app/requirements.txt` and `stt/requirements.txt`.
+llama.cpp `b11443` (CUDA 12 build) / Irodori-TTS-Server `61012c7` (follows `uv.lock`) / Irodori-TTS v4.1 Small int8 (`Aratako/Irodori-TTS-v4.1-Small-Quantized`) / aiavatar 0.9.1 / fastmcp 4.0.11 / ddgs 9.16.0 / faster-whisper 1.2.1 (small, CPU int8) / pystray 0.19.5 / pillow 12.3.0 / PySide6 6.11.2 (Essentials / Addons; Qt WebEngine) / shiboken6 6.11.2. Dependency versions are pinned in `app/requirements.txt` and `stt/requirements.txt`.
 
 ## Starting and the admin console
 
@@ -163,9 +165,93 @@ The supervisor starts and watches the LLM (llama-server, or Strata), TTS, STT an
 - Logs are also saved to `logs\<service>.log` (rotated at 5 MB, 4 generations). **Anything that looks like an API key or token (the keys you entered in the settings screen, `Bearer` values, `api_key=` and so on, and strings starting with `hf_`) is masked** before being saved, shown or downloaded.
 - **A service that exits abnormally is restarted automatically** (up to 3 times in 5 minutes). After that it is left stopped and the console shows a message to check the log.
 - Child processes are tied to the supervisor with a Job Object. Even if the supervisor is killed, the OS stops every service (no orphans). It never starts twice (running `start.bat` while it is running just opens the page).
-- A **tray icon** appears (menu: open conversation / settings / logs and state / restart / quit). If the tray is unavailable, the app keeps running (use the console's Quit button or `stop.bat`).
+- A **tray icon** appears (menu: show / hide the character / open conversation (browser) / settings / logs and state / restart / quit). If the tray is unavailable, the app keeps running (use the console's Quit button or `stop.bat`).
 - The conversation and settings screens have a link to the admin console at the top right.
 - At the end of `setup.bat` it asks whether to create "koemado" shortcuts on the desktop and start menu (they start without a window). You can create them later with `app\.venv\Scripts\python.exe ctl.py shortcuts`.
+
+## Desktop character
+
+When you start with `start.bat`, a **character floating on your desktop** appears by default instead of a browser tab (think of the Office dolphin, Kai).
+It is a frameless, transparent window shown above other windows.
+Clicks on the transparent parts around the character go through to the window underneath.
+Everything behind it (LLM, TTS, STT, AIAvatarKit, the settings screen, the admin console) is the same as the browser version.
+
+![Desktop character (silhouette)](docs/screenshots/mascot_silhouette.png)
+![Talking (a test character made of simple shapes)](docs/screenshots/mascot_talk.png)
+
+### Choosing how it is displayed
+
+- You can change it in any of these places.
+  - The "Display" tab of the settings screen (`http://127.0.0.1:8100/settings#display`)
+  - "Display" in `configure.bat`
+  - The last question of `setup.bat` (or `--display mascot|browser|both`)
+- The choices are "Desktop character" (default), "Browser (as before)" and "Both".
+- A change applies the next time you start with `start.bat` (or the shortcut). While it is running, the tray icon's "Show / hide the character" brings the character in and out.
+- If the desktop character cannot be used on this PC (its parts are missing, or Windows is older than 10 version 1809), the browser version starts regardless of the setting. The reason is shown on the "Display" tab and in the admin console log (character).
+- While starting, a small bubble above the character shows progress, such as "Starting... TTS (Irodori) (63 s)". When everything is ready, the character can talk. If startup fails, the bubble says so and the admin console opens in the browser.
+
+![The "Display" tab of the settings screen](docs/screenshots/settings_display.png)
+
+### Controls
+
+| What you want | How |
+|---|---|
+| Talk | Follow "How to talk" (below). While it is listening, an ear mark (👂) appears at the top right of the character |
+| Type instead of talking | Right-click, then "Type to talk". A small input box appears (Enter to send, Esc to close) |
+| Move | Drag the character. The position is remembered and used next time |
+| Size | Right-click, then "Size": small / medium / large. Also remembered |
+| Mute the microphone | Right-click, then "Mute (microphone)". A 🔇 mark shows while muted |
+| Volume | Right-click, then "Volume" (0 / 25 / 50 / 75 / 100%) |
+| Always on top | Right-click, then "Always on top" (on by default) |
+| Open settings | Right-click, then "Open settings" (opens the settings screen in the browser) |
+| See logs and state | Right-click, then "Open logs and state" (opens the admin console in the browser) |
+| Hide | Right-click, then "Hide (to tray)". Bring it back with the koemado tray icon, then "Show / hide the character" (or left-click the icon) |
+| Quit | Right-click, then "Quit (stop everything)". The LLM, TTS, STT and AIAvatarKit stop too |
+| Show an image | Drag and drop an image file onto the character. Available only while "image recognition" is on in the LLM tab of the settings screen (otherwise the character tells you) |
+
+![Right-click menu](docs/screenshots/mascot_menu.png)
+
+Replies appear in a bubble above the character.
+The bubble disappears after a few seconds (not while the character is speaking or thinking; the number of seconds can be changed in the settings screen).
+A long reply wraps; if it does not fit, the earlier part is hidden and the end that is being spoken stays visible.
+Control tags for expression and motion (such as `[face:joy]`) are not shown in the bubble.
+
+### How to talk
+
+Choose it on the "Display" tab of the settings screen (it applies as soon as you save).
+
+| Mode | What it does |
+|---|---|
+| Listen only while the character is pressed (default) | The microphone is heard only while you press the character. Releasing counts as the end of what you said. If you move the mouse while pressing, it moves the character instead (nothing is heard) |
+| Shortcut key | Default `Ctrl+Alt+Space`. Press it and the ear mark appears for one utterance (it closes by itself after 20 seconds if you say nothing, and pressing again closes it at once). You can change the key in the settings screen: one of Ctrl / Alt / Shift / Win plus one key, such as `ctrl+alt+k` or `ctrl+shift+f9` |
+| Always listen | Same as the current browser version. The microphone is always heard (the ear mark stays) |
+
+- "Interrupt" (talk over the avatar to stop it) can also be turned on in the same screen. With speakers the avatar may hear its own voice and stop, so headphones are recommended. While off (default), the microphone is not accepted until the avatar finishes speaking.
+- The microphone permission is granted automatically, only for the character page on 127.0.0.1 (no confirmation dialog). In Windows "Settings, Privacy & security, Microphone", "Let desktop apps access your microphone" must be on.
+
+### When the character did not start the conversation
+
+Replies that you did not start, such as a completion report from an external agent (Hermes and the like), are also shown in the bubble and spoken. While the character is hidden, a Windows notification (shown through the tray icon) tells you as well.
+
+### How it works and what it depends on
+
+- The display is the **Qt WebEngine** of PySide6 (Chromium is bundled). The background is truly transparent, and only the shapes of the character, the bubble and the input box can be clicked (the shape is computed from the transparent parts of the character image). No separate runtime such as Edge WebView2 is needed.
+- The character page (`app/html/mascot.html`) uses the same conversation machinery as the browser version (WebSocket, lip-sync, blinking, expressions). Mouth shapes and expressions follow each character's assets ("Expression and lip-sync assets"). Single-image characters and the silhouette use the light motion.
+- `mascot.py` is started and watched by the supervisor (no window). Its log is in the "Character" tab of the admin console and in `logs\mascot.log`. If it exits abnormally it is restarted automatically (up to 3 times in 5 minutes).
+- The position and size are saved in `mascot` of `config/settings.json` (`x` and `y` are the bottom center of the window). If the character ends up off the screen, or the display layout changes, it is moved back to a visible place (bottom right).
+- PySide6 takes about 0.7 GB in the install folder. For an existing installation, run `setup.bat` again to add it.
+
+### Troubleshooting (desktop character)
+
+| Symptom | What to do |
+|---|---|
+| The character does not appear | Open "Logs", then "Character" in the admin console (tray "Logs and state"). If it says it cannot be used, run `setup.bat` again (the browser version starts meanwhile). If it is merely hidden, use the tray icon, then "Show / hide the character" |
+| It is off the screen and does not come back | Positions that cannot be seen are moved to the bottom right at startup. To do it by hand, set `x` and `y` of `mascot` in `config/settings.json` to `null` and restart the character (the admin console's "Restart") |
+| It does not react when I talk | Check "How to talk" (by default it listens only while pressed). Check that it is not muted (🔇). In Windows "Privacy & security, Microphone", allow desktop apps to use the microphone |
+| The shortcut key does not work | If another app uses the same key it cannot be registered (the bubble and the log say so). Choose another key in the settings screen |
+| No notification | Check that Windows focus assist (notifications off) is not on. Notifications are shown only while the character is hidden |
+| I want the browser version back | "Display" in the settings screen, then "Browser (as before)", or `configure.bat` |
+| It appears twice | With "Both", the browser conversation screen and the character hold separate conversations. If you want just one, change the display mode |
 
 ## Usage
 
@@ -385,6 +471,7 @@ The bundled voices (`voices/mio_a` to `mio_d`) were made with Voice Design using
 | [Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) (GGUF: unsloth) | LLM (high) | Apache-2.0 |
 | [Gemma 4](https://ai.google.dev/gemma/docs/gemma_4_license) (26B-A4B / E4B) | LLM (mid / low) | The Gemma 4 license (Hugging Face shows Apache-2.0; read the original text before use) |
 | [Strata](https://github.com/Niko1221/Strata) (optional) | LLM for high-end PCs | MIT (each model has its own license; follow Strata's guidance) |
+| [PySide6 (Qt for Python)](https://doc.qt.io/qtforpython-6/) / Qt WebEngine | Showing the desktop character | LGPL-3.0 (includes Chromium; follows each of its licenses) |
 | [uv](https://github.com/astral-sh/uv) / [MinGit](https://github.com/git-for-windows/git) | Setup tools | MIT, Apache-2.0 / GPL-2.0 (installed only when needed) |
 
 The browser UI shows the standing picture of the character chosen in the settings screen (or a silhouette if there is none). The sample character's images are fetched at setup time from the examples of AIAvatarKit (uezo/aiavatarkit, Apache License 2.0); they are not included in the koemado repository.
@@ -397,6 +484,9 @@ start.bat / stop.bat   start and stop (start.bat launches the supervisor without
 supervisor.py          resident management process (starts and watches services, auto-restart, logs, admin console, tray)
 console_ui/            the admin console (state and logs) pages
 koemado.vbs / .ico     windowless launch (shortcuts use it too), icon
+mascot.py              the desktop character (a transparent PySide6 / Qt WebEngine window; started and watched by the supervisor)
+display_env.py         decides the display mode (character / browser / both); falls back to the browser where the character cannot run
+html-overrides/        additions to the conversation page (koemado-avatar.js = lip-sync and expressions, the image panel, the desktop character mascot.html / .js / .css)
 configure.bat / .py    interactive CLI for settings (a fallback for the settings screen)
 ctl.py                 shared code for start, stop, restart, download and shortcuts (the console start lives here too)
 profiles.py            LLM profile table, the size range for choosable models, llama-server arguments
