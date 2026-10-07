@@ -83,6 +83,17 @@ class LocalOnlyMiddleware:
         await self.app(scope, receive, send)
 
 
+def _apply_display(port: int, mode: str, prev: str):
+    """管理プロセス（supervisor）に、保存済みの表示方法をその場で反映してもらう"""
+    req = urllib.request.Request(f"http://127.0.0.1:{port}/api/display", method="POST",
+                                 data=json.dumps({"mode": mode, "save": False, "prev": prev}).encode(),
+                                 headers={"X-Console-Request": "1", "Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=20).read()
+    except Exception:
+        pass
+
+
 def guard_write(request: Request):
     """書き込み系: 設定画面の JS だけが付けるヘッダが必要（他のページからの送信を弾く）"""
     if request.headers.get("x-settings-request") != "1":
@@ -428,10 +439,16 @@ def make_router(page_path: Path) -> APIRouter:
     async def put_settings(request: Request):
         guard_write(request)
         patch = await request.json()
+        before = ss.load_settings(ROOT)["display"]["mode"]
         try:
             new = ss.update_settings(patch, ROOT)
         except (ValueError, KeyError) as e:
             raise HTTPException(400, str(e))
+        after = new["display"]["mode"]
+        if after != before:        # 表示方法が変わったら、起動中の画面にその場で反映する（管理プロセスが、キャラを出す・止める・ブラウザを開く）
+            port = cfg()["ports"].get("console")
+            if port:
+                threading.Thread(target=_apply_display, args=(port, after, before), daemon=True).start()
         return ss.masked(new)
 
     # ---- 声 ----

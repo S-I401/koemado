@@ -169,6 +169,21 @@ The supervisor starts and watches the LLM (llama-server, or Strata), TTS, STT an
 - The conversation and settings screens have a link to the admin console at the top right.
 - At the end of `setup.bat` it asks whether to create "koemado" shortcuts on the desktop and start menu (they start without a window). You can create them later with `app\.venv\Scripts\python.exe ctl.py shortcuts`.
 
+### Switching the display mode
+
+You can switch between desktop character, browser and both at any time.
+While koemado is running, the change is applied on the spot (the character is shown or stopped, and the conversation screen is opened in the browser).
+While it is not running, it applies from the next start.
+
+| How | What it does |
+|---|---|
+| `start-mascot.bat` / `start-browser.bat` | Saves the display mode and starts |
+| `start.bat --mascot` / `--browser` / `--both` | The same. It can be combined with `--console` (in any order). Without an option, the saved setting is used |
+| `display.bat mascot` / `browser` / `both` | Switches only the setting, even when koemado is not running. Without an argument it shows the current mode and lets you choose by number |
+| The "Display" tab of the settings screen | Saving applies it on the spot while running |
+| "Display" in `configure.bat` | Switches only the setting (applies from the next start) |
+| The tray icon, then "Display mode" | Switches on the spot while running |
+
 ## Desktop character
 
 When you start with `start.bat`, a **character floating on your desktop** appears by default instead of a browser tab (think of the Office dolphin, Kai).
@@ -186,7 +201,7 @@ Everything behind it (LLM, TTS, STT, AIAvatarKit, the settings screen, the admin
   - "Display" in `configure.bat`
   - The last question of `setup.bat` (or `--display mascot|browser|both`)
 - The choices are "Desktop character" (default), "Browser (as before)" and "Both".
-- A change applies the next time you start with `start.bat` (or the shortcut). While it is running, the tray icon's "Show / hide the character" brings the character in and out.
+- While koemado is running, a change applies on the spot (see "Switching the display mode" above). To merely hide the character, use the tray icon's "Show / hide the character".
 - If the desktop character cannot be used on this PC (its parts are missing, or Windows is older than 10 version 1809), the browser version starts regardless of the setting. The reason is shown on the "Display" tab and in the admin console log (character).
 - While starting, a small bubble above the character shows progress, such as "Starting... TTS (Irodori) (63 s)". When everything is ready, the character can talk. If startup fails, the bubble says so and the admin console opens in the browser.
 
@@ -485,6 +500,7 @@ supervisor.py          resident management process (starts and watches services,
 console_ui/            the admin console (state and logs) pages
 koemado.vbs / .ico     windowless launch (shortcuts use it too), icon
 mascot.py              the desktop character (a transparent PySide6 / Qt WebEngine window; started and watched by the supervisor)
+display.bat / .py      switches the display mode (start-mascot.bat, start-browser.bat and start.bat --mascot use it too)
 display_env.py         decides the display mode (character / browser / both); falls back to the browser where the character cannot run
 html-overrides/        additions to the conversation page (koemado-avatar.js = lip-sync and expressions, the image panel, the desktop character mascot.html / .js / .css)
 configure.bat / .py    interactive CLI for settings (a fallback for the settings screen)

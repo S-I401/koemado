@@ -797,6 +797,45 @@ class Supervisor:
         self.mascot_fallback_done = True
         webbrowser.open(f"http://127.0.0.1:{self.console_port}/?boot=1")
 
+    def configured_mode(self) -> str:
+        """設定に保存されている表示方法（使えるかどうかは見ない）"""
+        try:
+            m = ss.load_settings(ROOT).get("display", {}).get("mode", "mascot")
+        except Exception:
+            m = "mascot"
+        return m if m in ss.DISPLAY_MODES else "mascot"
+
+    def open_chat_browser(self):
+        """会話画面（準備中なら起動中の画面）をブラウザで開く"""
+        if os.environ.get("KOEMADO_NO_BROWSER") == "1":
+            return
+        base = f"http://127.0.0.1:{self.console_port}"
+        try:
+            url = self.state()["chat_url"] if self.phase == "ready" else base + "/?boot=1"
+        except Exception:
+            url = base + "/"
+        threading.Thread(target=webbrowser.open, args=(url,), daemon=True).start()
+
+    def set_display(self, mode: str, save: bool = True, prev: str | None = None) -> dict:
+        """表示方法を切り替え、起動中の画面にその場で反映する。
+        キャラが要るなら出す（無ければ起動）、要らなければ止める。ブラウザが新しく要るようになったら、会話画面を開く"""
+        if mode not in ss.DISPLAY_MODES:
+            raise ValueError("表示方法は mascot / browser / both のどれかです。")
+        if prev is None:
+            prev = self.configured_mode()
+        if save:
+            ss.update_settings({"display": {"mode": mode}}, ROOT)
+        new_eff, why = display_env.effective_mode({"display": {"mode": mode}}, ROOT)
+        old_eff, _ = display_env.effective_mode({"display": {"mode": prev}}, ROOT)
+        log(f"表示方法を切り替えます: {prev} -> {mode}" + (f"（この PC ではブラウザ版になります: {why}）" if why else ""))
+        if new_eff in ("mascot", "both"):
+            self.mascot_cmd("show")
+        else:
+            self.stop_mascot()
+        if new_eff in ("browser", "both") and old_eff not in ("browser", "both"):
+            self.open_chat_browser()
+        return {"mode": mode, "effective": new_eff, "reason": why}
+
     def notify(self, title: str, message: str):
         icon = getattr(self, "tray_icon", None)
         if icon is not None:
@@ -997,6 +1036,16 @@ def make_app(sup: Supervisor):
         ok = await asyncio.get_running_loop().run_in_executor(None, sup.mascot_cmd, cmd)
         return {"ok": ok}
 
+    @app.post("/api/display")
+    async def display(request: Request):
+        """表示方法の切り替え。{mode, save（既定 true）, prev（切り替え前。省略すると、いまの設定）}"""
+        guard(request)
+        b = await request.json()
+        try:
+            return await asyncio.get_running_loop().run_in_executor(None, lambda: sup.set_display(str(b.get("mode")), bool(b.get("save", True)), b.get("prev")))
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+
     @app.post("/api/notify")
     async def notify(request: Request):
         guard(request)
@@ -1060,6 +1109,9 @@ class TrayActions:
     def toggle_mascot(self, *_):
         threading.Thread(target=self.sup.mascot_cmd, args=("toggle",), daemon=True).start()
 
+    def set_display(self, mode: str):
+        threading.Thread(target=self.sup.set_display, args=(mode,), daemon=True).start()
+
     def default(self, *_):
         """トレイのアイコンの左クリック: キャラがあればキャラの表示／隠す、無ければ会話画面"""
         if self.sup.display_mode()[0] == "browser":
@@ -1081,6 +1133,9 @@ def run_tray(sup: Supervisor):
         menu = pystray.Menu(
             pystray.MenuItem("キャラを表示／隠す", act.toggle_mascot, visible=lambda item: sup.display_mode()[0] != "browser"),
             pystray.MenuItem("会話画面を開く（ブラウザ）", act.open_chat),
+            pystray.MenuItem("表示方法", pystray.Menu(*[
+                pystray.MenuItem(label, (lambda m: (lambda *_: act.set_display(m)))(m), checked=(lambda m: (lambda item: sup.configured_mode() == m))(m), radio=True)
+                for m, label in (("mascot", "デスクトップのキャラ"), ("browser", "ブラウザ"), ("both", "両方"))])),
             pystray.MenuItem("既定", act.default, default=True, visible=False),
             pystray.MenuItem("設定", act.open_settings),
             pystray.MenuItem("ログ・状態", act.open_console),

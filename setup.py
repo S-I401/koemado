@@ -654,7 +654,7 @@ class Installer:
         ignore = shutil.ignore_patterns(".venv", "__pycache__", ".env", ".env.local", "data", "html", "*.db", "*.db-*",
                                         "recorded_voices", "logs")
         for name in ["ctl.py", "supervisor.py", "profiles.py", "hf_hub.py", "hf_dl.py", "model_picker.py", "settings_store.py", "tools_store.py", "configure.py", "setup.py",
-                     "start.bat", "debug-start.bat", "stop.bat", "setup.bat", "configure.bat", "koemado.ico", "koemado.vbs", "display_env.py", "mascot.py", "README.md", "LICENSE"]:
+                     "start.bat", "debug-start.bat", "stop.bat", "setup.bat", "configure.bat", "koemado.ico", "koemado.vbs", "display_env.py", "display.py", "display.bat", "start-mascot.bat", "start-browser.bat", "mascot.py", "README.md", "LICENSE"]:
             if (SRC_DIR / name).exists():
                 shutil.copy2(SRC_DIR / name, self.root / name)
         for d in ["app", "stt", "voices", "html-overrides", "tools", "console_ui"]:
