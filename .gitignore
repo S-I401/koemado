@@ -1,0 +1,52 @@
+# --- インストール時に作られるもの（リポジトリには入れない） ---
+/config.json
+/run/
+/logs/
+/models/
+/llama.cpp/
+/tts/
+/hf-home/
+/torch-home/
+/.uv/
+/.tools/
+/.downloads/
+/tools/uv.exe
+/tools/uvx.exe
+/tools/uvw.exe
+/tools/python/
+/tools/uv-cache/
+/tools/mingit/
+/stt/.venv/
+/app/.venv/
+/app/html/
+/app/data/
+/app/.env
+/app/.env.local
+/app/*.db
+/app/*.db-*
+/app/recorded_voices/
+/app/server.log
+
+# --- 個人情報・秘密・生成物 ---
+.env
+.env.*
+*.db
+*.db-shm
+*.db-wal
+recorded_voices/
+*.log
+*.gguf
+*.safetensors
+*.part
+
+# --- Python ---
+__pycache__/
+*.pyc
+.venv/
+
+# --- 設定（API キーを含むことがある）・ユーザーが作ったキャラクター ---
+/config/
+/characters/*
+!/characters/_common.md
+!/characters/mio/
+/characters/mio/image*.png

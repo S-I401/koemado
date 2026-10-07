@@ -1,0 +1,574 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>設定 - AIAvatar</title>
+<style>
+:root {
+  --bg: #f4f6fa; --panel: #ffffff; --text: #1d2433; --muted: #5d6880; --line: #d9dfeb;
+  --accent: #3b6fe0; --accent-text: #ffffff; --ok: #1c8a4b; --warn: #b36b00; --err: #c0392b; --chip: #e8edf7;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #12151c; --panel: #1b2029; --text: #e6eaf2; --muted: #98a3b8; --line: #2c3442;
+    --accent: #6c93f2; --accent-text: #0e1320; --ok: #4cc27f; --warn: #e0a040; --err: #ee7b6e; --chip: #262d3b;
+  }
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text); font: 15px/1.6 "Yu Gothic UI", "Meiryo", system-ui, sans-serif; }
+header { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; padding: 12px 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+header h1 { font-size: 18px; margin: 0; flex: 1; }
+.chip { display: inline-block; padding: 1px 10px; border-radius: 999px; background: var(--chip); font-size: 12px; margin-right: 4px; }
+.chip.on::before { content: "● "; color: var(--ok); }
+.chip.off::before { content: "● "; color: var(--err); }
+nav { display: flex; gap: 4px; padding: 8px 16px 0; flex-wrap: wrap; }
+nav button { border: 1px solid var(--line); border-bottom: none; background: var(--chip); color: var(--text); padding: 8px 18px; border-radius: 8px 8px 0 0; cursor: pointer; font-size: 15px; }
+nav button.active { background: var(--panel); font-weight: 700; }
+main { padding: 0 16px 48px; max-width: 980px; margin: 0 auto; }
+section.tab { display: none; background: var(--panel); border: 1px solid var(--line); border-radius: 0 8px 8px 8px; padding: 16px 20px; margin-top: -1px; }
+section.tab.active { display: block; }
+h2 { font-size: 16px; margin: 24px 0 8px; border-left: 4px solid var(--accent); padding-left: 8px; }
+h2:first-child { margin-top: 0; }
+label { display: block; margin: 8px 0 2px; font-size: 13px; color: var(--muted); }
+input[type=text], input[type=number], input[type=password], input[type=url], select, textarea {
+  width: 100%; padding: 7px 9px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; }
+textarea { min-height: 90px; resize: vertical; }
+.row { display: flex; gap: 12px; flex-wrap: wrap; }
+.row > * { flex: 1 1 200px; }
+button.btn { padding: 7px 16px; border-radius: 6px; border: 1px solid var(--line); background: var(--chip); color: var(--text); cursor: pointer; font: inherit; }
+button.primary { background: var(--accent); color: var(--accent-text); border-color: var(--accent); }
+button.danger { color: var(--err); }
+button:disabled { opacity: .5; cursor: default; }
+.note { color: var(--muted); font-size: 13px; }
+.msg { margin: 8px 0; padding: 8px 12px; border-radius: 6px; font-size: 14px; }
+.msg.error { background: color-mix(in srgb, var(--err) 15%, transparent); color: var(--err); }
+.msg.warn { background: color-mix(in srgb, var(--warn) 15%, transparent); color: var(--warn); }
+.msg.ok { background: color-mix(in srgb, var(--ok) 15%, transparent); color: var(--ok); }
+.msg.info { background: var(--chip); color: var(--muted); }
+.card { border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; margin: 8px 0; }
+.card.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.card .title { font-weight: 700; }
+.voice { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.voice .meta { flex: 1 1 260px; font-size: 13px; color: var(--muted); }
+.voice .name { font-weight: 700; min-width: 90px; }
+.bar { height: 10px; background: var(--chip); border-radius: 5px; overflow: hidden; }
+.bar > div { height: 100%; background: var(--accent); width: 0; transition: width .3s; }
+.preview { width: 160px; height: 160px; object-fit: contain; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
+.imgs { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start; }
+.adult { border: 2px solid var(--warn); border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
+table { border-collapse: collapse; width: 100%; font-size: 14px; }
+td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: left; }
+.step.ok::before { content: "✔ "; color: var(--ok); } .step.ng::before { content: "✘ "; color: var(--err); }
+@media (max-width: 600px) { section.tab { padding: 12px; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>設定</h1>
+  <div id="chips"></div>
+  <a href="/static/index.html">会話画面へ</a>
+</header>
+<nav id="tabs">
+  <button data-tab="voice" class="active">声</button>
+  <button data-tab="llm">LLM</button>
+  <button data-tab="char">キャラクター</button>
+  <button data-tab="sys">状態・再起動</button>
+</nav>
+<main>
+<div id="toast"></div>
+
+<!-- ============================== 声 ============================== -->
+<section class="tab active" id="tab-voice">
+  <h2>使う声</h2>
+  <p class="note">声はいま選んでいるキャラクターに紐づきます。変えると、次の発話から切り替わります（再起動は不要）。</p>
+  <div id="voiceList"></div>
+  <div class="row">
+    <div><label>num_steps（小さいほど速く、大きいほど安定。既定 24）</label>
+      <input type="number" id="numSteps" min="4" max="64" step="1"></div>
+    <div><label>seed（空なら毎回ランダム）</label><input type="number" id="ttsSeed"></div>
+  </div>
+  <p><button class="btn primary" id="saveTts">速度・seed を保存</button></p>
+
+  <h2>参照音声を追加</h2>
+  <div class="adult"><strong>注意:</strong> 本人の同意がない実在人物（声優・有名人など）の声は使わないでください。なりすまし・偽情報への利用は禁止です（Irodori-TTS の利用条件）。</div>
+  <div class="row">
+    <div><label>音声ファイル（wav / flac / mp3 / ogg / opus。m4a / aac / webm は読み込めません。10〜30 秒の静かな音声がおすすめ）</label>
+      <input type="file" id="upFile" accept=".wav,.flac,.mp3,.ogg,.opus"></div>
+    <div><label>声の ID（半角英数字・_・-）</label><input type="text" id="upName" placeholder="my_voice"></div>
+  </div>
+  <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" id="upConsent">
+    この声は自分自身の声、または本人の同意を得た声、もしくは権利的に問題のない声です。</label>
+  <p><button class="btn primary" id="upBtn">アップロード</button></p>
+
+  <h2>Voice Design（文章で声を作る）</h2>
+  <p class="note">声の特徴を文章で書き、seed を固定して候補を作ります。気に入ったら名前を付けて参照音声として保存できます。</p>
+  <label>キャプション</label>
+  <textarea id="dsCaption">明るく落ち着いた20代後半の女性の声。柔らかく自然な話し方。</textarea>
+  <div class="row">
+    <div><label>seed</label><input type="number" id="dsSeed" value="42"></div>
+    <div><label>num_steps</label><input type="number" id="dsSteps" value="32" min="4" max="64"></div>
+  </div>
+  <p><button class="btn primary" id="dsBtn">候補を作る</button> <span class="note" id="dsInfo"></span></p>
+  <div id="dsResult" hidden>
+    <audio id="dsAudio" controls></audio>
+    <div class="row" style="margin-top:8px">
+      <div><label>保存する声の ID</label><input type="text" id="dsName" placeholder="my_designed_voice"></div>
+      <div style="align-self:end"><button class="btn primary" id="dsSave">この声を保存</button></div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================== LLM ============================== -->
+<section class="tab" id="tab-llm">
+  <h2>LLM の方式</h2>
+  <div class="row">
+    <label style="display:flex;gap:6px;align-items:center;color:var(--text)"><input type="radio" name="mode" value="bundled"> 同梱の llama-server を使う（既定）</label>
+    <label style="display:flex;gap:6px;align-items:center;color:var(--text)"><input type="radio" name="mode" value="external"> 自分で用意した推論サーバーを使う（OpenAI 互換）</label>
+  </div>
+
+  <div id="bundledBox">
+    <h2>モデル（同梱の llama-server）</h2>
+    <div id="profileCards"></div>
+    <div class="card" id="customCard">
+      <label style="display:flex;gap:6px;align-items:center;color:var(--text)"><input type="radio" name="profile" value="custom"> <span class="title">任意の GGUF を指定する</span></label>
+      <div class="row">
+        <label style="display:flex;gap:6px;align-items:center;color:var(--text)"><input type="radio" name="csrc" value="hf"> Hugging Face のリポジトリ + ファイル名</label>
+        <label style="display:flex;gap:6px;align-items:center;color:var(--text)"><input type="radio" name="csrc" value="local"> ローカルの .gguf のパス</label>
+      </div>
+      <div class="row" id="cHf">
+        <div><label>リポジトリ（owner/name）</label><input type="text" id="cRepo" placeholder="unsloth/gemma-4-26B-A4B-it-qat-GGUF"></div>
+        <div><label>ファイル名</label><input type="text" id="cFile" placeholder="model-Q4_K_M.gguf"></div>
+      </div>
+      <div id="cLocal" hidden><label>.gguf のフルパス</label><input type="text" id="cPath" placeholder="D:\models\model.gguf"></div>
+      <p><button class="btn" id="cCheck">サイズを確認</button> <button class="btn primary" id="cDownload" hidden>ダウンロード</button></p>
+      <div id="cInfo"></div>
+    </div>
+    <div id="dlBox" hidden>
+      <div class="bar"><div id="dlBar"></div></div>
+      <div class="note" id="dlText"></div>
+    </div>
+    <div class="row">
+      <div><label>コンテキスト長（0 = プロファイルの既定）</label><input type="number" id="ctx" min="0" step="1024"></div>
+      <div style="align-self:end"><label style="display:flex;gap:6px;align-items:center;color:var(--text)"><input type="checkbox" id="thinking"> 思考させる（使えるモデルのみ。遅くなります）</label></div>
+    </div>
+  </div>
+
+  <div id="externalBox" hidden>
+    <h2>接続先（外部の推論サーバー）</h2>
+    <div class="msg info">外部サーバーは start.bat では起動しません。先に起動しておいてください（起動を最大 2 分待ちます）。</div>
+    <div class="row">
+      <div><label>プリセット</label><select id="exPreset"></select></div>
+      <div><label>base_url（/v1 まで）</label><input type="url" id="exUrl" placeholder="http://127.0.0.1:8081/v1"></div>
+    </div>
+    <div id="exNote" class="note"></div>
+    <div class="row">
+      <div><label>API キー（任意。保存しますが、画面には再表示しません）</label><input type="password" id="exKey" autocomplete="off" placeholder=""></div>
+      <div><label>モデル名</label>
+        <div class="row" style="gap:6px"><input type="text" id="exModel" list="exModels" style="flex:1 1 200px"><button class="btn" id="exFetch">一覧を取得</button></div>
+        <datalist id="exModels"></datalist></div>
+    </div>
+    <div class="row">
+      <div><label>思考を止める方法</label><select id="exReasoning"></select></div>
+      <div style="align-self:end">
+        <label style="display:flex;gap:6px;align-items:center;color:var(--text)"><input type="checkbox" id="exTools"> ツール呼び出しを使う（天気・記憶）</label>
+        <label style="display:flex;gap:6px;align-items:center;color:var(--text)"><input type="checkbox" id="exSerialize"> LLM → TTS を直列化する</label>
+      </div>
+    </div>
+    <div class="note">直列化: 同じ GPU で LLM と TTS を動かす場合は<strong>オン</strong>（取り合いを防ぎ、最初の音声が早くなる）。別の PC やクラウドの LLM なら<strong>オフ</strong>が目安です。</div>
+    <div id="cloudWarn" class="msg warn" hidden>このサーバーはインターネット上（または別のネットワーク）にあります。<strong>会話の内容が外部のサービスに送られます。</strong></div>
+  </div>
+
+  <div class="row">
+    <div><label>temperature（0〜2。既定 0.8）</label><input type="number" id="temp" step="0.05" min="0" max="2"></div>
+  </div>
+  <p>
+    <button class="btn" id="llmTest">接続テスト</button>
+    <button class="btn primary" id="llmSave">保存</button>
+    <button class="btn primary" id="llmSaveRestart">保存して再起動</button>
+  </p>
+  <div id="llmMsg"></div>
+  <div id="testResult"></div>
+  <p class="note">temperature と思考の設定は次のメッセージから反映されます。モデル・方式・接続先・コンテキスト長を変えたときは再起動が必要です（「保存して再起動」、または start.bat の再実行）。</p>
+</section>
+
+<!-- ============================== キャラクター ============================== -->
+<section class="tab" id="tab-char">
+  <div class="adult"><strong>成人キャラクターのみ。</strong> 年齢は必須で、18 歳未満、または「少女」「中学生」など未成年を示す設定は保存できません。</div>
+  <h2>キャラクター</h2>
+  <div class="row" style="align-items:end">
+    <div><label>切り替え</label><select id="charSelect"></select></div>
+    <div><button class="btn primary" id="charActivate">このキャラクターを使う</button>
+      <button class="btn" id="charNew">新規作成</button></div>
+  </div>
+  <div id="charMsg"></div>
+  <div id="charForm">
+    <div class="row">
+      <div><label>ID（半角英小文字・数字・_・-。フォルダ名になります）</label><input type="text" id="cId"></div>
+      <div><label>名前 *</label><input type="text" id="cName"></div>
+      <div><label>年齢 *（18 以上の数字）</label><input type="number" id="cAge" min="18"></div>
+    </div>
+    <div class="row">
+      <div><label>一人称</label><input type="text" id="cFirst" placeholder="私"></div>
+      <div><label>ユーザーの呼び方（二人称）</label><input type="text" id="cSecond" placeholder="あなた"></div>
+      <div><label>使う声</label><select id="cVoice"></select></div>
+    </div>
+    <label>口調</label><input type="text" id="cStyle">
+    <label>性格</label><textarea id="cPersonality" style="min-height:60px"></textarea>
+    <div class="row">
+      <div><label>好きなもの</label><input type="text" id="cLikes"></div>
+      <div><label>苦手なもの</label><input type="text" id="cDislikes"></div>
+    </div>
+    <label>生い立ち・経歴（長くても構いません。会話中は固定されるので、LLM のプロンプトキャッシュが効きます）</label>
+    <textarea id="cBackground" style="min-height:130px"></textarea>
+    <label>ユーザーとの関係</label><textarea id="cRelationship" style="min-height:60px"></textarea>
+    <label>話し方の例文（1 行に 1 つ。[face:joy] などのタグを入れても構いません）</label>
+    <textarea id="cExamples"></textarea>
+    <p><button class="btn primary" id="charSave">保存</button> <button class="btn danger" id="charDelete">このキャラクターを削除</button></p>
+  </div>
+
+  <h2>キャラクター画像（立ち絵）</h2>
+  <p class="note">PNG（透過がおすすめ）。会話画面に表示されます。<code>image_joy.png</code> のような表情別の画像があれば、表情に応じて切り替わり、無い表情は基本の 1 枚のままです。画像が無いときはシルエットが出ます。</p>
+  <div class="imgs" id="imgBox"></div>
+</section>
+
+<!-- ============================== 状態 ============================== -->
+<section class="tab" id="tab-sys">
+  <h2>サービスの状態</h2>
+  <table id="sysTable"></table>
+  <h2>この PC</h2>
+  <table id="hwTable"></table>
+  <h2>再起動</h2>
+  <p class="note">設定の反映に再起動が必要なときに使います。ブラウザの会話は一度切れます。</p>
+  <p><button class="btn" id="rsLlm">LLM だけ再起動</button> <button class="btn" id="rsAll">全体を再起動</button></p>
+  <div id="rsMsg"></div>
+</section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let S = null;           // /state の結果
+let newChar = false;    // 新規作成中か
+let selectedProfile = "";
+
+async function api(path, method = "GET", body = null, isForm = false) {
+  const opt = { method, headers: { "X-Settings-Request": "1" } };
+  if (body && !isForm) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+  if (body && isForm) opt.body = body;
+  const r = await fetch("/settings/api" + path, opt);
+  if (!r.ok) {
+    let detail = r.statusText;
+    try { detail = (await r.json()).detail || detail; } catch (e) {}
+    throw new Error(detail);
+  }
+  return r.json();
+}
+function msg(el, kind, text) { el.innerHTML = ""; if (!text) return; const d = document.createElement("div"); d.className = "msg " + kind; d.textContent = text; el.appendChild(d); }
+function esc(t) { const d = document.createElement("div"); d.textContent = t ?? ""; return d.innerHTML; }
+
+document.querySelectorAll("#tabs button").forEach((b) => b.onclick = () => {
+  document.querySelectorAll("#tabs button").forEach((x) => x.classList.toggle("active", x === b));
+  document.querySelectorAll("section.tab").forEach((x) => x.classList.toggle("active", x.id === "tab-" + b.dataset.tab));
+  if (b.dataset.tab === "sys") refresh();
+});
+
+async function refresh(keepForms = false) {
+  S = await api("/state");
+  renderChips(); renderVoices(); renderSys();
+  if (!keepForms) { renderLlm(); renderChars(); }
+}
+
+function renderChips() {
+  const names = { llm: "LLM", tts: "TTS", stt: "STT", app: "アプリ" };
+  $("chips").innerHTML = Object.entries(S.services).map(([k, v]) => `<span class="chip ${v ? "on" : "off"}">${names[k]}</span>`).join("");
+}
+
+/* ---------------- 声 ---------------- */
+function renderVoices() {
+  const st = S.settings.tts;
+  $("numSteps").value = st.num_steps; $("ttsSeed").value = st.seed ?? "";
+  $("voiceList").innerHTML = S.voices.map((v) => {
+    const meta = [v.caption ? "キャプション: " + v.caption : "", v.seed != null ? "seed " + v.seed : "", v.source ? "（" + ({ "voice-design": "Voice Design", upload: "アップロード" }[v.source] || v.source) + "）" : ""].filter(Boolean).join(" ");
+    return `<div class="card voice ${v.id === S.active_voice ? "sel" : ""}">
+      <label style="margin:0;display:flex;gap:6px;align-items:center;color:var(--text)"><input type="radio" name="voice" value="${esc(v.id)}" ${v.id === S.active_voice ? "checked" : ""}><span class="name">${esc(v.id)}</span></label>
+      <div class="meta">${esc(meta) || "&nbsp;"}</div>
+      <button class="btn" data-play="${esc(v.id)}">▶ 試聴</button>
+      ${["upload", "voice-design"].includes(v.source) ? `<button class="btn danger" data-del="${esc(v.id)}">削除</button>` : ""}
+    </div>`;
+  }).join("") || '<div class="msg info">参照音声がありません。下から追加してください。</div>';
+  document.querySelectorAll("input[name=voice]").forEach((r) => r.onchange = () => chooseVoice(r.value));
+  document.querySelectorAll("[data-play]").forEach((b) => b.onclick = () => play(b.dataset.play, b));
+  document.querySelectorAll("[data-del]").forEach((b) => b.onclick = async () => {
+    if (!confirm(b.dataset.del + " を削除しますか？")) return;
+    try { await api("/voices/" + b.dataset.del, "DELETE"); await refresh(); } catch (e) { alert(e.message); }
+  });
+}
+let player = null;
+async function play(id, btn) {
+  const old = btn.textContent; btn.disabled = true; btn.textContent = "生成中…";
+  try {
+    const steps = $("numSteps").value || 24;
+    const r = await fetch(`/settings/api/voices/preview?voice=${encodeURIComponent(id)}&num_steps=${steps}`, { headers: { "X-Settings-Request": "1" } });
+    if (!r.ok) throw new Error((await r.json()).detail);
+    const url = URL.createObjectURL(await r.blob());
+    if (player) player.pause();
+    player = new Audio(url); await player.play();
+  } catch (e) { alert("試聴できませんでした: " + e.message + "\n（TTS が起動しているか確認してください）"); }
+  btn.disabled = false; btn.textContent = old;
+}
+async function chooseVoice(id) {
+  try {
+    await api("/settings", "PUT", { tts: { voice: id } });
+    const cid = S.active_character;
+    if (cid) { const c = await api("/characters/" + cid); c.voice = id; delete c.images; delete c.id; await api("/characters/" + cid, "PUT", c); }
+    await refresh(true);
+    toast("声を「" + id + "」にしました。次の発話から変わります。");
+  } catch (e) { alert(e.message); }
+}
+$("saveTts").onclick = async () => {
+  try { await api("/settings", "PUT", { tts: { num_steps: +$("numSteps").value, seed: $("ttsSeed").value === "" ? "" : +$("ttsSeed").value } }); await refresh(true); toast("保存しました。"); }
+  catch (e) { alert(e.message); }
+};
+$("upBtn").onclick = async () => {
+  const f = $("upFile").files[0];
+  if (!f) return alert("ファイルを選んでください。");
+  const fd = new FormData(); fd.append("file", f); fd.append("name", $("upName").value); fd.append("consent", $("upConsent").checked ? "yes" : "");
+  $("upBtn").disabled = true;
+  try { await api("/voices/upload", "POST", fd, true); toast("追加しました。"); $("upFile").value = ""; await refresh(); }
+  catch (e) { alert(e.message); }
+  $("upBtn").disabled = false;
+};
+let designToken = null;
+$("dsBtn").onclick = async () => {
+  $("dsBtn").disabled = true; $("dsInfo").textContent = "生成中…（数秒〜数十秒）";
+  try {
+    const r = await api("/voices/design", "POST", { caption: $("dsCaption").value, seed: $("dsSeed").value, num_steps: +$("dsSteps").value });
+    designToken = r.token; $("dsAudio").src = r.audio; $("dsResult").hidden = false; $("dsAudio").play(); $("dsInfo").textContent = "";
+  } catch (e) { $("dsInfo").textContent = ""; alert(e.message); }
+  $("dsBtn").disabled = false;
+};
+$("dsSave").onclick = async () => {
+  try { await api("/voices/design/save", "POST", { token: designToken, name: $("dsName").value }); toast("保存しました。上の一覧から選べます。"); $("dsResult").hidden = true; await refresh(); }
+  catch (e) { alert(e.message); }
+};
+
+/* ---------------- LLM ---------------- */
+function currentMode() { return document.querySelector("input[name=mode]:checked").value; }
+function renderLlm() {
+  const L = S.settings.llm, ex = L.external;
+  document.querySelector(`input[name=mode][value=${L.mode}]`).checked = true;
+  selectedProfile = L.profile || S.installed_profile;
+  if (selectedProfile === "external") selectedProfile = "mid";
+  $("profileCards").innerHTML = S.profiles.map((p) => `
+    <div class="card ${p.id === selectedProfile ? "sel" : ""}" data-p="${p.id}">
+      <label style="display:flex;gap:6px;align-items:center;color:var(--text);margin:0"><input type="radio" name="profile" value="${p.id}" ${p.id === selectedProfile ? "checked" : ""}>
+        <span class="title">${p.id}: ${esc(p.label)}</span></label>
+      <div class="note">${esc(p.repo)} / ${esc(p.file)} ・ ${p.size_gib.toFixed(1)} GiB ・ 目安 VRAM ${p.min_vram_gib}GB / メモリ ${p.min_ram_gib}GB 以上 ・ ${p.installed ? "<strong style='color:var(--ok)'>ダウンロード済み</strong>" : "未ダウンロード"}</div>
+      ${p.warnings.filter(w => w.level !== "info").map((w) => `<div class="msg ${w.level === "error" ? "error" : "warn"}">${esc(w.text)}</div>`).join("")}
+      ${p.installed ? "" : `<button class="btn" data-dl="${p.id}">ダウンロード（${p.size_gib.toFixed(1)} GiB）</button>`}
+    </div>`).join("");
+  document.querySelectorAll("[data-dl]").forEach((b) => b.onclick = () => {
+    const p = S.profiles.find((x) => x.id === b.dataset.dl);
+    startDownload(p.repo, p.file, p.size_gib);
+  });
+  const c = L.custom;
+  document.querySelector(`input[name=csrc][value=${c.source || "hf"}]`).checked = true;
+  $("cRepo").value = c.repo || ""; $("cFile").value = c.file || ""; $("cPath").value = c.path || "";
+  $("ctx").value = L.ctx || 0; $("thinking").checked = !!L.thinking; $("temp").value = L.temperature;
+  // 外部
+  $("exPreset").innerHTML = '<option value="">（自分で入力）</option>' + Object.entries(S.presets).map(([k, v]) => `<option value="${k}">${esc(v.label)}</option>`).join("");
+  $("exReasoning").innerHTML = Object.entries(S.reasoning_modes).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join("");
+  $("exPreset").value = ex.preset || ""; $("exUrl").value = ex.base_url || ""; $("exModel").value = ex.model || "";
+  $("exKey").value = ""; $("exKey").placeholder = ex.api_key_set ? "設定済み（変更するときだけ入力）" : "（なし）";
+  $("exReasoning").value = ex.reasoning; $("exTools").checked = !!ex.tools; $("exSerialize").checked = !!ex.serialize;
+  syncLlmUi();
+  document.querySelectorAll("input[name=profile]").forEach((r) => r.onchange = () => { selectedProfile = r.value; document.querySelectorAll("#tab-llm .card").forEach(x => x.classList.remove("sel")); r.closest(".card").classList.add("sel"); });
+}
+function syncLlmUi() {
+  const ext = currentMode() === "external";
+  $("bundledBox").hidden = ext; $("externalBox").hidden = !ext;
+  const src = document.querySelector("input[name=csrc]:checked").value;
+  $("cHf").hidden = src !== "hf"; $("cLocal").hidden = src !== "local";
+  const url = $("exUrl").value;
+  const cloud = ext && url && !/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\]|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|[^/:]+\.local)/i.test(url);
+  $("cloudWarn").hidden = !cloud;
+}
+document.querySelectorAll("input[name=mode], input[name=csrc]").forEach((r) => r.onchange = syncLlmUi);
+$("exUrl").oninput = syncLlmUi;
+$("exPreset").onchange = () => {
+  const p = S.presets[$("exPreset").value];
+  if (!p) return;
+  $("exUrl").value = p.base_url; $("exReasoning").value = p.reasoning; $("exTools").checked = p.tools; $("exSerialize").checked = p.serialize;
+  $("exNote").textContent = p.note; syncLlmUi();
+};
+$("exFetch").onclick = async () => {
+  try {
+    const r = await api("/llm/models", "POST", { base_url: $("exUrl").value, api_key: $("exKey").value });
+    $("exModels").innerHTML = r.models.map((m) => `<option value="${esc(m)}">`).join("");
+    if (r.models.length && !$("exModel").value) $("exModel").value = r.models[0];
+    toast(`モデル ${r.models.length} 件を取得しました。`);
+  } catch (e) { alert(e.message); }
+};
+async function checkCustom() {
+  const src = document.querySelector("input[name=csrc]:checked").value;
+  const body = src === "hf" ? { source: "hf", repo: $("cRepo").value.trim(), file: $("cFile").value.trim() } : { source: "local", path: $("cPath").value.trim() };
+  $("cInfo").innerHTML = "確認中…";
+  try {
+    const r = await api("/llm/check", "POST", body);
+    $("cInfo").innerHTML = `<div class="msg info">サイズ ${r.size_gib.toFixed(1)} GiB ・ ${r.installed ? "ダウンロード済み" : "未ダウンロード"}</div>` +
+      r.warnings.map((w) => `<div class="msg ${w.level === "error" ? "error" : w.level === "warn" ? "warn" : "info"}">${esc(w.text)}</div>`).join("");
+    $("cDownload").hidden = src !== "hf" || r.installed;
+    $("cDownload").dataset.size = r.size_gib;
+  } catch (e) { $("cInfo").innerHTML = ""; msg($("cInfo"), "error", e.message); }
+}
+$("cCheck").onclick = checkCustom;
+$("cDownload").onclick = () => startDownload($("cRepo").value.trim(), $("cFile").value.trim(), +$("cDownload").dataset.size);
+async function startDownload(repo, file, gib) {
+  if (!confirm(`${repo}\n${file}\n約 ${gib.toFixed(1)} GiB をダウンロードします。よろしいですか？`)) return;
+  try { await api("/llm/download", "POST", { repo, file, confirmed: true }); pollDownload(); } catch (e) { alert(e.message); }
+}
+let dlTimer = null;
+function pollDownload() {
+  $("dlBox").hidden = false; clearInterval(dlTimer);
+  dlTimer = setInterval(async () => {
+    const d = await api("/llm/download/status");
+    if (d.status === "running") {
+      const pct = d.total ? d.done / d.total * 100 : 0;
+      $("dlBar").style.width = pct + "%"; $("dlText").textContent = `${d.file}: ${(d.done / 1e9).toFixed(2)} / ${(d.total / 1e9).toFixed(2)} GB（${pct.toFixed(1)}%）`;
+    } else {
+      clearInterval(dlTimer);
+      if (d.status === "done") { $("dlBar").style.width = "100%"; $("dlText").textContent = d.file + " のダウンロードが完了しました。"; await refresh(); }
+      else if (d.status === "error") { $("dlText").textContent = "失敗: " + d.error + "（もう一度押すと続きから再開します）"; }
+    }
+  }, 1500);
+}
+function collectLlm() {
+  const mode = currentMode();
+  const patch = { llm: { mode, temperature: +$("temp").value, ctx: +$("ctx").value || 0, thinking: $("thinking").checked } };
+  if (mode === "bundled") {
+    patch.llm.profile = selectedProfile;
+    const src = document.querySelector("input[name=csrc]:checked").value;
+    patch.llm.custom = { source: src, repo: $("cRepo").value.trim(), file: $("cFile").value.trim(), path: $("cPath").value.trim() };
+  } else {
+    patch.llm.external = { preset: $("exPreset").value, base_url: $("exUrl").value.trim(), api_key: $("exKey").value, model: $("exModel").value.trim(),
+      reasoning: $("exReasoning").value, tools: $("exTools").checked, serialize: $("exSerialize").checked };
+  }
+  return patch;
+}
+async function saveLlm(restart) {
+  const p = collectLlm();
+  if (p.llm.mode === "external" && S && /^https?:\/\/(?!(127\.|localhost|10\.|192\.168\.))/i.test(p.llm.external.base_url) && !confirm("会話の内容が外部のサービスに送られます。よろしいですか？")) return;
+  try {
+    await api("/settings", "PUT", p);
+    msg($("llmMsg"), "ok", "保存しました。");
+    await refresh();
+    if (restart) {
+      const target = p.llm.mode === "external" ? "all" : "llm";
+      await api("/restart", "POST", { target });
+      msg($("llmMsg"), "info", "再起動しています…（LLM のモデル読み込みに 1〜2 分かかることがあります）");
+      waitServices();
+    }
+  } catch (e) { msg($("llmMsg"), "error", e.message); }
+}
+$("llmSave").onclick = () => saveLlm(false);
+$("llmSaveRestart").onclick = () => saveLlm(true);
+$("llmTest").onclick = async () => {
+  $("testResult").innerHTML = '<div class="msg info">テスト中…</div>';
+  const mode = currentMode();
+  const body = mode === "external" ? { mode, base_url: $("exUrl").value.trim(), api_key: $("exKey").value, model: $("exModel").value.trim(), reasoning: $("exReasoning").value, temperature: +$("temp").value } : { mode };
+  try {
+    const r = await api("/llm/test", "POST", body);
+    $("testResult").innerHTML = '<table>' + r.steps.map((s) => `<tr><td class="step ${s.ok ? "ok" : "ng"}">${esc(s.name)}</td><td>${esc(s.detail)}</td><td>${s.ms != null ? s.ms + " ms" : ""}</td></tr>`).join("") + "</table>";
+  } catch (e) { msg($("testResult"), "error", e.message); }
+};
+async function waitServices() {
+  for (let i = 0; i < 180; i++) {
+    await new Promise((r) => setTimeout(r, 3000));
+    try { await refresh(true); if (Object.values(S.services).every(Boolean)) { msg($("llmMsg"), "ok", "再起動が完了しました。"); msg($("rsMsg"), "ok", "再起動が完了しました。"); return; } } catch (e) {}
+  }
+}
+
+/* ---------------- キャラクター ---------------- */
+function renderChars() {
+  $("charSelect").innerHTML = S.characters.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}（${esc(c.id)}、${c.age ?? "?"}歳）${c.id === S.active_character ? " ★使用中" : ""}</option>`).join("");
+  if (!newChar) { $("charSelect").value = S.active_character || (S.characters[0] && S.characters[0].id); loadChar($("charSelect").value); }
+}
+$("charSelect").onchange = () => { newChar = false; loadChar($("charSelect").value); };
+$("charActivate").onclick = async () => {
+  try { await api("/settings", "PUT", { character: $("charSelect").value }); await refresh(); toast("キャラクターを切り替えました。次の会話から反映されます。"); }
+  catch (e) { alert(e.message); }
+};
+$("charNew").onclick = () => {
+  newChar = true; msg($("charMsg"), "info", "新しいキャラクターを入力してください（成人のみ）。");
+  for (const id of ["cId", "cName", "cAge", "cFirst", "cSecond", "cStyle", "cPersonality", "cLikes", "cDislikes", "cBackground", "cRelationship", "cExamples"]) $(id).value = "";
+  $("cId").disabled = false; fillVoiceSelect(""); $("imgBox").innerHTML = '<div class="note">画像は、保存したあとにアップロードできます。</div>';
+};
+function fillVoiceSelect(v) {
+  $("cVoice").innerHTML = '<option value="">（設定画面の既定の声）</option>' + S.voices.map((x) => `<option value="${esc(x.id)}">${esc(x.id)}</option>`).join("");
+  $("cVoice").value = v || "";
+}
+async function loadChar(cid) {
+  if (!cid) return;
+  const c = await api("/characters/" + cid);
+  $("charMsg").innerHTML = "";
+  $("cId").value = c.id; $("cId").disabled = true;
+  $("cName").value = c.name || ""; $("cAge").value = c.age ?? ""; $("cFirst").value = c.first_person || ""; $("cSecond").value = c.second_person || "";
+  $("cStyle").value = c.speech_style || ""; $("cPersonality").value = c.personality || ""; $("cLikes").value = c.likes || ""; $("cDislikes").value = c.dislikes || "";
+  $("cBackground").value = c.background || ""; $("cRelationship").value = c.relationship || ""; $("cExamples").value = (c.examples || []).join("\n");
+  fillVoiceSelect(c.voice);
+  renderImages(c.id, c.images || []);
+}
+function renderImages(cid, have) {
+  const slots = [["", "基本の画像（image.png）"], ...["neutral", "joy", "angry", "sorrow", "fun", "surprised", "eyes_closed"].map((s) => [s, s])];
+  const t = Date.now();
+  $("imgBox").innerHTML = slots.map(([state, label]) => {
+    const name = state ? "image_" + state : "image"; const exists = have.includes(name);
+    const preview = state === "" || exists ? `<img class="preview" src="/character-image/${state || "neutral"}?t=${t}" alt="">` : '<div class="preview note" style="display:grid;place-items:center">未設定</div>';
+    return `<div><div class="note">${esc(label)}</div>${preview}<br>
+      <input type="file" accept="image/png" data-up="${state}" style="width:160px;font-size:11px">
+      ${exists ? `<button class="btn danger" data-rm="${state}" style="font-size:12px">消す</button>` : ""}</div>`;
+  }).join("");
+  document.querySelectorAll("[data-up]").forEach((i) => i.onchange = async () => {
+    const f = i.files[0]; if (!f) return;
+    const fd = new FormData(); fd.append("file", f); fd.append("state", i.dataset.up);
+    try { await api(`/characters/${cid}/image`, "POST", fd, true); await loadChar(cid); toast("画像を保存しました。会話画面を再読み込みすると表示されます。"); } catch (e) { alert(e.message); }
+  });
+  document.querySelectorAll("[data-rm]").forEach((b) => b.onclick = async () => { await api(`/characters/${cid}/image?state=${b.dataset.rm}`, "DELETE"); await loadChar(cid); });
+}
+$("charSave").onclick = async () => {
+  const cid = $("cId").value.trim();
+  const body = { name: $("cName").value, age: $("cAge").value, first_person: $("cFirst").value, second_person: $("cSecond").value, speech_style: $("cStyle").value,
+    personality: $("cPersonality").value, likes: $("cLikes").value, dislikes: $("cDislikes").value, background: $("cBackground").value, relationship: $("cRelationship").value,
+    examples: $("cExamples").value.split("\n"), voice: $("cVoice").value };
+  try {
+    await api("/characters/" + encodeURIComponent(cid), "PUT", body);
+    msg($("charMsg"), "ok", "保存しました。"); newChar = false;
+    await refresh(true); S.characters = (await api("/state")).characters; renderChars(); $("charSelect").value = cid; await loadChar(cid);
+  } catch (e) { msg($("charMsg"), "error", e.message); }
+};
+$("charDelete").onclick = async () => {
+  const cid = $("cId").value; if (!cid || !confirm(cid + " を削除しますか？（記憶の DB は残ります）")) return;
+  try { await api("/characters/" + cid, "DELETE"); newChar = false; await refresh(); } catch (e) { msg($("charMsg"), "error", e.message); }
+};
+
+/* ---------------- 状態 ---------------- */
+function renderSys() {
+  const names = { llm: "LLM", tts: "TTS", stt: "STT", app: "AIAvatarKit" };
+  $("sysTable").innerHTML = Object.entries(S.services).map(([k, v]) => `<tr><td>${names[k]}</td><td>port ${S.ports[k]}</td><td>${v ? "起動中" : "停止"}</td></tr>`).join("");
+  const h = S.hardware;
+  $("hwTable").innerHTML = `<tr><td>GPU</td><td>${esc(h.gpu)}${h.simulated ? "（導入時は模擬入力）" : ""}</td></tr><tr><td>VRAM</td><td>${h.vram_gib.toFixed(1)} GiB</td></tr>
+    <tr><td>メモリ</td><td>${h.ram_gib.toFixed(1)} GiB</td></tr><tr><td>空き容量</td><td>${h.disk_free_gib.toFixed(1)} GiB</td></tr>
+    <tr><td>導入時のプロファイル</td><td>${esc(S.installed_profile)}</td></tr>`;
+}
+async function restart(target) {
+  if (!confirm("再起動します。よろしいですか？")) return;
+  try { await api("/restart", "POST", { target }); msg($("rsMsg"), "info", "再起動しています…"); waitServices(); } catch (e) { msg($("rsMsg"), "error", e.message); }
+}
+$("rsLlm").onclick = () => restart("llm"); $("rsAll").onclick = () => restart("all");
+
+function toast(t) { const d = document.createElement("div"); d.className = "msg ok"; d.textContent = t; $("toast").appendChild(d); setTimeout(() => d.remove(), 4000); }
+const initialTab = location.hash.slice(1);
+refresh().then(() => { const b = document.querySelector(`#tabs button[data-tab="${initialTab}"]`); if (b) b.click(); }).catch((e) => { document.body.insertAdjacentHTML("afterbegin", '<div class="msg error">設定を読み込めませんでした: ' + esc(e.message) + "</div>"); });
+</script>
+</body>
+</html>

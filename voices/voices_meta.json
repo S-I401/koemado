@@ -1,0 +1,42 @@
+{
+  "mio_a": {
+    "source": "shipped",
+    "caption": "明るく落ち着いた20代後半の女性の声。柔らかく自然な話し方。",
+    "seed": 11,
+    "num_steps": 32,
+    "ref_text": "こんにちは。今日はゆっくりお話ししましょう。最近あった楽しいことを、ぜひ聞かせてくださいね。",
+    "f0_hz": 235.5,
+    "pitch_std_semitones": 0.45,
+    "note": "Irodori Voice Design で作った成人女性の声（実在の人物の声ではない）"
+  },
+  "mio_b": {
+    "source": "shipped",
+    "caption": "落ち着いた低めの20代後半の女性の声。穏やかで聞き取りやすい話し方。",
+    "seed": 42,
+    "num_steps": 32,
+    "ref_text": "こんにちは。今日はゆっくりお話ししましょう。最近あった楽しいことを、ぜひ聞かせてくださいね。",
+    "f0_hz": 203.8,
+    "pitch_std_semitones": 0.68,
+    "note": "Irodori Voice Design で作った成人女性の声（実在の人物の声ではない）"
+  },
+  "mio_c": {
+    "source": "shipped",
+    "caption": "はきはきとした明るい20代後半の女性の声。親しみやすく自然な話し方。",
+    "seed": 42,
+    "num_steps": 32,
+    "ref_text": "こんにちは。今日はゆっくりお話ししましょう。最近あった楽しいことを、ぜひ聞かせてくださいね。",
+    "f0_hz": 223.5,
+    "pitch_std_semitones": 1.31,
+    "note": "Irodori Voice Design で作った成人女性の声（実在の人物の声ではない）"
+  },
+  "mio_d": {
+    "source": "shipped",
+    "caption": "柔らかくて優しい20代後半の女性の声。少しゆっくりめで丁寧な話し方。",
+    "seed": 11,
+    "num_steps": 32,
+    "ref_text": "こんにちは。今日はゆっくりお話ししましょう。最近あった楽しいことを、ぜひ聞かせてくださいね。",
+    "f0_hz": 241.0,
+    "pitch_std_semitones": 0.87,
+    "note": "Irodori Voice Design で作った成人女性の声（実在の人物の声ではない）"
+  }
+}
