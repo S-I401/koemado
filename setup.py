@@ -327,6 +327,13 @@ def plan_external(install: Path) -> dict:
     return _finish_plan(_components(install, skip=("llama.cpp",)))
 
 
+def strata_installer_args(install: Path, port: int, vision: str) -> list[str]:
+    """Strata のインストーラー（START-HERE.bat）に渡す引数。モデルの選択は Strata 側の画面に任せる"""
+    reserve = ctl.STRATA_RESERVE_MIB + (ctl.STRATA_VISION_GPU_MIB if vision == "gpu" else 0)
+    return ["--setup", "--port", str(port), "--data-dir", str(install / "strata-data"),
+            "--vram-reserve-mib", str(reserve), "--vision", vision or "no"]
+
+
 def strata_installed(install: Path) -> bool:
     info = ctl.strata_info(install)
     return bool(info and info.get("bat"))
@@ -345,19 +352,19 @@ def strata_partial_gb(install: Path) -> float:
     return total / GIB
 
 
-def plan_strata(install: Path) -> dict:
+def plan_strata(install: Path, vision: str = "no") -> dict:
     """Strata を入れるとき: GGUF と llama.cpp は不要。Strata 本体とモデルは Strata のインストーラーが取得する"""
     st = profiles.STRATA
     items = [_item("Strata（別途、Strata のインストーラーで約 70GB）", st["download_gb"], st["disk_gb"],
                    strata_installed(install), strata_partial_gb(install))]
+    if vision in ("gpu", "cpu") and not strata_installed(install):
+        items.append(_item("Strata の画像認識（エンコーダ約 0.9GB + 補助ツール）", 1.0, 1.2))
     items += _components(install, skip=("llama.cpp",))
     return _finish_plan(items)
 
 
 def strata_eligible(hw: dict, profile: str | None, install: Path) -> bool:
-    """high（VRAM>=20GB かつ RAM>=48GB）で、Strata の要件（VRAM 12GB・RAM 48GB・ディスク約 80GB）を満たすとき"""
-    if profile != "high":
-        return False
+    """Strata の要件（VRAM 12GB 以上・RAM 48GB 以上・ディスクは Strata 込みで足りる）を満たすとき。プロファイルは問わない"""
     st = profiles.STRATA
     if hw["gpu"]["vram_mib"] / 1024 < st["min_vram_gib"] * RAM_VRAM_TOLERANCE or hw["ram_total_gib"] < st["min_ram_gib"] * RAM_VRAM_TOLERANCE:
         return False
@@ -459,14 +466,21 @@ def _show_items(hw: dict, plan: dict, install: Path, ports: dict):
     say(f"  ポート: LLM {ports['llm']} / TTS {ports['tts']} / STT {ports['stt']} / アプリ {ports['app']}（すべて 127.0.0.1 のみ）")
 
 
-def strata_box(hw: dict, install: Path):
+def strata_box(hw: dict, install: Path, profile: str | None = None):
     st = profiles.STRATA
     line = "=" * 70
+    vram = hw["gpu"]["vram_mib"] / 1024
+    pname = f"{profile}: {PROFILES[profile]['label']}" if profile in PROFILES else "同梱"
+    better = {"high": "同梱の high（Qwen3.6-35B-A3B）より返答の質が上がります", "mid": "同梱の mid（Gemma 4 26B-A4B）より大幅に高性能です",
+              "low": "同梱の low（Gemma 4 E4B）より大幅に高性能です"}.get(profile, "同梱の LLM より大幅に高性能です")
     say("\n" + line)
     say("  おすすめ: この PC なら Strata（Qwen3.8-Flash-Next）が動きます")
-    say("  同梱の LLM より返答の質が大幅に上がるので、こちらを推奨します。")
+    say(f"  {better}。こちらを推奨します。")
     say(line)
     say(f"  ・ダウンロード量: 約 {st['download_gb']} GB（ディスクは約 {st['disk_gb']} GB 必要）。初回の導入は時間がかかります")
+    if vram < 20:
+        say(f"  ・この PC の VRAM は {vram:.0f}GB です。VRAM が小さいほど専門家のキャッシュが小さくなり、速度が下がります。")
+        say("    目安（Strata の README、RTX 5070 12GB・RAM 64GB の実測）: IQ2_XS で約 79 tokens/s、IQ3_S で約 53 tokens/s")
     say("  ・Strata は 1 リクエストずつしか処理しません（会話が重なると順番待ちになります）")
     say("  ・起動時に 1〜3 分、PC が重くなります（モデルを RAM に読み込むため。初回はさらに長い）")
     say("  ・Strata は別のソフトウェアです（ライセンスは Strata 側。MIT + モデルごとのライセンス）")
@@ -477,7 +491,7 @@ def strata_box(hw: dict, install: Path):
     say("      → インストール先の strata\\ に取得し、Strata のインストーラーを別ウィンドウで起動します。")
     say("        モデルの選択とダウンロードは Strata 側の画面で行います。")
     say("  [2] Strata はもう入っている（URL を入力して使う）")
-    say("  [3] 同梱の LLM（high）で続ける")
+    say(f"  [3] 同梱の LLM（{pname}）で続ける")
     say(line)
 
 
@@ -711,6 +725,8 @@ class Installer:
             index = html / "index.html"
             text = index.read_text(encoding="utf-8")
             text = re.sub(r"images/(neutral|joy|angry|sorrow|fun|surprised|eyes_closed)\.png", r"../character-image/\1", text)
+            if "image-panel.js" not in text:
+                text = text.replace("</body>", '    <script src="image-panel.js"></script>\n</body>', 1)
             index.write_text(text, encoding="utf-8")
             overlay_mark.write_text("ok")
 
@@ -731,12 +747,13 @@ class Installer:
             say("\n[Strata] 導入済み（起動は start.bat が行います）")
             return
         data = self.root / "strata-data"
-        cmd = ["cmd", "/c", str(d / "START-HERE.bat"), "--setup", "--port", str(port), "--data-dir", str(data),
-               "--vram-reserve-mib", str(ctl.STRATA_RESERVE_MIB)]
+        vision = getattr(self, "vision", "no") or "no"
+        cmd = ["cmd", "/c", str(d / "START-HERE.bat")] + strata_installer_args(self.root, port, vision)
         say("\n[Strata] Strata のインストーラーを別ウィンドウで起動します。")
         say("  ・モデルの選択（RAM に合わせた推奨が出ます。迷ったら Enter）とダウンロード（約 70GB）は、そのウィンドウで行います。")
         say("  ・ダウンロードが終わるとモデルが起動します（PC が 1〜3 分重くなります）。そのあとは start.bat から使えます。")
-        say(f"  ・ポートは {port}、モデルの保存先は {data} です。")
+        say(f"  ・ポートは {port}、モデルの保存先は {data} です。画像認識: {vision}")
+        say("  ・Strata のモデルがダウンロードできる RAM に合っているかは、Strata の画面の推奨に従ってください。")
         env = dict(self.env)
         subprocess.Popen(cmd, cwd=str(d), env=env, creationflags=subprocess.CREATE_NEW_CONSOLE)
 
@@ -782,6 +799,8 @@ def initial_settings(args, name: str) -> dict:
         ext.update({"preset": "strata", "base_url": args.llm_url.rstrip("/"), "model": "", "reasoning": pr["reasoning"],
                     "serialize": True, "tools": True, "managed": "strata"})
         s["llm"]["temperature"] = 0.8
+        s["llm"]["esp"] = {"enabled": False}
+        s["llm"]["vision"] = {"enabled": (args.vision in ("gpu", "cpu")), "store_images": False}
     elif args.llm == "external":
         s["llm"]["mode"] = "external"
         ext = s["llm"]["external"]
@@ -809,7 +828,20 @@ def ask_text(prompt: str, default: str = "") -> str:
     return ans or default
 
 
-def ask_llm_kind(args, offer_strata: bool, hw: dict, install: Path) -> str:
+def ask_vision(args) -> str:
+    """Strata の画像認識。--yes / --dry-run では聞かず「使わない」"""
+    if args.yes or args.dry_run:
+        return "no"
+    say("\n画像認識（カメラや写真について話せるようにする）を有効にしますか？")
+    say("  [1] 使わない（既定）")
+    say("  [2] GPU（推奨）: 1 枚 0.1〜0.5 秒。VRAM を約 1.4GB 使う（TTS 用の余白に上乗せします）")
+    say("  [3] CPU: 1 枚 10〜30 秒。VRAM を使わない")
+    say("  ※ Strata のインストーラー側でも、同じ内容を聞かれることがあります（その場合はこの選択に合わせてください）。")
+    ans = ask_text("番号を入力 [1]: ", "1")
+    return {"2": "gpu", "3": "cpu"}.get(ans, "no")
+
+
+def ask_llm_kind(args, offer_strata: bool, hw: dict, install: Path, profile: str | None = None) -> str:
     """LLM の方式を決める。戻り値: bundled / external / strata
 
     --yes や --dry-run では質問せず、同梱の LLM で続ける（Strata の約 70GB を勝手に入れない）。
@@ -817,9 +849,9 @@ def ask_llm_kind(args, offer_strata: bool, hw: dict, install: Path) -> str:
     if args.llm:
         return args.llm
     if offer_strata:
-        strata_box(hw, install)
+        strata_box(hw, install, profile)
         if args.yes or args.dry_run:
-            say("  （--yes / --dry-run では質問しません。同梱の LLM（high）で続けます。Strata を使うには --llm strata を付けて実行してください）")
+            say("  （--yes / --dry-run では質問しません。同梱の LLM で続けます。Strata を使うには --llm strata を付けて実行してください）")
             return "bundled"
         ans = ask_text("番号を入力 [1]: ", "1")
         if ans == "2":
@@ -860,7 +892,8 @@ def main():
     ap.add_argument("--install-dir", default=str(SRC_DIR), help="インストール先（既定: このフォルダ）")
     ap.add_argument("--simulate", help='模擬入力（テスト用）例: "vram=8,ram=32,disk=60,cores=8,driver=555"')
     ap.add_argument("--weather-location", default="東京", help="天気ツールの既定の地名（既定: 東京）")
-    ap.add_argument("--llm", choices=["bundled", "external", "strata"], help="bundled=同梱の llama-server（既定） / external=自分で用意した OpenAI 互換サーバー / strata=Strata を導入して使う（high の PC 向け。約 70GB）")
+    ap.add_argument("--llm", choices=["bundled", "external", "strata"], help="bundled=同梱の llama-server（既定） / external=自分で用意した OpenAI 互換サーバー / strata=Strata を導入して使う（VRAM 12GB・RAM 48GB 以上の PC 向け。約 70GB）")
+    ap.add_argument("--vision", choices=["gpu", "cpu", "no"], help="--llm strata のときの画像認識: gpu（推奨。1 枚 0.1〜0.5 秒、VRAM 約 1.4GB）/ cpu（1 枚 10〜30 秒、VRAM を使わない）/ no（使わない。既定）")
     ap.add_argument("--llm-url", default="", help="external のときの base_url（/v1 まで）")
     ap.add_argument("--llm-model", default="", help="external のときのモデル名")
     ap.add_argument("--llm-api-key", default="", help="external のときの API キー（任意。config/settings.json に保存される）")
@@ -879,7 +912,7 @@ def main():
         check_requirements(hw)
         name, notes = choose_profile(hw, install, args.profile)
     offer = args.llm is None and strata_eligible(hw, name, install)
-    kind = ask_llm_kind(args, offer, hw, install)
+    kind = ask_llm_kind(args, offer, hw, install, name)
     args.llm_explicit = args.llm_explicit or kind in ("external", "strata")
     args.llm = kind
     external = kind in ("external", "strata")
@@ -889,10 +922,16 @@ def main():
         check_requirements(hw, external=True)
 
     if kind == "strata":
-        if not strata_eligible(hw, "high", install) and not args.yes:
-            say("※ この PC は Strata の推奨条件（high かつ VRAM 12GB・RAM 48GB・ディスク約 80GB）を満たしていません。続けると動かない可能性があります。")
+        if not strata_eligible(hw, None, install) and not args.yes:
+            say("※ この PC は Strata の要件（VRAM 12GB・RAM 48GB・ディスク約 80GB）を満たしていません。続けると動かない可能性があります。")
         name, notes = "strata", []
-        plan = plan_strata(install)
+        if args.vision is None:
+            args.vision = ask_vision(args)
+        reserve = ctl.STRATA_RESERVE_MIB + (ctl.STRATA_VISION_GPU_MIB if args.vision == "gpu" else 0)
+        notes.append(f"Strata が専門家のキャッシュで VRAM を埋めないよう、TTS 用に {reserve} MiB の余白を設定します"
+                     + ("（TTS 3500 + 画像エンコーダ（GPU）1400）" if args.vision == "gpu" else "（TTS 用）"))
+        notes.append("画像認識: " + {"gpu": "GPU（1 枚 0.1〜0.5 秒、VRAM を約 1.4GB 使う）", "cpu": "CPU（1 枚 10〜30 秒、VRAM を使わない）", "no": "使わない"}[args.vision])
+        plan = plan_strata(install, args.vision)
         if hw["disk_free_gib"] < plan["need_gb"]:
             die(f"空き容量が足りません。Strata を含めて約 {plan['need_gb']:.0f} GiB 必要ですが、{hw['drive']} の空きは {hw['disk_free_gib']:.1f} GiB です。")
     elif kind == "external":
@@ -920,6 +959,8 @@ def main():
     if kind == "strata":
         args.llm_url = f"http://127.0.0.1:{ports['llm']}/v1"
     show_plan(hw, name, notes, plan, llm, install, ports, args)
+    if kind == "strata":
+        say("  Strata のインストーラーに渡す引数: START-HERE.bat " + " ".join(strata_installer_args(install, ports["llm"], args.vision or "no")))
     if args.dry_run:
         say(f"\n[dry-run] 選ばれた構成: {name}  （何も変更していません）")
         return 0
@@ -950,6 +991,7 @@ def main():
     inst.write_config(initial_settings(args, name))
     inst.cleanup()
     if kind == "strata":
+        inst.vision = args.vision or "no"
         inst.launch_strata_installer(ports["llm"])
     say(f"\n=== 導入が完了しました（{(time.time() - started) / 60:.1f} 分）===")
     if kind == "strata":

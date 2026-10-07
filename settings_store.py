@@ -81,6 +81,10 @@ DEFAULT_SETTINGS = {
             "serialize": True,
             "managed": "",                # "strata" = インストール先の strata/ を start.bat が起動する
         },
+        # Strata の experimental speed projection（拒否の抑制）。名前と違って高速化ではない。既定はオフ
+        "esp": {"enabled": False},
+        # 画像認識。enabled = アプリが画像を受け付けて LLM に渡す。store_images = 会話の記録に画像を残す（既定は残さない）
+        "vision": {"enabled": False, "store_images": False},
     },
     "tts": {"voice": "mio_a", "num_steps": 24, "seed": 42},
     "character": "mio",
@@ -205,6 +209,11 @@ def resolve_llm(cfg: dict, settings: dict, root: Path = ROOT) -> dict:
         ext = llm["external"]
         effort, template = {"effort": ("none", False), "template": (None, True),
                             "both": ("none", True), "none": (None, False)}[ext["reasoning"]]
+        extra = {"chat_template_kwargs": {"enable_thinking": False}} if template else {}
+        if ext.get("preset") == "strata":
+            # Strata は、ベクトルを読み込んで起動したときだけ ESP を持つ。読み込み済みなら、リクエストごとに
+            # true / false で切り替えられる（false = 素のモデルと同じ出力）。オフのときも false を送り、勝手に効かないようにする
+            extra["experimental_speed_projection"] = bool(llm.get("esp", {}).get("enabled"))
         return {
             "mode": "external",
             "base_url": ext["base_url"].rstrip("/"),
@@ -212,7 +221,9 @@ def resolve_llm(cfg: dict, settings: dict, root: Path = ROOT) -> dict:
             "model": ext.get("model") or "",
             "temperature": temperature,
             "reasoning_effort": effort,
-            "extra_body": {"chat_template_kwargs": {"enable_thinking": False}} if template else None,
+            "extra_body": extra or None,
+            "vision": bool(llm.get("vision", {}).get("enabled")),
+            "store_images": bool(llm.get("vision", {}).get("store_images")),
             "tools": bool(ext.get("tools", True)),
             "serialize": bool(ext.get("serialize", True)),
         }
@@ -243,6 +254,8 @@ def resolve_llm(cfg: dict, settings: dict, root: Path = ROOT) -> dict:
         "extra_body": None if think else {"chat_template_kwargs": {"enable_thinking": False}},
         "tools": True,
         "serialize": True,
+        "vision": False,
+        "store_images": False,
         "model_path": model_path,
         "ctx": llm.get("ctx") or ctx,
         "extra_args": built["args"],

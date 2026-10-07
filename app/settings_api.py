@@ -155,6 +155,19 @@ async def tts_synth(text: str, voice: str, num_steps: int, caption: str | None =
     return r.content
 
 
+def _red_png() -> bytes:
+    """画像認識の確認用: 64x64 の赤い PNG（標準ライブラリだけで作る）"""
+    import struct
+    import zlib
+    w = h = 64
+    raw = b"".join(bytes([0]) + bytes([255, 0, 0]) * w for _ in range(h))
+
+    def chunk(t, d):
+        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xFFFFFFFF)
+    sig = bytes([137, 80, 78, 71, 13, 10, 26, 10])
+    return sig + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
+
+
 def spawn_detached(args: list[str]):
     """アプリ自身が止まっても続く子プロセスを作る（親子関係を切るため PowerShell を一度挟む）"""
     quoted = ",".join("'" + a.replace("'", "''") + "'" for a in args[1:])
@@ -185,6 +198,27 @@ def _start_download(repo: str, file: str):
     threading.Thread(target=work, daemon=True).start()
 
 
+def strata_state(s: dict) -> dict:
+    """設定画面用: Strata（インストール先のもの）の ESP と vision の状態"""
+    ext = s["llm"]["external"]
+    managed = s["llm"]["mode"] == "external" and ext.get("managed") == "strata"
+    info = ctl.strata_info(ROOT) if managed else None
+    esp_ok, esp_why = ctl.esp_applicable(info) if managed else (True, "")
+    vision_cfg = None
+    if info and info.get("json"):
+        try:
+            vision_cfg = json.loads(info["json"].read_text(encoding="utf-8")).get("vision")
+        except Exception:
+            vision_cfg = None
+    return {
+        "managed": managed,
+        "is_strata": s["llm"]["mode"] == "external" and (ext.get("preset") == "strata" or managed),
+        "esp_available": esp_ok,
+        "esp_reason": esp_why,
+        "vision_in_install": (None if not managed else (("gpu" if vision_cfg.get("gpu") else "cpu") if vision_cfg else "no")),
+    }
+
+
 async def services_status(c: dict) -> dict:
     """各サービスの稼働状況。自分自身（app）は応答できている時点で起動中。ブロッキングの確認は別スレッドで行う"""
     loop = asyncio.get_running_loop()
@@ -203,6 +237,12 @@ def make_router(page_path: Path) -> APIRouter:
     @r.get("/settings")
     async def page():
         return FileResponse(page_path, headers={"Cache-Control": "no-store"})
+
+    @r.get("/settings/api/vision")
+    async def vision_flag():
+        """会話画面が、画像の添付ボタンを出すかどうか"""
+        v = ss.load_settings(ROOT)["llm"].get("vision", {})
+        return JSONResponse({"enabled": bool(v.get("enabled")), "store_images": bool(v.get("store_images"))}, headers={"Cache-Control": "no-store"})
 
     # ---- 状態 ----
     @r.get("/settings/api/state")
@@ -238,6 +278,7 @@ def make_router(page_path: Path) -> APIRouter:
             "llm_resolved": {k: v for k, v in resolved.items() if k not in ("api_key",)},
             "model_file_exists": (model_file is not None and (model_file if model_file.is_absolute() else ROOT / model_file).exists()),
             "cloud": resolved["mode"] == "external" and ss.is_cloud_url(resolved["base_url"]),
+            "strata": strata_state(s),
             "services": await services_status(c),
             "ports": c["ports"],
         }
@@ -482,6 +523,40 @@ def make_router(page_path: Path) -> APIRouter:
                      else "ツールが呼ばれませんでした。天気や記憶のツールが使えない可能性があります（モデルか、サーバーの tool calling 設定を確認）。"), ms)
             except Exception as e:  # noqa: BLE001
                 step("ツール呼び出し", False, f"{type(e).__name__}: {e}"[:300])
+            if (b.get("vision") if b.get("vision") is not None else s["llm"].get("vision", {}).get("enabled")):
+                # /props（llama.cpp 系・Strata）に modalities.vision があれば、サーバー側の対応状況も表示する
+                try:
+                    pr = await client.get(base.rsplit("/v1", 1)[0] + "/props", headers=headers)
+                    mv = (pr.json().get("modalities") or {}).get("vision")
+                    if mv is not None:
+                        step("サーバーの画像対応（/props）", bool(mv), "サーバー側で画像認識が有効です。" if mv else "サーバー側で画像認識が無効です（Strata は --vision で再セットアップ、llama-server は --mmproj が必要）。")
+                except Exception:
+                    pass
+                img = base64.b64encode(_red_png()).decode()
+                vbody = {"model": model, "temperature": 0, "max_tokens": 80,
+                         "messages": [{"role": "user", "content": [
+                             {"type": "image_url", "image_url": {"url": "data:image/png;base64," + img}},
+                             {"type": "text", "text": "この画像は何色ですか？一言で答えてください。"}]}]}
+                if effort:
+                    vbody["reasoning_effort"] = effort
+                if extra:
+                    vbody.update(extra)
+                t = time.perf_counter()
+                try:
+                    resp = await client.post(base + "/chat/completions", json=vbody, headers=headers)
+                    ms = int((time.perf_counter() - t) * 1000)
+                    resp.raise_for_status()
+                    ans = (resp.json()["choices"][0]["message"].get("content") or "").strip()
+                    step("画像認識（赤い小さな画像を送信）", bool(ans), f"「{ans[:60]}」" + ("" if re.search("赤|red|レッド", ans, re.I) else "（色の答えが想定と違います。画像が見えていない可能性があります）"), ms)
+                except Exception as e:  # noqa: BLE001
+                    detail = f"{type(e).__name__}: {e}"
+                    if isinstance(e, httpx.HTTPStatusError):
+                        detail = f"HTTP {e.response.status_code}: {e.response.text[:200]}"
+                    step("画像認識（赤い小さな画像を送信）", False, detail[:300])
+            if ext.get("preset") == "strata" or b.get("preset") == "strata":
+                step("ESP（拒否の抑制）", True,
+                     f"リクエストに experimental_speed_projection: {str(bool(s['llm'].get('esp', {}).get('enabled'))).lower()} を付けて送っています。"
+                     "ベクトルを読み込んで起動した Strata でのみ効きます。効いているかは /props などに出ないため、画面からは判別できません。")
         return report
 
     # ---- キャラクター ----

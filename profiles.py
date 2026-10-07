@@ -67,7 +67,7 @@ def custom_llm_settings() -> dict:
 
 # ---- Strata（別ソフトウェア。MIT。Qwen3.8-Flash-Next を普通のゲーミング PC で動かす）----
 # 要件は Strata の README と docs/MODELS.md から: VRAM 12GB 以上、RAM 48GB 以上（IQ2_XS 以上の全エキスパート版）、
-# ディスク約 80GB。RAM 32GB では Coder 版（半分の専門家を削ったコード向け）しか載らず、日本語の雑談に弱いので案内しない。
+# ディスク約 80GB（プロファイルは問わない。mid でも案内する）。RAM 32GB では Coder 版（半分の専門家を削ったコード向け）しか載らず、日本語の雑談に弱いので案内しない。
 STRATA = {
     "repo": "https://github.com/Niko1221/Strata.git",
     "commit": "82f46a8c8f475f001ad76d92f58f4a4f8ffb0253",

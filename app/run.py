@@ -71,6 +71,15 @@ class BufferedChatGPTService(ChatGPTService):
         self.extra_body = r["extra_body"]
         self.serialize = r["serialize"]
 
+    async def update_context(self, context_id, user_id, messages, response_text):
+        """会話の記録（SQLite）に画像を残さない（既定）。残すかどうかは設定画面の「画像を会話の記録に残す」"""
+        if not ss.resolve_llm(CFG, settings(), ROOT).get("store_images"):
+            for m in messages:
+                if isinstance(m.get("content"), list):
+                    m["content"] = [({"type": "text", "text": "（画像を送信しました）"} if part.get("type") == "image_url" else part)
+                                    for part in m["content"]]
+        await super().update_context(context_id, user_id, messages, response_text)
+
     async def chat_stream(self, *args, **kwargs):
         self.apply_runtime()
         if not self.serialize:
@@ -188,6 +197,19 @@ aiavatar_app = AIAvatarWebSocketServer(
     voice_recorder_enabled=flag("VOICE_RECORDER", "0"),   # 既定ではマイク音声を保存しない
     debug=flag("AVATAR_DEBUG", "0"),
 )
+
+
+# 計測の記録（aiavatar.db）にも画像の中身（data URL）を残さない
+_record = aiavatar_app.sts.performance_recorder.record
+
+
+def _record_without_images(performance):
+    if not ss.resolve_llm(CFG, settings(), ROOT).get("store_images") and performance.request_files:
+        performance.request_files = "[画像は保存しません]" if "image" in performance.request_files or "data:" in performance.request_files else performance.request_files
+    return _record(performance)
+
+
+aiavatar_app.sts.performance_recorder.record = _record_without_images
 
 
 # 応答ごとに表情を感情ログへ記録する（LLM は呼ばない）

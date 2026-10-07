@@ -118,8 +118,46 @@ def menu_llm():
         _apply({"llm": {"mode": "external", "temperature": float(ask("temperature", str(s["llm"]["temperature"]))),
                         "external": {"preset": preset or "", "base_url": url, "api_key": key, "model": model, "reasoning": reasoning,
                                      "serialize": serialize, "tools": tools}}})
+    if kind == "external":
+        menu_strata_extras()
     if kind:
         print("※ LLM の方式・モデル・接続先を変えたら、start.bat を再実行（または stop.bat のあと start.bat）してください。")
+
+
+def menu_strata_extras():
+    """Strata の拒否の抑制（ESP）と、外部サーバーの画像認識"""
+    s = ss.load_settings(ROOT)
+    llm = s["llm"]
+    if llm["external"].get("preset") == "strata" or llm["external"].get("managed") == "strata":
+        print()
+        print("拒否の抑制（Strata の experimental speed projection）")
+        print("  ・名前と違って高速化ではありません。モデルが依頼をほとんど断らなくなります（安全上の振る舞いが外れます）。")
+        print("  ・速度は 1 トークンあたり 0.2〜0.4% 遅くなる程度。出力の責任は利用者にあります。")
+        print("  ・Qwen3.8-Flash-Next 専用（Swift 1.5・Coder 版では使えません）。ライセンスは Qwen Community License 1.0。")
+        print("  ・キャラクターは成人のみ、という制限はこの設定と関係なく有効です。")
+        if llm["external"].get("managed") == "strata":
+            import ctl
+            ok, why = ctl.esp_applicable(ctl.strata_info(ROOT))
+            if not ok:
+                print("  ・この Strata では使えません:", why)
+        cur = bool(llm.get("esp", {}).get("enabled"))
+        ans = input(f"拒否の抑制をオンにしますか？（いまは{'オン' if cur else 'オフ'}）y=オン / n=オフ / 空=変更しない: ").strip().lower()
+        if ans in ("y", "yes"):
+            ok2 = input("上の内容を理解したうえでオンにします。よろしいですか？ [y/N]: ").strip().lower() in ("y", "yes")
+            if ok2:
+                _apply({"llm": {"esp": {"enabled": True}}})
+                print("※ start.bat が起動する Strata は、再起動したときに反映されます。")
+        elif ans in ("n", "no"):
+            _apply({"llm": {"esp": {"enabled": False}}})
+    print()
+    cur = bool(llm.get("vision", {}).get("enabled"))
+    print("画像認識（会話画面に画像を送るパネルを出す。サーバー側で画像認識が有効な場合のみ使えます）")
+    ans = input(f"画像認識をオンにしますか？（いまは{'オン' if cur else 'オフ'}）y=オン / n=オフ / 空=変更しない: ").strip().lower()
+    if ans in ("y", "yes", "n", "no"):
+        store = False
+        if ans in ("y", "yes"):
+            store = input("送った画像を会話の記録に残しますか？（既定: 残さない）y/N: ").strip().lower() in ("y", "yes")
+        _apply({"llm": {"vision": {"enabled": ans in ("y", "yes"), "store_images": store}}})
 
 
 def menu_character():

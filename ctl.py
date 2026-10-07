@@ -253,6 +253,9 @@ def pid_file() -> Path:
 
 STRATA_RESERVE_MIB = 3500       # TTS（ピーク約 2.8GB）用に、Strata の専門家キャッシュが残す VRAM
 STRATA_WAIT_SEC = 600
+STRATA_VISION_GPU_MIB = 1400      # 画像エンコーダ（GPU）が使う VRAM
+ESP_VECTOR = Path('data') / 'experimental-speed-projection' / 'Qwen3.8-Flash-Next-experimental-speed-projection.gguf'
+ESP_MODEL_RE = r'^qwen3\.8-flash-next-(q2_0|iq2_xs|iq3_xxs|iq3_s)$'
 
 
 def strata_dir(root: Path = ROOT) -> Path:
@@ -264,8 +267,8 @@ def strata_info(root: Path = ROOT) -> dict | None:
     d = strata_dir(root)
     if not d.is_dir():
         return None
-    jsons = sorted((f for f in d.glob("strata-*.json") if ".bak" not in f.name), key=lambda f: f.stat().st_mtime, reverse=True)
-    bats = sorted((f for f in d.glob("run-*.bat") if ".bak" not in f.name), key=lambda f: f.stat().st_mtime, reverse=True)
+    jsons = sorted((f for f in d.glob("strata-*.json") if ".bak" not in f.name and not f.stem.endswith("-esp")), key=lambda f: f.stat().st_mtime, reverse=True)
+    bats = sorted((f for f in d.glob("run-*.bat") if ".bak" not in f.name and not f.stem.endswith("-esp")), key=lambda f: f.stat().st_mtime, reverse=True)
     info = {"dir": d, "json": None, "port": None, "bat": bats[0] if bats else None}
     for j in jsons:
         try:
@@ -284,6 +287,10 @@ def ensure_strata_reserve(info: dict, mib: int = STRATA_RESERVE_MIB) -> bool:
         return False
     data = json.loads(j.read_text(encoding="utf-8"))
     args = data.setdefault("args", [])
+    # 画像認識のエンコーダを GPU で動かすときは、その分（約 1.4GB）も足す。Strata のセットアップは GPU でも CPU でも
+    # 同じ 700 を書くだけで、エンコーダの分を TTS 用の余白に上乗せはしないため
+    if (data.get("vision") or {}).get("gpu"):
+        mib += STRATA_VISION_GPU_MIB
     if "--vram-reserve-mib" in args[:-1]:
         i = args.index("--vram-reserve-mib") + 1
         if int(args[i]) >= mib:
@@ -295,13 +302,55 @@ def ensure_strata_reserve(info: dict, mib: int = STRATA_RESERVE_MIB) -> bool:
     return True
 
 
-def strata_launch_bat(info: dict, root: Path = ROOT) -> Path:
-    """Strata の run-*.bat から、ブラウザを開く --open を外した起動用 bat を作る"""
-    text = info["bat"].read_text(encoding="utf-8", errors="replace")
+def esp_applicable(info: dict | None) -> tuple[bool, str]:
+    """ESP（拒否の抑制）を使えるか。元の Qwen3.8-Flash-Next のみ（Swift 1.5・Coder・Unsloth 版は対象外）"""
+    if not info or not info.get("json"):
+        return False, "Strata がインストールされていません（strata-*.json がありません）。"
+    try:
+        name = json.loads(info["json"].read_text(encoding="utf-8")).get("model_name", "")
+    except Exception:
+        return False, "Strata の設定ファイルを読めません。"
+    if not re.match(ESP_MODEL_RE, name):
+        return False, f"このモデル（{name}）では使えません。ベクトルは元の Qwen3.8-Flash-Next 専用です（Swift 1.5・Coder などは対象外）。"
+    if not (info["dir"] / ESP_VECTOR).is_file():
+        return False, "ベクトルのファイルがありません（strata/data/experimental-speed-projection/）。"
+    return True, ""
+
+
+def esp_json_path(info: dict) -> Path:
+    return info["json"].with_name(info["json"].stem + "-esp.json")
+
+
+def write_esp_json(info: dict) -> Path:
+    """Strata のセットアップが書き出すのと同じ形の ESP 用設定（strata-<model>-esp.json）を、元の設定から作る"""
+    data = json.loads(info["json"].read_text(encoding="utf-8"))
+    args = [a for a in data.get("args", [])]
+    for flag, n in (("--control-vector-scaled", 2), ("--control-vector-layer-range", 3), ("--cvec-mode", 2), ("--cvec-dir", 2)):
+        while flag in args:
+            i = args.index(flag)
+            del args[i:i + n]
+    args += ["--control-vector-scaled", f"{info['dir'] / ESP_VECTOR}:1.0", "--control-vector-layer-range", "4", "44",
+             "--cvec-mode", "project", "--cvec-dir", "per-layer"]
+    data["args"] = args
+    if data.get("log"):
+        data["log"] = re.sub(r"\.log$", "-esp.log", data["log"])
+    out = esp_json_path(info)
+    out.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    return out
+
+
+def strata_launch_bat(info: dict, root: Path = ROOT, esp: bool = False) -> Path:
+    """Strata の run-*.bat から、ブラウザを開く --open を外した起動用 bat を作る（esp=True なら ESP 用の設定を使う）"""
+    text = info["bat"].read_bytes().decode("utf-8", errors="replace")
     text = text.replace(' "--open"', "").replace(" --open", "")
+    if esp:
+        cfg_json = write_esp_json(info)
+        text = text.replace(info["json"].name, cfg_json.name)
+        text = re.sub(r"(?m)^title (.*)$", r"title \1 (experimental speed projection ON)", text, count=1)
     out = root / "run" / "strata-start.bat"
     out.parent.mkdir(exist_ok=True)
-    out.write_text(text.replace("pause", "rem pause"), encoding="utf-8")
+    text = text.replace("pause", "rem pause").replace("\r", "")
+    out.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
     return out
 
 
@@ -411,7 +460,18 @@ def start_managed_strata(cfg: dict) -> bool:
         return wait_external_llm(cfg, cfg.get("strata_wait_sec", STRATA_WAIT_SEC), what="Strata")
     if ensure_strata_reserve(info):
         print(f"Strata の設定に TTS 用の VRAM の余白を入れました（--vram-reserve-mib {STRATA_RESERVE_MIB}）。")
-    bat = strata_launch_bat(info)
+    esp_on = bool(settings_store.load_settings(ROOT)["llm"].get("esp", {}).get("enabled"))
+    if esp_on:
+        ok, why = esp_applicable(info)
+        if not ok:
+            print(f"ESP（拒否の抑制）は使えないため、オフで起動します: {why}")
+            esp_on = False
+    bat = strata_launch_bat(info, esp=esp_on)
+    if esp_on:
+        print("ESP（拒否の抑制）をオンにして起動します（experimental speed projection。断らなくなります）。")
+    for line in bat.read_text(encoding="utf-8", errors="replace").splitlines():
+        if "server.py" in line:
+            print("  Strata 起動コマンド:", line.strip())
     log = LOG_DIR / "strata.log"
     runner = [sys.executable, str(ROOT / "ctl.py"), "_run", "Strata", str(log), "--", "cmd", "/c", str(bat)]
     print("Strata を起動します（別ウィンドウ）。")
@@ -499,8 +559,11 @@ def start(cfg: dict, open_browser: bool = True, only: list[str] = None) -> int:
 def restart(cfg: dict, target: str) -> int:
     """設定を変えたあとの再起動。target: llm / all"""
     if target == "llm":
-        stop(cfg, quiet=True, only=["llm"])
-        return start(cfg, open_browser=False, only=["llm"])
+        if managed_strata(cfg):                  # Strata は LLM だけ再起動できないので、全体を再起動する
+            target = "all"
+        else:
+            stop(cfg, quiet=True, only=["llm"])
+            return start(cfg, open_browser=False, only=["llm"])
     stop(cfg, quiet=True)
     time.sleep(2)
     return start(cfg, open_browser=False)

@@ -123,8 +123,8 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
 <section class="tab" id="tab-llm">
   <div class="card" id="strataTip">
     <div class="title">Strata（Qwen3.8-Flash-Next）の推奨条件</div>
-    <div class="note">同梱の LLM より返答の質が大幅に上がります。<strong>同梱プロファイルが high（VRAM 20GB 以上かつ RAM 48GB 以上）で、ディスクに約 80GB の空きがある PC</strong>で推奨します
-      （Strata 自体の要件は VRAM 12GB・RAM 48GB・ディスク約 80GB。RAM 32GB では Coder 版しか載らず、日本語の雑談に弱いので推奨しません）。
+    <div class="note">同梱の LLM より返答の質が大幅に上がります。<strong>VRAM 12GB 以上・RAM 48GB 以上で、ディスクに約 80GB の空きがある PC</strong>で推奨します（同梱プロファイルが mid でも high でも）。
+      VRAM が 12〜19GB だと専門家のキャッシュが小さくなり、速度は下がります（Strata の README の実測: RTX 5070 12GB・RAM 64GB で IQ2_XS 約 79 tokens/s）。RAM 32GB では Coder 版しか載らず、日本語の雑談に弱いので推奨しません。
       別ソフトウェアで（ライセンスは Strata 側）、1 リクエストずつしか処理せず、起動時に 1〜3 分 PC が重くなります。
       導入は <code>setup.bat --llm strata</code>、すでに入っているときは下の「自分で用意した推論サーバー」でプリセット「Strata」を選びます。</div>
     <div id="strataState" class="note"></div>
@@ -186,6 +186,38 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
     <div class="note">直列化: 同じ GPU で LLM と TTS を動かす場合は<strong>オン</strong>（取り合いを防ぎ、最初の音声が早くなる）。別の PC やクラウドの LLM なら<strong>オフ</strong>が目安です。</div>
     <div id="cloudWarn" class="msg warn" hidden>このサーバーはインターネット上（または別のネットワーク）にあります。<strong>会話の内容が外部のサービスに送られます。</strong></div>
   </div>
+
+  <div id="extraBox" hidden>
+    <div id="espBox" class="card">
+      <label style="display:flex;gap:8px;align-items:center;color:var(--text);margin:0">
+        <input type="checkbox" id="espOn"> <span class="title">拒否の抑制（Strata の experimental speed projection）</span></label>
+      <div class="msg warn" style="margin-top:8px">
+        <strong>名前と違って、高速化の機能ではありません。</strong>Strata に同梱の制御ベクトルで、モデルの「拒否の方向」を取り除きます。
+        オンにすると、<strong>モデルが依頼をほとんど断らなくなります（安全上の振る舞いが外れます）</strong>。速度は 1 トークンあたり 0.2〜0.4% 遅くなる程度です。
+        <strong>出力の責任は利用者にあります。</strong>ベクトルは Qwen3.8-Flash-Next 専用です（Swift 1.5・Coder 版・Unsloth 版では使えません）。ライセンスは Qwen Community License 1.0 です。
+        キャラクターは成人のみ、という制限は、この設定とは関係なく有効なままです。
+      </div>
+      <div class="note" id="espNote"></div>
+    </div>
+    <div id="visionBox" class="card">
+      <label style="display:flex;gap:8px;align-items:center;color:var(--text);margin:0">
+        <input type="checkbox" id="visionOn"> <span class="title">画像認識（会話画面に画像を送るパネルを出す）</span></label>
+      <div class="note" id="visionNote"></div>
+      <label style="display:flex;gap:8px;align-items:center;color:var(--text)">
+        <input type="checkbox" id="visionStore"> 送った画像を会話の記録に残す（既定はオフ。オフのときは記録に「（画像を送信しました）」とだけ残ります）</label>
+    </div>
+  </div>
+
+  <dialog id="espDialog" style="max-width:520px;border:2px solid var(--warn);border-radius:10px;background:var(--panel);color:var(--text)">
+    <h3 style="margin-top:0">拒否の抑制をオンにしますか？</h3>
+    <p>これは高速化の機能ではありません。オンにすると、<strong>モデルが依頼を断らなくなります（安全上の振る舞いが外れます）</strong>。
+    出力の責任は利用者にあります。Qwen3.8-Flash-Next 専用で、Strata を再起動したときに読み込まれます。</p>
+    <p class="note">キャラクターは成人のみ、という制限は変わりません。</p>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" id="espCancel" type="button">やめる</button>
+      <button class="btn primary" id="espOk" type="button">理解したうえでオンにする</button>
+    </div>
+  </dialog>
 
   <div class="row">
     <div><label>temperature（0〜2。既定 0.8）</label><input type="number" id="temp" step="0.05" min="0" max="2"></div>
@@ -389,10 +421,34 @@ function renderLlm() {
   $("exPreset").value = ex.preset || ""; $("exUrl").value = ex.base_url || ""; $("exModel").value = ex.model || "";
   $("exKey").value = ""; $("exKey").placeholder = ex.api_key_set ? "設定済み（変更するときだけ入力）" : "（なし）";
   $("exReasoning").value = ex.reasoning; $("exTools").checked = !!ex.tools; $("exSerialize").checked = !!ex.serialize;
+  renderExtras();
   $("strataState").textContent = ex.managed === "strata" ? "このインストールの strata/ にある Strata を、start.bat が起動します（ポートは strata-*.json に自動で合わせます）。" : "";
   syncLlmUi();
   document.querySelectorAll("input[name=profile]").forEach((r) => r.onchange = () => { selectedProfile = r.value; document.querySelectorAll("#tab-llm .card").forEach(x => x.classList.remove("sel")); r.closest(".card").classList.add("sel"); });
 }
+function renderExtras() {
+  const L = S.settings.llm, ex = L.external, st = S.strata;
+  $("espOn").checked = !!(L.esp && L.esp.enabled);
+  $("visionOn").checked = !!(L.vision && L.vision.enabled);
+  $("visionStore").checked = !!(L.vision && L.vision.store_images);
+  const espBox = $("espBox");
+  espBox.hidden = !(st.is_strata || $("exPreset").value === "strata");
+  if (st.managed) {
+    $("espOn").disabled = !st.esp_available;
+    $("espNote").textContent = st.esp_available
+      ? "このインストールの Strata に、ベクトルを読み込んで起動します（strata-<モデル>-esp.json を作って使います）。変更したら Strata の再起動が必要です。"
+      : "使えません: " + st.esp_reason;
+  } else {
+    $("espOn").disabled = false;
+    $("espNote").textContent = "自分で起動した Strata では、起動の引数を変えられないため、リクエストの experimental_speed_projection（true / false）だけを送ります。ベクトルを読み込んで起動した Strata でのみ効きます（読み込んでいなければ無視されます）。オフのときは false を送ります。効いているかどうかは Strata の /props などに出ないため、この画面からは判別できません。";
+  }
+  const vi = st.vision_in_install;
+  $("visionNote").textContent = st.managed
+    ? ("この Strata の画像認識: " + ({ gpu: "GPU で有効", cpu: "CPU で有効", no: "無効（strata フォルダで START-HERE.bat --setup --vision gpu を実行すると有効にできます）" }[vi] || "不明") + "。このチェックは、会話画面のパネルと LLM への画像の受け渡しのオン／オフです。GPU / CPU の切り替えは Strata の再セットアップが必要です。")
+    : "サーバー側で画像認識が有効な場合のみ使えます（Strata は --vision、llama-server は --mmproj、LM Studio / Ollama は画像対応のモデルが必要）。接続テストで小さな画像を送って確認できます。";
+  $("extraBox").hidden = currentMode() !== "external";
+}
+
 function syncLlmUi() {
   const ext = currentMode() === "external";
   $("bundledBox").hidden = ext; $("externalBox").hidden = !ext;
@@ -402,13 +458,20 @@ function syncLlmUi() {
   const cloud = ext && url && !/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\]|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|[^/:]+\.local)/i.test(url);
   $("cloudWarn").hidden = !cloud;
 }
-document.querySelectorAll("input[name=mode], input[name=csrc]").forEach((r) => r.onchange = syncLlmUi);
+document.querySelectorAll("input[name=mode], input[name=csrc]").forEach((r) => r.onchange = () => { syncLlmUi(); if (S) renderExtras(); });
+// 拒否の抑制は、確認ダイアログで了承したときだけオンになる
+$("espOn").onchange = () => {
+  if ($("espOn").checked) { $("espDialog").showModal(); }
+};
+$("espCancel").onclick = () => { $("espOn").checked = false; $("espDialog").close(); };
+$("espOk").onclick = () => { $("espDialog").close(); };
+$("espDialog").addEventListener("cancel", () => { $("espOn").checked = false; });
 $("exUrl").oninput = syncLlmUi;
 $("exPreset").onchange = () => {
   const p = S.presets[$("exPreset").value];
   if (!p) return;
   $("exUrl").value = p.base_url; $("exReasoning").value = p.reasoning; $("exTools").checked = p.tools; $("exSerialize").checked = p.serialize;
-  $("exNote").textContent = p.note; syncLlmUi();
+  $("exNote").textContent = p.note; syncLlmUi(); renderExtras();
 };
 $("exFetch").onclick = async () => {
   try {
@@ -459,6 +522,8 @@ function collectLlm() {
     const src = document.querySelector("input[name=csrc]:checked").value;
     patch.llm.custom = { source: src, repo: $("cRepo").value.trim(), file: $("cFile").value.trim(), path: $("cPath").value.trim() };
   } else {
+    patch.llm.esp = { enabled: $("espOn").checked && !$("espOn").disabled };
+    patch.llm.vision = { enabled: $("visionOn").checked, store_images: $("visionStore").checked };
     patch.llm.external = { preset: $("exPreset").value, base_url: $("exUrl").value.trim(), api_key: $("exKey").value, model: $("exModel").value.trim(),
       reasoning: $("exReasoning").value, tools: $("exTools").checked, serialize: $("exSerialize").checked,
       managed: ($("exPreset").value === "strata" && S.settings.llm.external.managed) ? "strata" : "" };
@@ -469,9 +534,15 @@ async function saveLlm(restart) {
   const p = collectLlm();
   if (p.llm.mode === "external" && S && /^https?:\/\/(?!(127\.|localhost|10\.|192\.168\.))/i.test(p.llm.external.base_url) && !confirm("会話の内容が外部のサービスに送られます。よろしいですか？")) return;
   try {
+    const espBefore = !!(S.settings.llm.esp && S.settings.llm.esp.enabled);
     await api("/settings", "PUT", p);
     msg($("llmMsg"), "ok", "保存しました。");
     await refresh();
+    if (!restart && S.strata.managed && p.llm.esp && p.llm.esp.enabled !== espBefore) {
+      msg($("llmMsg"), "warn", "拒否の抑制の設定を変えました。Strata の再起動が必要です（「保存して再起動」を押すか、下のボタンで再起動してください）。");
+      const b = document.createElement("button"); b.className = "btn primary"; b.textContent = "Strata を再起動する";
+      b.onclick = () => saveLlm(true); $("llmMsg").appendChild(b);
+    }
     if (restart) {
       const target = p.llm.mode === "external" ? "all" : "llm";
       await api("/restart", "POST", { target });
@@ -485,7 +556,7 @@ $("llmSaveRestart").onclick = () => saveLlm(true);
 $("llmTest").onclick = async () => {
   $("testResult").innerHTML = '<div class="msg info">テスト中…</div>';
   const mode = currentMode();
-  const body = mode === "external" ? { mode, base_url: $("exUrl").value.trim(), api_key: $("exKey").value, model: $("exModel").value.trim(), reasoning: $("exReasoning").value, temperature: +$("temp").value } : { mode };
+  const body = mode === "external" ? { mode, vision: $("visionOn").checked, preset: $("exPreset").value, base_url: $("exUrl").value.trim(), api_key: $("exKey").value, model: $("exModel").value.trim(), reasoning: $("exReasoning").value, temperature: +$("temp").value } : { mode };
   try {
     const r = await api("/llm/test", "POST", body);
     $("testResult").innerHTML = '<table>' + r.steps.map((s) => `<tr><td class="step ${s.ok ? "ok" : "ng"}">${esc(s.name)}</td><td>${esc(s.detail)}</td><td>${s.ms != null ? s.ms + " ms" : ""}</td></tr>`).join("") + "</table>";
@@ -577,8 +648,9 @@ async function restart(target) {
 $("rsLlm").onclick = () => restart("llm"); $("rsAll").onclick = () => restart("all");
 
 function toast(t) { const d = document.createElement("div"); d.className = "msg ok"; d.textContent = t; $("toast").appendChild(d); setTimeout(() => d.remove(), 4000); }
-const initialTab = location.hash.slice(1);
-refresh().then(() => { const b = document.querySelector(`#tabs button[data-tab="${initialTab}"]`); if (b) b.click(); }).catch((e) => { document.body.insertAdjacentHTML("afterbegin", '<div class="msg error">設定を読み込めませんでした: ' + esc(e.message) + "</div>"); });
+const initialTab = location.hash.slice(1).split("-")[0];
+const openEspDialog = location.hash.endsWith("-espdialog");
+refresh().then(() => { const b = document.querySelector(`#tabs button[data-tab="${initialTab}"]`); if (b) b.click(); if (openEspDialog) { $("espBox").scrollIntoView(); $("espDialog").showModal(); } }).catch((e) => { document.body.insertAdjacentHTML("afterbegin", '<div class="msg error">設定を読み込めませんでした: ' + esc(e.message) + "</div>"); });
 </script>
 </body>
 </html>

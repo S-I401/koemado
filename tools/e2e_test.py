@@ -25,13 +25,18 @@ def load_port() -> int:
     return 8100
 
 
-async def one(url: str, text: str, outdir: Path, idx: int, timeout: float, user_id: str) -> dict:
+async def one(url: str, text: str, outdir: Path, idx: int, timeout: float, user_id: str, image: str = None) -> dict:
     session_id = str(uuid.uuid4())
     res = {"text": "", "controls": [], "tools": [], "audio": 0, "first_audio": None, "total": None, "wav_ok": True}
     async with websockets.connect(url, max_size=None) as ws:
         await ws.send(json.dumps({"type": "start", "session_id": session_id, "user_id": user_id}))
         t0 = time.perf_counter()
-        await ws.send(json.dumps({"type": "invoke", "session_id": session_id, "user_id": user_id, "text": text}, ensure_ascii=False))
+        msg = {"type": "invoke", "session_id": session_id, "user_id": user_id, "text": text}
+        if image:   # 画像（data URL に変換して files で送る。会話画面の「画像を送る」パネルと同じ）
+            import mimetypes
+            mime = mimetypes.guess_type(image)[0] or "image/png"
+            msg["files"] = [{"url": f"data:{mime};base64," + base64.b64encode(Path(image).read_bytes()).decode()}]
+        await ws.send(json.dumps(msg, ensure_ascii=False))
         while True:
             raw = await asyncio.wait_for(ws.recv(), timeout=timeout)
             msg = json.loads(raw)
@@ -72,13 +77,14 @@ async def main():
     ap.add_argument("--timeout", type=float, default=180)
     ap.add_argument("--out", default="test_out")
     ap.add_argument("--user", default="tester")
+    ap.add_argument("--image", help="画像ファイルを一緒に送る（画像認識のテスト）")
     args = ap.parse_args()
     outdir = Path(args.out)
     outdir.mkdir(exist_ok=True)
     url = f"ws://127.0.0.1:{args.port}/ws"
     results = []
     for i in range(1, args.repeat + 1):
-        r = await one(url, args.text, outdir, i, args.timeout, args.user)
+        r = await one(url, args.text, outdir, i, args.timeout, args.user, args.image)
         results.append(r)
         fa = f"{r['first_audio']:.2f}s" if r["first_audio"] is not None else "なし"
         print(f"[{i}] 最初の音声まで {fa} / 全体 {r['total'] and round(r['total'], 2)}s / 音声 {r['audio']} 個 / ツール {r['tools']}")

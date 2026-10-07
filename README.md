@@ -40,19 +40,32 @@ NVIDIA GPU が無い PC では、TTS が 1 文あたり十数秒かかり会話�
 **`この内容でインストールしますか？ [y/N]:` に `y` または `yes` と答えたときだけ**始めます。それ以外（空の Enter、`n` など）は何も変更せずに終了します。
 `--yes` では確認を省きますが、表は必ず表示します。途中から再開するときは、取得済みの分を差し引いた「残りの量」を表示します。
 
-### Strata を使う（高性能な PC 向け・推奨）
+### Strata を使う（VRAM 12GB・RAM 48GB 以上の PC で推奨）
 
-選ばれたプロファイルが **high**（VRAM 20GB 以上かつ RAM 48GB 以上）で、ディスクに Strata の分（約 80GB）の空きもあるときは、
-setup が [Strata](https://github.com/Niko1221/Strata)（Qwen3.8-Flash-Next）を案内します。同梱の LLM より返答の質が大幅に上がります。
+**VRAM 12GB 以上かつ RAM 48GB 以上**で、ディスクに Strata の分（約 80GB）の空きもあるときは、プロファイル（high / mid / low）に関係なく、
+setup が [Strata](https://github.com/Niko1221/Strata)（Qwen3.8-Flash-Next）を案内します。同梱の LLM（mid なら Gemma 4 26B-A4B）より返答の質が大幅に上がります。
+VRAM が 12〜19GB の PC では、専門家のキャッシュが小さくなるぶん速度は下がります（Strata の README の実測: RTX 5070 12GB・RAM 64GB で IQ2_XS 約 79 tokens/s、IQ3_S 約 53 tokens/s）。
 
-- Strata の要件: VRAM 12GB 以上、RAM 48GB 以上（RAM 32GB では Coder 版しか載らず、日本語の雑談に弱いので案内しません）、ディスク約 80GB（ダウンロード約 70GB）。
+- Strata の要件: NVIDIA（または Strata 対応の AMD。ただしこのプロジェクト自体は NVIDIA 専用）で VRAM 12GB 以上、RAM 48GB 以上（RAM 32GB では Coder 版しか載らず、日本語の雑談に弱いので案内しません）、ディスク約 80GB（ダウンロード約 70GB）。
 - 注意: 別のソフトウェアです（ライセンスは Strata 側）。1 リクエストずつしか処理しません。起動時に 1〜3 分 PC が重くなります。
-- 選択肢: **[1]** Strata を導入して使う（`<インストール先>\strata` に取得し、Strata のインストーラーを別ウィンドウで起動。モデルの選択とダウンロードはそちらの画面）／ **[2]** すでに入っている（URL を入力）／ **[3]** 同梱の LLM で続ける。
-- `--yes` では約 70GB を勝手に入れません（同梱の high で続け、案内だけ表示）。`--llm strata` で [1]、`--llm external --llm-url http://127.0.0.1:8080/v1` で [2] を選べます。
+- 選択肢: **[1]** Strata を導入して使う（`<インストール先>\strata` に取得し、Strata のインストーラーを別ウィンドウで起動。モデルの選択とダウンロードはそちらの画面）／ **[2]** すでに入っている（URL を入力）／ **[3]** 同梱の LLM（選ばれているプロファイル名つき）で続ける。
+- `--yes` では約 70GB を勝手に入れません（選ばれた同梱プロファイルで続け、案内だけ表示）。`--llm strata` で [1]、`--llm external --llm-url http://127.0.0.1:8080/v1` で [2] を選べます。
 - [1] のあとは、`start.bat` が Strata を先に起動し、`/v1/models` が返るまで最大 10 分待ちます（進捗を表示）。ポートは Strata の `strata-*.json` から読みます。`stop.bat` は、`start.bat` が起動した Strata だけを止めます。
 - Strata が VRAM を専門家のキャッシュで埋めてしまわないよう、**この導入先の Strata の設定にだけ** `--vram-reserve-mib 3500`（TTS 用の余白）を入れます。LLM→TTS の直列化はオン、`reasoning_effort=none`、temperature 0.8 です。
 - 取得するコミットは固定しています（`82f46a8`）。Strata の更新は、`strata\UPDATE.bat` を自分で実行してください。
 - Strata のインストーラー（START-HERE.bat）は、Python が無い PC では Python 3.12 をユーザー領域に入れることがあります（Strata 側の挙動）。
+
+### Strata の拒否の抑制（ESP）と画像認識
+
+設定画面の LLM タブ（Strata のとき）と `configure.bat` で切り替えます。
+
+- **拒否の抑制（Strata の experimental speed projection）**: 既定はオフ。**名前と違って高速化ではありません。** Strata 同梱の制御ベクトルで「拒否の方向」を取り除くため、**モデルが依頼をほとんど断らなくなります（安全上の振る舞いが外れます）**。速度は 1 トークンあたり 0.2〜0.4% 遅くなる程度です。出力の責任は利用者にあります。ベクトルは Qwen3.8-Flash-Next 専用（Swift 1.5・Coder 版では使えません）で、ライセンスは Qwen Community License 1.0 です。オンにするときは確認ダイアログが出ます。キャラクターは成人のみ、という制限は ESP の有無に関係なく有効です。
+  - **start.bat が起動する Strata（`strata\`）**: オンにすると `strata-<モデル>-esp.json`（Strata のセットアップと同じ形。ログ名も `-esp.log`）を作ってそれで起動します。オフなら元の設定で起動します。変更後は Strata の再起動が必要です（画面に再起動ボタンを出します）。
+  - **自分で起動した Strata**: 起動の引数は変えられないので、リクエストの `experimental_speed_projection`（オンなら `true`、オフなら `false`）だけを送ります。ベクトルを読み込んで起動した Strata でのみ効きます。効いているかどうかは `/props` などに出ないため判別できません。
+- **画像認識（vision）**: `setup.bat` の Strata の経路で「GPU（推奨。1 枚 0.1〜0.5 秒、VRAM 約 1.4GB）／CPU（1 枚 10〜30 秒）／使わない（既定）」を選べます（`--vision gpu|cpu|no`。Strata のインストーラーにも渡します）。GPU のときは、TTS 用の余白 3500MiB にエンコーダの 1400MiB を足した 4900MiB を `--vram-reserve-mib` に設定します（Strata のセットアップは GPU でも CPU でも 700 を書くだけで、エンコーダの分を自動では上乗せしないため）。
+  - 設定画面で画像認識をオンにすると、会話画面に「画像を送る」パネル（ファイル選択・貼り付け・カメラ撮影）が出ます。画像はこの PC の中だけで扱い、**会話の記録（SQLite）にも保存しません**（設定画面でオンにすると残せます）。
+  - 外部のサーバーでは、サーバー側で画像認識が有効な場合のみ使えます。接続テストで小さな画像を送って確認できます。
+- 今後の拡張: 同梱の LLM（Gemma 4 / Qwen3.6）も mmproj を付ければ画像に対応できますが、今回は対象外です。
 
 ### setup.bat のオプション
 
@@ -108,7 +121,7 @@ llama.cpp `b11443`（CUDA 12 ビルド）／ Irodori-TTS-Server `61012c7`（`uv.
 - **外部の推論サーバー**（OpenAI 互換）: Strata / LM Studio / Ollama / vLLM / 別 PC の llama-server / クラウド API。base_url、API キー（任意）、モデル名（`/v1/models` から選択）、思考を止める方法（`reasoning_effort` / `chat_template_kwargs` / 送らない）、ツール呼び出しの有無、LLM→TTS の直列化のオン／オフを指定します。**接続テスト**ボタンで、応答時間・思考の混入・ツール呼び出しを確認できます。
   - 直列化: 同じ GPU で LLM と TTS を動かす場合は**オン**（VRAM と演算の取り合いを防ぎ、最初の音声が早くなります）。別 PC やクラウドならオフが目安です。
   - 外部サーバーは `start.bat` では起動しません。先に起動しておくと、`start.bat` が `/v1/models` が返るまで最大 2 分待ってから AIAvatarKit を起動します。
-  - プリセット: Strata（`:8080/v1`。1 リクエストずつしか処理しません。VRAM 12GB・RAM 48GB 以上が必要。推奨の条件は上の「Strata を使う」）、LM Studio（`:1234`）、Ollama（`:11434/v1`）、vLLM、別 PC、クラウド。ポートは各ツールの既定値で、変更できます。
+  - プリセット: Strata（`:8080/v1`。1 リクエストずつしか処理しません。VRAM 12GB・RAM 48GB 以上が必要。推奨の条件は上の「Strata を使う」。拒否の抑制（ESP）と画像認識は下の節）、LM Studio（`:1234`）、Ollama（`:11434/v1`）、vLLM、別 PC、クラウド。ポートは各ツールの既定値で、変更できます。
   - API キーは `config/settings.json` に保存します（`.gitignore` 済み）。画面には再表示せず（伏せ字）、ログにも出しません。
   - クラウド API（または別ネットワーク）を選ぶと、**会話の内容が外部に送られる**ことを画面に表示します。
 - LLM の方式・モデル・接続先・コンテキスト長を変えたら、画面の「保存して再起動」（または `start.bat` の再実行）で反映します。temperature と思考の設定は次のメッセージから反映されます。
