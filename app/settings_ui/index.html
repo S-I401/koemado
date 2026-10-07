@@ -121,6 +121,14 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
 
 <!-- ============================== LLM ============================== -->
 <section class="tab" id="tab-llm">
+  <div class="card" id="strataTip">
+    <div class="title">Strata（Qwen3.8-Flash-Next）の推奨条件</div>
+    <div class="note">同梱の LLM より返答の質が大幅に上がります。<strong>同梱プロファイルが high（VRAM 20GB 以上かつ RAM 48GB 以上）で、ディスクに約 80GB の空きがある PC</strong>で推奨します
+      （Strata 自体の要件は VRAM 12GB・RAM 48GB・ディスク約 80GB。RAM 32GB では Coder 版しか載らず、日本語の雑談に弱いので推奨しません）。
+      別ソフトウェアで（ライセンスは Strata 側）、1 リクエストずつしか処理せず、起動時に 1〜3 分 PC が重くなります。
+      導入は <code>setup.bat --llm strata</code>、すでに入っているときは下の「自分で用意した推論サーバー」でプリセット「Strata」を選びます。</div>
+    <div id="strataState" class="note"></div>
+  </div>
   <h2>LLM の方式</h2>
   <div class="row">
     <label style="display:flex;gap:6px;align-items:center;color:var(--text)"><input type="radio" name="mode" value="bundled"> 同梱の llama-server を使う（既定）</label>
@@ -381,6 +389,7 @@ function renderLlm() {
   $("exPreset").value = ex.preset || ""; $("exUrl").value = ex.base_url || ""; $("exModel").value = ex.model || "";
   $("exKey").value = ""; $("exKey").placeholder = ex.api_key_set ? "設定済み（変更するときだけ入力）" : "（なし）";
   $("exReasoning").value = ex.reasoning; $("exTools").checked = !!ex.tools; $("exSerialize").checked = !!ex.serialize;
+  $("strataState").textContent = ex.managed === "strata" ? "このインストールの strata/ にある Strata を、start.bat が起動します（ポートは strata-*.json に自動で合わせます）。" : "";
   syncLlmUi();
   document.querySelectorAll("input[name=profile]").forEach((r) => r.onchange = () => { selectedProfile = r.value; document.querySelectorAll("#tab-llm .card").forEach(x => x.classList.remove("sel")); r.closest(".card").classList.add("sel"); });
 }
@@ -451,7 +460,8 @@ function collectLlm() {
     patch.llm.custom = { source: src, repo: $("cRepo").value.trim(), file: $("cFile").value.trim(), path: $("cPath").value.trim() };
   } else {
     patch.llm.external = { preset: $("exPreset").value, base_url: $("exUrl").value.trim(), api_key: $("exKey").value, model: $("exModel").value.trim(),
-      reasoning: $("exReasoning").value, tools: $("exTools").checked, serialize: $("exSerialize").checked };
+      reasoning: $("exReasoning").value, tools: $("exTools").checked, serialize: $("exSerialize").checked,
+      managed: ($("exPreset").value === "strata" && S.settings.llm.external.managed) ? "strata" : "" };
   }
   return patch;
 }

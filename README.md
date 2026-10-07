@@ -34,6 +34,26 @@ NVIDIA GPU が無い PC では、TTS が 1 文あたり十数秒かかり会話�
 3. 導入が終わったら `start.bat` をダブルクリックします。LLM → TTS → STT → AIAvatarKit の順に別ウィンドウで起動し、準備ができたらブラウザで会話画面が開きます。
 4. 止めるときは `stop.bat` です。
 
+### 導入前の確認
+
+`setup.bat` は、検出結果と導入内容の表（項目ごとのダウンロード量・ディスク使用量、合計、インストール先の空き容量と導入後の残り、100Mbps / 1Gbps での概算時間）を出し、
+**`この内容でインストールしますか？ [y/N]:` に `y` または `yes` と答えたときだけ**始めます。それ以外（空の Enter、`n` など）は何も変更せずに終了します。
+`--yes` では確認を省きますが、表は必ず表示します。途中から再開するときは、取得済みの分を差し引いた「残りの量」を表示します。
+
+### Strata を使う（高性能な PC 向け・推奨）
+
+選ばれたプロファイルが **high**（VRAM 20GB 以上かつ RAM 48GB 以上）で、ディスクに Strata の分（約 80GB）の空きもあるときは、
+setup が [Strata](https://github.com/Niko1221/Strata)（Qwen3.8-Flash-Next）を案内します。同梱の LLM より返答の質が大幅に上がります。
+
+- Strata の要件: VRAM 12GB 以上、RAM 48GB 以上（RAM 32GB では Coder 版しか載らず、日本語の雑談に弱いので案内しません）、ディスク約 80GB（ダウンロード約 70GB）。
+- 注意: 別のソフトウェアです（ライセンスは Strata 側）。1 リクエストずつしか処理しません。起動時に 1〜3 分 PC が重くなります。
+- 選択肢: **[1]** Strata を導入して使う（`<インストール先>\strata` に取得し、Strata のインストーラーを別ウィンドウで起動。モデルの選択とダウンロードはそちらの画面）／ **[2]** すでに入っている（URL を入力）／ **[3]** 同梱の LLM で続ける。
+- `--yes` では約 70GB を勝手に入れません（同梱の high で続け、案内だけ表示）。`--llm strata` で [1]、`--llm external --llm-url http://127.0.0.1:8080/v1` で [2] を選べます。
+- [1] のあとは、`start.bat` が Strata を先に起動し、`/v1/models` が返るまで最大 10 分待ちます（進捗を表示）。ポートは Strata の `strata-*.json` から読みます。`stop.bat` は、`start.bat` が起動した Strata だけを止めます。
+- Strata が VRAM を専門家のキャッシュで埋めてしまわないよう、**この導入先の Strata の設定にだけ** `--vram-reserve-mib 3500`（TTS 用の余白）を入れます。LLM→TTS の直列化はオン、`reasoning_effort=none`、temperature 0.8 です。
+- 取得するコミットは固定しています（`82f46a8`）。Strata の更新は、`strata\UPDATE.bat` を自分で実行してください。
+- Strata のインストーラー（START-HERE.bat）は、Python が無い PC では Python 3.12 をユーザー領域に入れることがあります（Strata 側の挙動）。
+
 ### setup.bat のオプション
 
 ```
@@ -42,6 +62,7 @@ setup.bat --profile mid --yes             プロファイルを指定し、確�
 setup.bat --install-dir D:\aiavatar       インストール先を指定（既定: このフォルダ）
 setup.bat --llm external --llm-url http://127.0.0.1:1234/v1 --llm-model モデル名
                                           外部の推論サーバーを使う（llama.cpp とモデルは入れない）
+setup.bat --llm strata                    Strata を導入して使う（high の PC 向け。約 70GB）
 setup.bat --dry-run --simulate "vram=8,ram=32,disk=60"   別の PC を想定した判定（テスト用）
 ```
 
@@ -87,7 +108,7 @@ llama.cpp `b11443`（CUDA 12 ビルド）／ Irodori-TTS-Server `61012c7`（`uv.
 - **外部の推論サーバー**（OpenAI 互換）: Strata / LM Studio / Ollama / vLLM / 別 PC の llama-server / クラウド API。base_url、API キー（任意）、モデル名（`/v1/models` から選択）、思考を止める方法（`reasoning_effort` / `chat_template_kwargs` / 送らない）、ツール呼び出しの有無、LLM→TTS の直列化のオン／オフを指定します。**接続テスト**ボタンで、応答時間・思考の混入・ツール呼び出しを確認できます。
   - 直列化: 同じ GPU で LLM と TTS を動かす場合は**オン**（VRAM と演算の取り合いを防ぎ、最初の音声が早くなります）。別 PC やクラウドならオフが目安です。
   - 外部サーバーは `start.bat` では起動しません。先に起動しておくと、`start.bat` が `/v1/models` が返るまで最大 2 分待ってから AIAvatarKit を起動します。
-  - プリセット: Strata（`:8080/v1`。1 リクエストずつしか処理しません。VRAM 12GB 以上が必要）、LM Studio（`:1234`）、Ollama（`:11434/v1`）、vLLM、別 PC、クラウド。ポートは各ツールの既定値で、変更できます。
+  - プリセット: Strata（`:8080/v1`。1 リクエストずつしか処理しません。VRAM 12GB・RAM 48GB 以上が必要。推奨の条件は上の「Strata を使う」）、LM Studio（`:1234`）、Ollama（`:11434/v1`）、vLLM、別 PC、クラウド。ポートは各ツールの既定値で、変更できます。
   - API キーは `config/settings.json` に保存します（`.gitignore` 済み）。画面には再表示せず（伏せ字）、ログにも出しません。
   - クラウド API（または別ネットワーク）を選ぶと、**会話の内容が外部に送られる**ことを画面に表示します。
 - LLM の方式・モデル・接続先・コンテキスト長を変えたら、画面の「保存して再起動」（または `start.bat` の再実行）で反映します。temperature と思考の設定は次のメッセージから反映されます。
@@ -147,6 +168,7 @@ Irodori-TTS（MIT ライセンス）には、ライセンスに加えて次の�
 | [PyTorch](https://pytorch.org/) | TTS の実行 | BSD-3-Clause |
 | [Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B)（GGUF: unsloth） | LLM（high） | Apache-2.0 |
 | [Gemma 4](https://ai.google.dev/gemma/docs/gemma_4_license)（26B-A4B / E4B） | LLM（mid / low） | Gemma 4 のライセンス（Hugging Face 上の表示は Apache-2.0。利用前に原文を確認してください） |
+| [Strata](https://github.com/Niko1221/Strata)（任意） | 高性能 PC 向けの LLM | MIT（モデルごとに別のライセンス。Strata 側の案内に従う） |
 | [uv](https://github.com/astral-sh/uv) / [MinGit](https://github.com/git-for-windows/git) | 導入ツール | MIT・Apache-2.0 / GPL-2.0（必要なときだけ導入） |
 
 ブラウザ UI の画像（キャラクター）は AIAvatarKit のサンプルを使わず、設定画面で選んだキャラクターの画像（無ければシルエット）を表示します。
@@ -167,4 +189,4 @@ characters/            キャラクター（_common.md = 共通ルール、mio/ 
 tools/                 e2e_test.py（WebSocket テスト）、make_voices.py（Voice Design で声を作る）
 ```
 
-導入後にできるもの（Git には入れません）: `config.json` `config/` `llama.cpp/` `models/` `tts/` `hf-home/` `torch-home/` `app/.venv` `stt/.venv` `app/html/` `app/data/` `logs/` など。
+導入後にできるもの（Git には入れません）: `strata/` `strata-data/`（Strata を選んだとき）`config.json` `config/` `llama.cpp/` `models/` `tts/` `hf-home/` `torch-home/` `app/.venv` `stt/.venv` `app/html/` `app/data/` `logs/` など。

@@ -71,6 +71,7 @@ MIN_DRIVER = 570
 MIN_COMPUTE_CAPABILITY = 7.5          # Turing（RTX 20 系）以降。bf16 と torchao の int8 が使える世代
 RAM_VRAM_TOLERANCE = 0.93             # 搭載 32GB でも OS 側の表示は 31.x GiB になるので、少し余裕を持って判定する
 
+import profiles  # noqa: E402
 from profiles import (PROFILES, PROFILE_ORDER, TTS_VRAM_MIB, DESKTOP_HEADROOM_MIB, llm_settings as _llm_settings)  # noqa: E402
 
 # ---- 容量の見積もり（GB。インストール先のドライブに必要な分） ----
@@ -84,14 +85,15 @@ SIZE_LABELS = {
     "app_env": "AIAvatarKit の実行環境",
     "ui": "ブラウザ UI",
 }
+# (ダウンロード量, ディスク使用量) の概算 GiB。ディスクは展開後で、導入中のキャッシュ分を含む
 SIZES_GB = {
-    "llama.cpp": 1.9,       # 展開後 1.2GB + zip（展開後に消す）
-    "tts_env": 6.0,       # PyTorch cu128 + 依存（実測 5.2GB）
-    "tts_models": 1.4,
-    "stt_env": 0.3,
-    "stt_model": 0.5,
-    "app_env": 0.8,
-    "ui": 0.05,
+    "llama.cpp": (0.64, 1.9),    # zip 2 本 → 展開後 1.2GB（zip は展開後に消す）
+    "tts_env": (3.2, 6.0),       # PyTorch cu128 + 依存（展開後の実測 5.2GB）+ Python 3.10
+    "tts_models": (1.3, 1.4),
+    "stt_env": (0.1, 0.3),
+    "stt_model": (0.5, 0.5),
+    "app_env": (0.3, 0.9),       # Python 3.12 を含む
+    "ui": (0.04, 0.05),
 }
 DISK_MARGIN_GB = 3.0
 
@@ -278,26 +280,88 @@ def model_present(install: Path, name: str) -> bool:
     return f.exists() and f.stat().st_size >= m["size_bytes"]
 
 
+def _item(label: str, dl: float, disk: float, done: bool = False, partial_gb: float = 0.0) -> dict:
+    """done: 導入済み。partial_gb: 取りかけのダウンロード済みの量（残りから差し引く）"""
+    if done:
+        return {"label": label, "dl": 0.0, "disk": 0.0, "done": True, "partial": 0.0}
+    got = min(partial_gb, dl)
+    return {"label": label, "dl": dl - got, "disk": max(0.0, disk - got), "done": False, "partial": got}
+
+
+def model_partial_gb(install: Path, size_bytes: int) -> float:
+    d = install / "models" / ".cache" / "huggingface" / "download"
+    best = 0
+    if d.is_dir():
+        for f in d.glob("*.incomplete"):
+            best = max(best, f.stat().st_size)
+    return min(best, size_bytes) / GIB
+
+
+def _components(install: Path, skip: tuple = ()) -> list[dict]:
+    out = []
+    for key, (dl, disk) in SIZES_GB.items():
+        if key in skip:
+            continue
+        out.append(_item(SIZE_LABELS[key], dl, disk, component_state(install, key)))
+    return out
+
+
+def _finish_plan(items: list[dict]) -> dict:
+    dl = sum(i["dl"] for i in items)
+    disk = sum(i["disk"] for i in items)
+    return {"items": items, "download_gb": dl, "disk_gb": disk, "need_gb": disk + DISK_MARGIN_GB}
+
+
 def plan_for(install: Path, name: str) -> dict:
     m = PROFILES[name]["model"]
-    items = []
-    model_gb = 0.0 if model_present(install, name) else m["size_bytes"] / GIB
-    items.append((f"LLM モデル {m['file']}", model_gb))
-    for key, gb in SIZES_GB.items():
-        items.append((SIZE_LABELS[key], 0.0 if component_state(install, key) else gb))
-    total = sum(gb for _, gb in items)
-    return {"items": items, "download_gb": total, "need_gb": total + DISK_MARGIN_GB, "model_gb": m["size_bytes"] / GIB}
+    gb = m["size_bytes"] / GIB
+    items = [_item(f"LLM モデル {m['file']}", gb, gb, model_present(install, name), model_partial_gb(install, m["size_bytes"]))]
+    items += _components(install)
+    plan = _finish_plan(items)
+    plan["model_gb"] = gb
+    return plan
 
 
 def plan_external(install: Path) -> dict:
     """外部の推論サーバーを使うとき: llama.cpp と GGUF は不要"""
-    items = []
-    for key, gb in SIZES_GB.items():
-        if key == "llama.cpp":
-            continue
-        items.append((SIZE_LABELS[key], 0.0 if component_state(install, key) else gb))
-    total = sum(gb for _, gb in items)
-    return {"items": items, "download_gb": total, "need_gb": total + DISK_MARGIN_GB, "model_gb": 0.0}
+    return _finish_plan(_components(install, skip=("llama.cpp",)))
+
+
+def strata_installed(install: Path) -> bool:
+    info = ctl.strata_info(install)
+    return bool(info and info.get("bat"))
+
+
+def strata_partial_gb(install: Path) -> float:
+    d = install / "strata-data"
+    total = 0
+    if d.is_dir():
+        for f in d.rglob("*"):
+            try:
+                if f.is_file():
+                    total += f.stat().st_size
+            except OSError:
+                pass
+    return total / GIB
+
+
+def plan_strata(install: Path) -> dict:
+    """Strata を入れるとき: GGUF と llama.cpp は不要。Strata 本体とモデルは Strata のインストーラーが取得する"""
+    st = profiles.STRATA
+    items = [_item("Strata（別途、Strata のインストーラーで約 70GB）", st["download_gb"], st["disk_gb"],
+                   strata_installed(install), strata_partial_gb(install))]
+    items += _components(install, skip=("llama.cpp",))
+    return _finish_plan(items)
+
+
+def strata_eligible(hw: dict, profile: str | None, install: Path) -> bool:
+    """high（VRAM>=20GB かつ RAM>=48GB）で、Strata の要件（VRAM 12GB・RAM 48GB・ディスク約 80GB）を満たすとき"""
+    if profile != "high":
+        return False
+    st = profiles.STRATA
+    if hw["gpu"]["vram_mib"] / 1024 < st["min_vram_gib"] * RAM_VRAM_TOLERANCE or hw["ram_total_gib"] < st["min_ram_gib"] * RAM_VRAM_TOLERANCE:
+        return False
+    return hw["disk_free_gib"] >= plan_strata(install)["need_gb"]
 
 
 def choose_profile(hw: dict, install: Path, forced: str | None) -> tuple[str, list[str]]:
@@ -334,11 +398,14 @@ def llm_settings(name: str, hw: dict) -> dict:
 
 
 def show_plan(hw: dict, name: str, notes: list[str], plan: dict, llm: dict, install: Path, ports: dict, args=None):
-    if name == "external":
+    if name in ("external", "strata"):
         say("\n=== 選んだ構成 ===")
-        say(f"  LLM : 外部の推論サーバーを使う（{args.llm_url}）。llama.cpp とモデルは入れません")
-        if settings_store.is_cloud_url(args.llm_url):
-            say("  ※ 会話の内容が外部のサービスに送られます。")
+        if name == "strata":
+            say("  LLM : Strata（Qwen3.8-Flash-Next）を導入して使う。llama.cpp と同梱のモデルは入れません")
+        else:
+            say(f"  LLM : 外部の推論サーバーを使う（{args.llm_url}）。llama.cpp とモデルは入れません")
+            if settings_store.is_cloud_url(args.llm_url):
+                say("  ※ 会話の内容が外部のサービスに送られます。")
         say("  TTS : Irodori-TTS v4.1 Small（int8）／ STT: faster-whisper small（CPU）")
         for n in notes:
             say(f"  ※ {n}")
@@ -361,16 +428,57 @@ def show_plan(hw: dict, name: str, notes: list[str], plan: dict, llm: dict, inst
     _show_items(hw, plan, install, ports)
 
 
+def _minutes(gb: float, mbps: float) -> str:
+    """回線の実効速度を公称の 80% として、ダウンロードだけの概算時間"""
+    m = gb * 1024 * 8 / (mbps * 0.8) / 60
+    if m < 1:
+        return "1 分未満"
+    if m >= 120:
+        return f"約 {m / 60:.1f} 時間"
+    return f"約 {m:.0f} 分"
+
+
 def _show_items(hw: dict, plan: dict, install: Path, ports: dict):
-    say("\n=== インストール内容（これから必要な分） ===")
-    for label, gb in plan["items"]:
-        if gb > 0:
-            say(f"  {label:<44} 約 {gb:5.1f} GiB")
+    resumed = any(i["partial"] > 0 for i in plan["items"]) or any(i["done"] for i in plan["items"])
+    say("\n=== インストール内容（" + ("途中まで済んでいる分を差し引いた、残りの量" if resumed else "これから必要な分") + "） ===")
+    say(f"  {'項目':<46}{'ダウンロード':>12}{'ディスク':>10}")
+    for i in plan["items"]:
+        if i["done"]:
+            say(f"  {i['label']:<44}  導入済み")
         else:
-            say(f"  {label:<44} 導入済み")
-    say(f"  ダウンロード/展開の合計: 約 {plan['download_gb']:.1f} GiB（余裕を含め {plan['need_gb']:.0f} GiB を使う見込み。空き {hw['disk_free_gib']:.1f} GiB）")
+            extra = f"（取得済み {i['partial']:.1f} GiB を差し引き）" if i["partial"] > 0 else ""
+            say(f"  {i['label']:<44}{i['dl']:>8.1f} GiB{i['disk']:>7.1f} GiB {extra}")
+    free = hw["disk_free_gib"]
+    say(f"  {'ダウンロード量の合計':<44}{plan['download_gb']:>8.1f} GiB")
+    say(f"  {'ディスク使用量の合計（展開後。余裕 ' + format(DISK_MARGIN_GB, '.0f') + ' GiB を除く）':<40}{'':>8}{plan['disk_gb']:>7.1f} GiB")
+    say(f"  インストール先の空き容量: {free:.1f} GiB（{hw['drive']}）→ 導入後の残り 約 {free - plan['need_gb']:.1f} GiB（余裕 {DISK_MARGIN_GB:.0f} GiB を含めて計算）")
+    dl = plan["download_gb"]
+    say(f"  ダウンロードの目安: 100Mbps で{_minutes(dl, 100)}、1Gbps で{_minutes(dl, 1000)}"
+        "（回線の実効速度を公称の 80% として計算。展開・環境構築の時間は別にかかります）")
     say(f"  インストール先: {install}")
     say(f"  ポート: LLM {ports['llm']} / TTS {ports['tts']} / STT {ports['stt']} / アプリ {ports['app']}（すべて 127.0.0.1 のみ）")
+
+
+def strata_box(hw: dict, install: Path):
+    st = profiles.STRATA
+    line = "=" * 70
+    say("\n" + line)
+    say("  おすすめ: この PC なら Strata（Qwen3.8-Flash-Next）が動きます")
+    say("  同梱の LLM より返答の質が大幅に上がるので、こちらを推奨します。")
+    say(line)
+    say(f"  ・ダウンロード量: 約 {st['download_gb']} GB（ディスクは約 {st['disk_gb']} GB 必要）。初回の導入は時間がかかります")
+    say("  ・Strata は 1 リクエストずつしか処理しません（会話が重なると順番待ちになります）")
+    say("  ・起動時に 1〜3 分、PC が重くなります（モデルを RAM に読み込むため。初回はさらに長い）")
+    say("  ・Strata は別のソフトウェアです（ライセンスは Strata 側。MIT + モデルごとのライセンス）")
+    say(f"  ・要件: VRAM {st['min_vram_gib']}GB 以上 / RAM {st['min_ram_gib']}GB 以上 / ディスク約 {st['disk_gb']}GB。RAM 32GB では Coder 版（コード向け）しか載らず、日本語の雑談に弱いので案内しません")
+    say("  ・Strata が VRAM を埋めすぎないよう、TTS 用に約 3.5GB の余白を設定します")
+    say("")
+    say("  [1] Strata を導入して使う（推奨）")
+    say("      → インストール先の strata\\ に取得し、Strata のインストーラーを別ウィンドウで起動します。")
+    say("        モデルの選択とダウンロードは Strata 側の画面で行います。")
+    say("  [2] Strata はもう入っている（URL を入力して使う）")
+    say("  [3] 同梱の LLM（high）で続ける")
+    say(line)
 
 
 # ---------------------------------------------------------------- ダウンロード部品 ----
@@ -606,6 +714,32 @@ class Installer:
             index.write_text(text, encoding="utf-8")
             overlay_mark.write_text("ok")
 
+    # ---- Strata（別ソフトウェア。インストール先の strata\\ に取得し、Strata 自身のインストーラーを起動する） ----
+    def clone_strata(self):
+        st = profiles.STRATA
+        d = self.root / "strata"
+        if not (d / ".git").exists():
+            say("\n[Strata] Strata を取得します（別ソフトウェア。ライセンスは Strata 側）。")
+            run(["git", "clone", st["repo"], d], env=self.env)
+        run(["git", "fetch", "origin"], cwd=d, env=self.env, check=False)
+        run(["git", "checkout", "--quiet", st["commit"]], cwd=d, env=self.env)
+
+    def launch_strata_installer(self, port: int):
+        """Strata の START-HERE.bat を別ウィンドウで起動する。モデルの選択とダウンロードは Strata 側の画面で行う"""
+        d = self.root / "strata"
+        if ctl.strata_info(self.root) and ctl.strata_info(self.root).get("bat"):
+            say("\n[Strata] 導入済み（起動は start.bat が行います）")
+            return
+        data = self.root / "strata-data"
+        cmd = ["cmd", "/c", str(d / "START-HERE.bat"), "--setup", "--port", str(port), "--data-dir", str(data),
+               "--vram-reserve-mib", str(ctl.STRATA_RESERVE_MIB)]
+        say("\n[Strata] Strata のインストーラーを別ウィンドウで起動します。")
+        say("  ・モデルの選択（RAM に合わせた推奨が出ます。迷ったら Enter）とダウンロード（約 70GB）は、そのウィンドウで行います。")
+        say("  ・ダウンロードが終わるとモデルが起動します（PC が 1〜3 分重くなります）。そのあとは start.bat から使えます。")
+        say(f"  ・ポートは {port}、モデルの保存先は {data} です。")
+        env = dict(self.env)
+        subprocess.Popen(cmd, cwd=str(d), env=env, creationflags=subprocess.CREATE_NEW_CONSOLE)
+
     # ---- 設定の書き出し ----
     def write_config(self, settings: dict):
         ctl.save_config(self.cfg, self.root)
@@ -641,13 +775,21 @@ def initial_settings(args, name: str) -> dict:
     if settings_store.settings_path(Path(args.install_dir).resolve()).exists() and not args.llm_explicit:
         return s   # 再実行では、設定画面で変えた内容を上書きしない
     s["weather_location"] = args.weather_location
-    if args.llm == "external":
+    if args.llm == "strata":
+        s["llm"]["mode"] = "external"
+        ext = s["llm"]["external"]
+        pr = settings_store.EXTERNAL_PRESETS["strata"]
+        ext.update({"preset": "strata", "base_url": args.llm_url.rstrip("/"), "model": "", "reasoning": pr["reasoning"],
+                    "serialize": True, "tools": True, "managed": "strata"})
+        s["llm"]["temperature"] = 0.8
+    elif args.llm == "external":
         s["llm"]["mode"] = "external"
         ext = s["llm"]["external"]
         ext["base_url"] = args.llm_url.rstrip("/")
         ext["model"] = args.llm_model or ext.get("model", "")
         if args.llm_api_key:
             ext["api_key"] = args.llm_api_key
+        ext["managed"] = ""
         preset = next((k for k, v in settings_store.EXTERNAL_PRESETS.items() if v["base_url"].rstrip("/") == ext["base_url"]), "")
         ext["preset"] = preset
         if preset:
@@ -659,29 +801,52 @@ def initial_settings(args, name: str) -> dict:
     return s
 
 
-def ask_llm_kind(args) -> str:
-    """対話モードで、同梱の LLM か外部の推論サーバーかを選ばせる"""
+def ask_text(prompt: str, default: str = "") -> str:
+    try:
+        ans = input(prompt).strip()
+    except EOFError:
+        return default
+    return ans or default
+
+
+def ask_llm_kind(args, offer_strata: bool, hw: dict, install: Path) -> str:
+    """LLM の方式を決める。戻り値: bundled / external / strata
+
+    --yes や --dry-run では質問せず、同梱の LLM で続ける（Strata の約 70GB を勝手に入れない）。
+    """
     if args.llm:
         return args.llm
-    if args.yes or args.dry_run or not sys.stdin.isatty():
+    if offer_strata:
+        strata_box(hw, install)
+        if args.yes or args.dry_run:
+            say("  （--yes / --dry-run では質問しません。同梱の LLM（high）で続けます。Strata を使うには --llm strata を付けて実行してください）")
+            return "bundled"
+        ans = ask_text("番号を入力 [1]: ", "1")
+        if ans == "2":
+            args.llm_url = ask_text(f"Strata の base_url（/v1 まで） [http://127.0.0.1:{profiles.STRATA['default_port']}/v1]: ",
+                                    f"http://127.0.0.1:{profiles.STRATA['default_port']}/v1")
+            args.llm_model = ""
+            return "external"
+        return "strata" if ans == "1" else "bundled"
+    if args.yes or args.dry_run:
         return "bundled"
     say("LLM（返答を考えるモデル）をどうしますか？")
     say("  1) 同梱の LLM を使う（llama.cpp とモデルを自動で入れる。おすすめ）")
-    say("  2) 自分で用意した推論サーバーを使う（Strata / LM Studio / Ollama / vLLM / 別 PC / クラウド API）")
-    ans = input("番号を入力 [1]: ").strip() or "1"
+    say("  2) 自分で用意した推論サーバーを使う（LM Studio / Ollama / vLLM / 別 PC / クラウド API など）")
+    ans = ask_text("番号を入力 [1]: ", "1")
     if ans != "2":
         return "bundled"
     say("\nプリセット: " + " / ".join(f"{k}={v['label']}" for k, v in settings_store.EXTERNAL_PRESETS.items()))
-    preset = input("プリセット名（空なら URL を直接入力）: ").strip()
+    preset = ask_text("プリセット名（空なら URL を直接入力）: ")
     default_url = settings_store.EXTERNAL_PRESETS.get(preset, {}).get("base_url", "")
-    url = input(f"base_url（/v1 まで） [{default_url}]: ").strip() or default_url
+    url = ask_text(f"base_url（/v1 まで） [{default_url}]: ", default_url)
     if not url:
         die("URL が必要です。")
     args.llm_url = url
-    args.llm_model = input("モデル名（空なら後で設定画面で選ぶ）: ").strip()
+    args.llm_model = ask_text("モデル名（空なら後で設定画面で選ぶ）: ")
     if settings_store.is_cloud_url(url):
         say("※ 会話の内容が外部のサービスに送られます。")
-        args.llm_api_key = input("API キー（任意）: ").strip()
+        args.llm_api_key = ask_text("API キー（任意）: ")
     return "external"
 
 
@@ -695,7 +860,7 @@ def main():
     ap.add_argument("--install-dir", default=str(SRC_DIR), help="インストール先（既定: このフォルダ）")
     ap.add_argument("--simulate", help='模擬入力（テスト用）例: "vram=8,ram=32,disk=60,cores=8,driver=555"')
     ap.add_argument("--weather-location", default="東京", help="天気ツールの既定の地名（既定: 東京）")
-    ap.add_argument("--llm", choices=["bundled", "external"], help="bundled=同梱の llama-server（既定） / external=自分で用意した OpenAI 互換サーバー")
+    ap.add_argument("--llm", choices=["bundled", "external", "strata"], help="bundled=同梱の llama-server（既定） / external=自分で用意した OpenAI 互換サーバー / strata=Strata を導入して使う（high の PC 向け。約 70GB）")
     ap.add_argument("--llm-url", default="", help="external のときの base_url（/v1 まで）")
     ap.add_argument("--llm-model", default="", help="external のときのモデル名")
     ap.add_argument("--llm-api-key", default="", help="external のときの API キー（任意。config/settings.json に保存される）")
@@ -708,22 +873,34 @@ def main():
     hw = detect_hardware(install, sim)
     print_hardware(hw)
     args.llm_explicit = bool(args.llm)
-    kind = ask_llm_kind(args)
-    args.llm_explicit = args.llm_explicit or (kind == "external")
+    # 先にプロファイルを決める（Strata の案内は、選ばれたプロファイルが high のときだけ）
+    name, notes, llm = None, [], None
+    if args.llm in (None, "bundled"):
+        check_requirements(hw)
+        name, notes = choose_profile(hw, install, args.profile)
+    offer = args.llm is None and strata_eligible(hw, name, install)
+    kind = ask_llm_kind(args, offer, hw, install)
+    args.llm_explicit = args.llm_explicit or kind in ("external", "strata")
     args.llm = kind
-    external = kind == "external"
-    if external and not args.llm_url:
+    external = kind in ("external", "strata")
+    if kind == "external" and not args.llm_url:
         die("--llm external には --llm-url（例: http://127.0.0.1:8081/v1）が必要です。")
-    check_requirements(hw, external=external)
-
-    llm = None
     if external:
+        check_requirements(hw, external=True)
+
+    if kind == "strata":
+        if not strata_eligible(hw, "high", install) and not args.yes:
+            say("※ この PC は Strata の推奨条件（high かつ VRAM 12GB・RAM 48GB・ディスク約 80GB）を満たしていません。続けると動かない可能性があります。")
+        name, notes = "strata", []
+        plan = plan_strata(install)
+        if hw["disk_free_gib"] < plan["need_gb"]:
+            die(f"空き容量が足りません。Strata を含めて約 {plan['need_gb']:.0f} GiB 必要ですが、{hw['drive']} の空きは {hw['disk_free_gib']:.1f} GiB です。")
+    elif kind == "external":
         name, notes = "external", []
         plan = plan_external(install)
         if hw["disk_free_gib"] < plan["need_gb"]:
             die(f"空き容量が足りません。約 {plan['need_gb']:.0f} GiB 必要ですが、{hw['drive']} の空きは {hw['disk_free_gib']:.1f} GiB です。")
     else:
-        name, notes = choose_profile(hw, install, args.profile)
         plan = plan_for(install, name)
         llm = llm_settings(name, hw)
 
@@ -740,15 +917,20 @@ def main():
     if ports != ctl.DEFAULT_PORTS and not old_cfg:
         notes.append("既定のポートが使用中だったため、空きポートに変更しました: " + ", ".join(f"{k}={v}" for k, v in ports.items()))
 
+    if kind == "strata":
+        args.llm_url = f"http://127.0.0.1:{ports['llm']}/v1"
     show_plan(hw, name, notes, plan, llm, install, ports, args)
     if args.dry_run:
         say(f"\n[dry-run] 選ばれた構成: {name}  （何も変更していません）")
         return 0
     if not args.yes:
+        # 明示的な同意（y / yes）以外はすべて中止。空の Enter も中止
         try:
-            input("\nこの内容で導入します。Enter で続行、Ctrl+C で中止: ")
+            ans = input("\nこの内容でインストールしますか？ [y/N]: ").strip().lower()
         except (KeyboardInterrupt, EOFError):
-            say("\n中止しました。")
+            ans = ""
+        if ans not in ("y", "yes"):
+            say("中止しました（何も変更していません）。")
             return 1
 
     install.mkdir(parents=True, exist_ok=True)
@@ -760,12 +942,18 @@ def main():
     if not external:
         inst.install_llama()
         inst.install_model(name)
+    if kind == "strata":
+        inst.clone_strata()
     inst.install_stt()
     inst.install_app()
     inst.install_tts()
     inst.write_config(initial_settings(args, name))
     inst.cleanup()
+    if kind == "strata":
+        inst.launch_strata_installer(ports["llm"])
     say(f"\n=== 導入が完了しました（{(time.time() - started) / 60:.1f} 分）===")
+    if kind == "strata":
+        say("  ※ Strata のインストーラー（別ウィンドウ）が終わってから start.bat を実行してください。")
     say(f"  起動: {install / 'start.bat'} をダブルクリック")
     say(f"  停止: {install / 'stop.bat'}")
     say(f"  設定（声・LLM・キャラクター）: 起動後に http://127.0.0.1:{ports['app']}/settings、または {install / 'configure.bat'}")

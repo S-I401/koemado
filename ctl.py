@@ -235,12 +235,94 @@ def listener_pids(port: int) -> set[int]:
     return pids
 
 
+def pid_alive(pid: int) -> bool:
+    out = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True, errors="replace",
+                         stdin=subprocess.DEVNULL, creationflags=0x08000000).stdout or ""
+    return str(pid) in out
+
+
 def kill_tree(pid: int):
     subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)], capture_output=True, stdin=subprocess.DEVNULL, creationflags=0x08000000)
 
 
 def pid_file() -> Path:
     return RUN_DIR / "pids.json"
+
+
+# ---------------------------------------------------------------- Strata（別ソフトウェア。インストール先の strata/ にあるものだけを扱う） ----
+
+STRATA_RESERVE_MIB = 3500       # TTS（ピーク約 2.8GB）用に、Strata の専門家キャッシュが残す VRAM
+STRATA_WAIT_SEC = 600
+
+
+def strata_dir(root: Path = ROOT) -> Path:
+    return root / "strata"
+
+
+def strata_info(root: Path = ROOT) -> dict | None:
+    """インストール先の Strata の設定（strata-*.json）と起動 bat（run-*.bat）を探す。新しいものを優先"""
+    d = strata_dir(root)
+    if not d.is_dir():
+        return None
+    jsons = sorted((f for f in d.glob("strata-*.json") if ".bak" not in f.name), key=lambda f: f.stat().st_mtime, reverse=True)
+    bats = sorted((f for f in d.glob("run-*.bat") if ".bak" not in f.name), key=lambda f: f.stat().st_mtime, reverse=True)
+    info = {"dir": d, "json": None, "port": None, "bat": bats[0] if bats else None}
+    for j in jsons:
+        try:
+            data = json.loads(j.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        info["json"], info["port"] = j, data.get("port")
+        break
+    return info
+
+
+def ensure_strata_reserve(info: dict, mib: int = STRATA_RESERVE_MIB) -> bool:
+    """clone した Strata の設定にだけ、TTS 用の VRAM の余白（--vram-reserve-mib）を入れる。変えたら True"""
+    j = info.get("json")
+    if not j:
+        return False
+    data = json.loads(j.read_text(encoding="utf-8"))
+    args = data.setdefault("args", [])
+    if "--vram-reserve-mib" in args[:-1]:
+        i = args.index("--vram-reserve-mib") + 1
+        if int(args[i]) >= mib:
+            return False
+        args[i] = str(mib)
+    else:
+        args += ["--vram-reserve-mib", str(mib)]
+    j.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+    return True
+
+
+def strata_launch_bat(info: dict, root: Path = ROOT) -> Path:
+    """Strata の run-*.bat から、ブラウザを開く --open を外した起動用 bat を作る"""
+    text = info["bat"].read_text(encoding="utf-8", errors="replace")
+    text = text.replace(' "--open"', "").replace(" --open", "")
+    out = root / "run" / "strata-start.bat"
+    out.parent.mkdir(exist_ok=True)
+    out.write_text(text.replace("pause", "rem pause"), encoding="utf-8")
+    return out
+
+
+def managed_strata(cfg: dict) -> bool:
+    s = settings_store.load_settings(ROOT)
+    return s["llm"]["mode"] == "external" and s["llm"]["external"].get("managed") == "strata"
+
+
+def sync_strata_port(cfg: dict) -> dict | None:
+    """Strata の設定ファイルのポートが、こちらの設定と違えば合わせる（設定画面で変えられる）"""
+    info = strata_info()
+    if not info or not info.get("port"):
+        return info
+    s = settings_store.load_settings(ROOT)
+    from urllib.parse import urlparse
+    cur = urlparse(s["llm"]["external"]["base_url"])
+    if cur.port != info["port"]:
+        base = f"{cur.scheme}://{cur.hostname}:{info['port']}{cur.path or '/v1'}"
+        settings_store.update_settings({"llm": {"external": {"base_url": base}}}, ROOT)
+        print(f"Strata のポートを strata-*.json に合わせました: {info['port']}")
+    return info
 
 
 def active_services(cfg: dict) -> list[str]:
@@ -262,6 +344,9 @@ def stop(cfg: dict = None, quiet: bool = False, only: list[str] = None):
     pids = read_pids()
     names = [n for n in reversed(SERVICES) if (only is None or n in only)]
     ext_llm = llm_resolved(cfg)["mode"] == "external"
+    if only is None and "strata" in pids:       # こちらが起動した Strata だけ止める（自分で起動したものは止めない）
+        kill_tree(int(pids.pop("strata")))
+        say("  Strata: 停止")
     for name in names:
         if name == "llm" and ext_llm:
             continue
@@ -283,21 +368,59 @@ def stop(cfg: dict = None, quiet: bool = False, only: list[str] = None):
             pass
 
 
-def wait_external_llm(cfg: dict) -> bool:
+def wait_external_llm(cfg: dict, limit: int = None, what: str = "外部の LLM サーバー") -> bool:
     r = llm_resolved(cfg)
-    limit = cfg.get("external_wait_sec", 120)
-    print(f"外部の LLM サーバー（{r['base_url']}）の応答を待っています（最大 {limit} 秒）。")
-    print("  ※ このサーバーは start.bat では起動しません。先に起動しておいてください。")
-    deadline = time.time() + limit
+    limit = limit or cfg.get("external_wait_sec", 120)
+    print(f"{what}（{r['base_url']}）の応答を待っています（最大 {limit} 秒）。")
+    if what == "外部の LLM サーバー":
+        print("  ※ このサーバーは start.bat では起動しません。先に起動しておいてください。")
+    started = time.time()
+    deadline = started + limit
+    last = 0
     while time.time() < deadline:
         if check_health(cfg, "llm"):
-            print("  外部 LLM: 接続できました。")
+            print(f"  LLM: 接続できました（{time.time() - started:.0f} 秒）。")
             return True
+        if time.time() - last >= 15:
+            last = time.time()
+            print(f"  ... 待機中 {time.time() - started:.0f} / {limit} 秒", flush=True)
         time.sleep(2)
     print(f"[エラー] {limit} 秒待ちましたが、{r['base_url']}/models に接続できませんでした。")
-    print("  ・推論サーバー（Strata / LM Studio / Ollama など）が起動しているか確認してください。")
-    print("  ・URL とポートが合っているか、API キーが必要でないか、設定画面（/settings）か configure.bat で確認してください。")
+    if what.startswith("Strata"):
+        print("  ・初回の読み込みは長くかかります。Strata の別ウィンドウのログ（logs/strata.log）を確認し、もう一度 start.bat を実行してください。")
+        print("  ・Strata のインストールが終わっていないときは、strata フォルダの START-HERE.bat を実行して完了させてください。")
+    else:
+        print("  ・推論サーバー（Strata / LM Studio / Ollama など）が起動しているか確認してください。")
+        print("  ・URL とポートが合っているか、API キーが必要でないか、設定画面（/settings）か configure.bat で確認してください。")
     return False
+
+
+def start_managed_strata(cfg: dict) -> bool:
+    """インストール先の Strata を起動して、/v1/models が返るまで待つ"""
+    info = sync_strata_port(cfg)
+    if not info or not info.get("bat"):
+        print("[エラー] Strata のインストールが終わっていません（strata/run-*.bat がありません）。")
+        print("  strata フォルダの START-HERE.bat を実行して、モデルのダウンロードまで完了させてください。")
+        return False
+    if check_health(cfg, "llm"):
+        print("Strata: すでに起動しています。")
+        return True
+    old_pid = read_pids().get("strata")
+    if old_pid and pid_alive(int(old_pid)):
+        print("Strata: 前回起動したものがまだ読み込み中です。そのまま待ちます。")
+        return wait_external_llm(cfg, cfg.get("strata_wait_sec", STRATA_WAIT_SEC), what="Strata")
+    if ensure_strata_reserve(info):
+        print(f"Strata の設定に TTS 用の VRAM の余白を入れました（--vram-reserve-mib {STRATA_RESERVE_MIB}）。")
+    bat = strata_launch_bat(info)
+    log = LOG_DIR / "strata.log"
+    runner = [sys.executable, str(ROOT / "ctl.py"), "_run", "Strata", str(log), "--", "cmd", "/c", str(bat)]
+    print("Strata を起動します（別ウィンドウ）。")
+    print("  ※ 起動中の 1〜3 分（初回はもっと長い）は PC が重くなります。ウィンドウを閉じずに待ってください。")
+    proc = subprocess.Popen(runner, cwd=str(info["dir"]), env=base_env(cfg), creationflags=subprocess.CREATE_NEW_CONSOLE)
+    pids = read_pids()
+    pids["strata"] = proc.pid
+    pid_file().write_text(json.dumps(pids))
+    return wait_external_llm(cfg, cfg.get("strata_wait_sec", STRATA_WAIT_SEC), what="Strata")
 
 
 def start(cfg: dict, open_browser: bool = True, only: list[str] = None) -> int:
@@ -321,8 +444,11 @@ def start(cfg: dict, open_browser: bool = True, only: list[str] = None) -> int:
     pids = read_pids()
     for name in SERVICES:
         if name not in names:
-            if name == "llm" and only is None and llm_resolved(cfg)["mode"] == "external" and not wait_external_llm(cfg):
-                return 1
+            if name == "llm" and only is None and llm_resolved(cfg)["mode"] == "external":
+                ok = start_managed_strata(cfg) if managed_strata(cfg) else wait_external_llm(cfg)
+                if not ok:
+                    stop(cfg, quiet=True, only=names)
+                    return 1
             continue
         cmd, cwd, env = service_command(cfg, name)
         if not Path(cmd[0]).exists():
@@ -341,6 +467,7 @@ def start(cfg: dict, open_browser: bool = True, only: list[str] = None) -> int:
         runner = [sys.executable, str(ROOT / "ctl.py"), "_run", LABEL[name], str(log), "--"] + cmd
         print(f"{LABEL[name]} を起動します（別ウィンドウ）...")
         proc = subprocess.Popen(runner, cwd=str(cwd), env=env, creationflags=subprocess.CREATE_NEW_CONSOLE)
+        pids = read_pids()      # Strata の起動で書いた分を消さないように、毎回読み直す
         pids[name] = proc.pid
         pid_file().write_text(json.dumps(pids))
         deadline = time.time() + cfg.get("start_timeout_sec", {}).get(name, 600)

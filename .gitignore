@@ -6,6 +6,8 @@
 /llama.cpp/
 /tts/
 /hf-home/
+/strata/
+/strata-data/
 /torch-home/
 /.uv/
 /.tools/
