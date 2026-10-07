@@ -57,6 +57,7 @@ button:disabled { opacity: .5; cursor: default; }
 .preview { width: 160px; height: 160px; object-fit: contain; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); }
 .imgs { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-start; }
 .adult { border: 2px solid var(--warn); border-radius: 8px; padding: 8px 12px; margin: 8px 0; }
+td button { white-space: nowrap; }
 table { border-collapse: collapse; width: 100%; font-size: 14px; }
 td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: left; }
 .step.ok::before { content: "✔ "; color: var(--ok); } .step.ng::before { content: "✘ "; color: var(--err); }
@@ -154,9 +155,40 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
       <p><button class="btn" id="cCheck">サイズを確認</button> <button class="btn primary" id="cDownload" hidden>ダウンロード</button></p>
       <div id="cInfo"></div>
     </div>
+    <div class="card" id="browserCard">
+      <div class="title">Hugging Face のモデル一覧から選ぶ（トークンの登録が必要）</div>
+      <div class="note">選べる範囲は、プロファイルとこの PC のスペックで決まります。範囲外のモデルは灰色で表示し、選べません。</div>
+      <div id="hfTokenBox">
+        <label>Hugging Face のトークン（任意。保存しますが、画面には再表示しません）</label>
+        <div class="row" style="gap:6px"><input type="password" id="hfToken" autocomplete="off" style="flex:1 1 260px"><button class="btn" id="hfSave" type="button" style="flex:0 0 auto">登録</button><button class="btn" id="hfCheck" type="button" style="flex:0 0 auto">確認</button><button class="btn danger" id="hfDelete" type="button" style="flex:0 0 auto">削除</button></div>
+        <div id="hfTokenMsg"></div>
+        <div class="note">トークンの作り方: <a href="https://huggingface.co/settings/tokens" target="_blank" rel="noopener noreferrer">Hugging Face の設定ページ（Access Tokens）</a>で「Create new token」を選び、種類は <strong>Read（読み取り）</strong>で足ります。
+          トークンは huggingface.co にだけ送ります（検索・ファイル一覧・ダウンロード。ゲート付きモデルを含む）。保存先は <code>config/settings.json</code> で、ログや不具合報告には出しません。</div>
+      </div>
+      <div id="hfLocked" class="msg info" style="margin-top:10px">トークンを登録すると一覧から選べます。いまは、上のプロファイルの表にあるモデルと、「任意の GGUF」の手入力（リポジトリ + ファイル名）だけを使えます。</div>
+      <fieldset id="hfBrowse" style="border:0;padding:0;margin:10px 0 0;min-width:0">
+        <div class="row" style="align-items:end">
+          <div style="flex:0 1 150px"><label>範囲の基準のプロファイル</label><select id="bProfile"></select></div>
+          <div style="flex:3 1 260px"><label>検索（モデル名など。空なら一覧）</label><input type="text" id="bQ" placeholder="例: gemma-4 / qwen3"></div>
+          <div style="flex:0 1 150px"><label>並び順</label><select id="bSort"><option value="downloads">ダウンロード数</option><option value="likes">いいね数</option><option value="lastModified">更新日</option></select></div>
+          <div style="flex:0 0 auto"><button class="btn primary" id="bSearch" type="button">検索</button></div>
+        </div>
+        <label style="display:flex;gap:6px;align-items:center;color:var(--text)"><input type="checkbox" id="bJa"> 日本語に強いと言われる系列だけ（<span id="bFamilies"></span>）</label>
+        <div id="bRange" class="msg info"></div>
+        <div id="bResults"></div>
+        <div id="bPager" class="note"></div>
+        <div id="bFiles"></div>
+        <div id="bPlan"></div>
+      </fieldset>
+      <div id="bRevert"></div>
+      <div id="bTest"></div>
+      <h2 style="font-size:14px">ダウンロード済みのモデル</h2>
+      <div id="bDownloaded" class="note">読み込み中…</div>
+    </div>
     <div id="dlBox" hidden>
       <div class="bar"><div id="dlBar"></div></div>
       <div class="note" id="dlText"></div>
+      <p><button class="btn" id="dlCancel" type="button" hidden>キャンセル</button></p>
     </div>
     <div class="row">
       <div><label>コンテキスト長（0 = プロファイルの既定）</label><input type="number" id="ctx" min="0" step="1024"></div>
@@ -488,7 +520,7 @@ function renderLlm() {
     <div class="card ${p.id === selectedProfile ? "sel" : ""}" data-p="${p.id}">
       <label style="display:flex;gap:6px;align-items:center;color:var(--text);margin:0"><input type="radio" name="profile" value="${p.id}" ${p.id === selectedProfile ? "checked" : ""}>
         <span class="title">${p.id}: ${esc(p.label)}</span></label>
-      <div class="note">${esc(p.repo)} / ${esc(p.file)} ・ ${p.size_gib.toFixed(1)} GiB ・ 目安 VRAM ${p.min_vram_gib}GB / メモリ ${p.min_ram_gib}GB 以上 ・ ${p.installed ? "<strong style='color:var(--ok)'>ダウンロード済み</strong>" : "未ダウンロード"}</div>
+      <div class="note">${esc(p.repo)} / ${esc(p.file)} ・ ${p.size_gib.toFixed(1)} GiB ・ 目安 VRAM ${p.min_vram_gib}GB / メモリ ${p.min_ram_gib}GB 以上 ・ 一覧から選べるサイズ ${p.range.min_gib.toFixed(0)}〜${p.range.max_gib.toFixed(0)} GiB ・ ${p.installed ? "<strong style='color:var(--ok)'>ダウンロード済み</strong>" : "未ダウンロード"}</div>
       ${p.warnings.filter(w => w.level !== "info").map((w) => `<div class="msg ${w.level === "error" ? "error" : "warn"}">${esc(w.text)}</div>`).join("")}
       ${p.installed ? "" : `<button class="btn" data-dl="${p.id}">ダウンロード（${p.size_gib.toFixed(1)} GiB）</button>`}
     </div>`).join("");
@@ -509,7 +541,11 @@ function renderLlm() {
   renderExtras();
   $("strataState").textContent = ex.managed === "strata" ? "このインストールの strata/ にある Strata を、start.bat が起動します（ポートは strata-*.json に自動で合わせます）。" : "";
   syncLlmUi();
-  document.querySelectorAll("input[name=profile]").forEach((r) => r.onchange = () => { selectedProfile = r.value; document.querySelectorAll("#tab-llm .card").forEach(x => x.classList.remove("sel")); r.closest(".card").classList.add("sel"); });
+  document.querySelectorAll("input[name=profile]").forEach((r) => r.onchange = () => {
+    selectedProfile = r.value; document.querySelectorAll("#tab-llm .card").forEach(x => x.classList.remove("sel")); r.closest(".card").classList.add("sel");
+    if (S.profiles.some((p) => p.id === r.value)) { $("bProfile").value = r.value; renderBrowserHead(); if (B.repo) loadFiles(B.repo); }   // プロファイルを変えると範囲も変わる
+  });
+  renderBrowserHead();
 }
 function renderExtras() {
   const L = S.settings.llm, ex = L.external, st = S.strata;
@@ -586,19 +622,32 @@ async function startDownload(repo, file, gib) {
 }
 let dlTimer = null;
 function pollDownload() {
-  $("dlBox").hidden = false; clearInterval(dlTimer);
+  $("dlBox").hidden = false; clearInterval(dlTimer); $("dlCancel").hidden = false;
   dlTimer = setInterval(async () => {
-    const d = await api("/llm/download/status");
+    let d;
+    try { d = await api("/llm/download/status"); } catch (e) { return; }
     if (d.status === "running") {
       const pct = d.total ? d.done / d.total * 100 : 0;
       $("dlBar").style.width = pct + "%"; $("dlText").textContent = `${d.file}: ${(d.done / 1e9).toFixed(2)} / ${(d.total / 1e9).toFixed(2)} GB（${pct.toFixed(1)}%）`;
     } else {
-      clearInterval(dlTimer);
-      if (d.status === "done") { $("dlBar").style.width = "100%"; $("dlText").textContent = d.file + " のダウンロードが完了しました。"; await refresh(); }
-      else if (d.status === "error") { $("dlText").textContent = "失敗: " + d.error + "（もう一度押すと続きから再開します）"; }
+      clearInterval(dlTimer); $("dlCancel").hidden = true;
+      const pend = B.pending; B.pending = null;
+      if (d.status === "done") {
+        $("dlBar").style.width = "100%"; $("dlText").textContent = d.file + " のダウンロードが完了しました。";
+        await refresh(true); renderBrowserHead(); loadDownloaded();
+        if (pend) await switchModel(pend.repo, pend.files);
+      } else if (d.status === "cancelled") {
+        $("dlText").textContent = "キャンセルしました。もう一度ダウンロードすると、途中から再開します。"; loadDownloaded();
+      } else if (d.status === "error") {
+        $("dlText").textContent = "失敗: " + d.error + (d.error_kind === "http" || d.error_kind === "other" ? "（もう一度押すと続きから再開します）" : "");
+        if (d.link) { const a = document.createElement("a"); a.href = d.link; a.target = "_blank"; a.rel = "noopener noreferrer"; a.textContent = "　→ " + d.link; $("dlText").appendChild(a); }
+        loadDownloaded();
+      }
     }
   }, 1500);
 }
+$("dlCancel").onclick = async () => { try { await api("/llm/download/cancel", "POST", {}); } catch (e) { alert(e.message); } };
+async function resumeDownloadPoll() { try { const d = await api("/llm/download/status"); if (d.status === "running") pollDownload(); } catch (e) {} }
 function collectLlm() {
   const mode = currentMode();
   const patch = { llm: { mode, temperature: +$("temp").value, ctx: +$("ctx").value || 0, thinking: $("thinking").checked } };
@@ -606,6 +655,8 @@ function collectLlm() {
     patch.llm.profile = selectedProfile;
     const src = document.querySelector("input[name=csrc]:checked").value;
     patch.llm.custom = { source: src, repo: $("cRepo").value.trim(), file: $("cFile").value.trim(), path: $("cPath").value.trim() };
+    const pc = S.settings.llm.custom;
+    if (pc.source !== src || pc.repo !== patch.llm.custom.repo || pc.file !== patch.llm.custom.file || pc.path !== patch.llm.custom.path) Object.assign(patch.llm.custom, { files: [], size_bytes: 0, kind: "", moe_layers: 0 });
   } else {
     patch.llm.esp = { enabled: $("espOn").checked && !$("espOn").disabled };
     patch.llm.vision = { enabled: $("visionOn").checked, store_images: $("visionStore").checked };
@@ -652,6 +703,183 @@ async function waitServices() {
     await new Promise((r) => setTimeout(r, 3000));
     try { await refresh(true); if (Object.values(S.services).every(Boolean)) { msg($("llmMsg"), "ok", "再起動が完了しました。"); msg($("rsMsg"), "ok", "再起動が完了しました。"); return; } } catch (e) {}
   }
+}
+
+/* ---------------- Hugging Face のトークンとモデルブラウザ ---------------- */
+const B = { page: 0, repo: null, data: null, pending: null };
+function fmtGiB(x) { return (x >= 100 ? x.toFixed(0) : x.toFixed(1)) + " GiB"; }
+function fmtNum(n) { return n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n); }
+function rangeText(r) {
+  const by = { profile: "プロファイルの範囲", hardware: "このPCのメモリ・VRAM", disk: "空き容量" }[r.max_by];
+  return `プロファイル ${r.profile} で選べるサイズ: ${r.min_gib.toFixed(0)}〜${r.max_gib.toFixed(0)} GiB（下限 = 日本語の会話・ツール呼び出しが安定する目安 / 上限を決めているもの: ${by}。`
+    + `このPCの上限: メモリ・VRAM から ${fmtGiB(r.hw_cap_gib)}、空き容量から ${fmtGiB(r.disk_cap_gib)}）`;
+}
+function bProfileId() { return $("bProfile").value || S.range_profile; }
+function renderBrowserHead() {
+  const set = !!(S.settings.hf && S.settings.hf.token_set);
+  const open = set || S.dev_browse;
+  $("hfLocked").hidden = open; $("hfBrowse").disabled = !open;
+  $("hfDelete").disabled = !set;
+  $("hfToken").placeholder = set ? "登録済み（変えるときだけ入力）" : "hf_...";
+  $("bFamilies").textContent = (S.ja_families || []).join(" / ");
+  const cur = $("bProfile").value || S.range_profile;
+  $("bProfile").innerHTML = S.profiles.map((p) => `<option value="${p.id}">${p.id}</option>`).join("");
+  $("bProfile").value = cur;
+  const pr = S.profiles.find((p) => p.id === $("bProfile").value);
+  if (pr) $("bRange").textContent = rangeText(pr.range);
+  const prev = S.has_previous;
+  $("bRevert").innerHTML = prev ? '<div class="msg info">モデルブラウザで切り替える前の設定があります。 <button class="btn" id="bRevertBtn" type="button">元のモデルに戻す</button></div>' : "";
+  if (prev) $("bRevertBtn").onclick = revertModel;
+}
+$("bProfile").onchange = () => { renderBrowserHead(); if (B.repo) loadFiles(B.repo); };
+$("hfSave").onclick = async () => {
+  const t = $("hfToken").value.trim();
+  if (!t) { msg($("hfTokenMsg"), "warn", "トークンを入力してください。"); return; }
+  try {
+    await api("/hf/token", "POST", { token: t });
+    $("hfToken").value = "";
+    msg($("hfTokenMsg"), "ok", "登録しました（値は再表示しません）。「確認」で有効かどうか調べられます。");
+    await refresh(true); renderBrowserHead();
+  } catch (e) { msg($("hfTokenMsg"), "error", e.message); }
+};
+$("hfCheck").onclick = async () => {
+  msg($("hfTokenMsg"), "info", "確認中…（huggingface.co の whoami-v2 だけを呼びます）");
+  try {
+    const r = await api("/hf/whoami", "POST", { token: $("hfToken").value.trim() });
+    if (r.valid === true) msg($("hfTokenMsg"), "ok", `有効です。ユーザー名: ${r.name}${r.role ? "（権限: " + r.role + "）" : ""}`);
+    else if (r.valid === false) msg($("hfTokenMsg"), "error", r.error || "無効です。");
+    else msg($("hfTokenMsg"), "warn", "確認できませんでした: " + (r.error || ""));
+  } catch (e) { msg($("hfTokenMsg"), "error", e.message); }
+};
+$("hfDelete").onclick = async () => {
+  if (!confirm("登録した Hugging Face のトークンを削除します。よろしいですか？")) return;
+  try { await api("/hf/token", "DELETE", {}); msg($("hfTokenMsg"), "ok", "削除しました。"); await refresh(true); renderBrowserHead(); $("bResults").innerHTML = ""; $("bFiles").innerHTML = ""; $("bPlan").innerHTML = ""; }
+  catch (e) { msg($("hfTokenMsg"), "error", e.message); }
+};
+async function searchModels(page) {
+  B.page = page;
+  $("bResults").innerHTML = '<div class="msg info">検索中…</div>';
+  try {
+    const r = await api("/hf/search", "POST", { q: $("bQ").value, sort: $("bSort").value, ja: $("bJa").checked, page });
+    $("bResults").innerHTML = r.items.length ? r.items.map((m, i) => `
+      <div class="card" style="padding:6px 12px"><button class="btn" data-repo="${esc(m.id)}" type="button" style="margin-right:8px">選ぶ</button><strong>${esc(m.id)}</strong>
+        <span class="note">　DL ${fmtNum(m.downloads)} ・ ♥ ${fmtNum(m.likes)} ・ 更新 ${esc(m.updated)} ・ ライセンス ${esc(m.license || "不明")}${m.gated ? " ・ <strong style='color:var(--warn)'>ゲート付き</strong>" : ""}</span></div>`).join("")
+      : '<div class="msg info">見つかりませんでした。</div>';
+    document.querySelectorAll("#bResults [data-repo]").forEach((b) => b.onclick = () => loadFiles(b.dataset.repo));
+    $("bPager").innerHTML = `ページ ${page + 1} `;
+    if (page > 0) { const a = document.createElement("button"); a.className = "btn"; a.type = "button"; a.textContent = "← 前へ"; a.onclick = () => searchModels(page - 1); $("bPager").appendChild(a); }
+    if (r.has_next) { const a = document.createElement("button"); a.className = "btn"; a.type = "button"; a.textContent = "次へ →"; a.style.marginLeft = "6px"; a.onclick = () => searchModels(page + 1); $("bPager").appendChild(a); }
+  } catch (e) { $("bResults").innerHTML = ""; msg($("bResults"), "error", e.message); $("bPager").innerHTML = ""; }
+}
+$("bSearch").onclick = () => searchModels(0);
+$("bQ").onkeydown = (e) => { if (e.key === "Enter") searchModels(0); };
+$("bJa").onchange = () => searchModels(0);
+$("bSort").onchange = () => searchModels(0);
+async function loadFiles(repo) {
+  B.repo = repo; $("bPlan").innerHTML = "";
+  $("bFiles").innerHTML = '<div class="msg info">ファイルを調べています…（GGUF の先頭を読んで、MoE かどうかも確かめます）</div>';
+  try {
+    const d = await api("/hf/files", "POST", { repo, profile: bProfileId() });
+    B.data = d; renderFiles(d);
+  } catch (e) { $("bFiles").innerHTML = ""; msg($("bFiles"), "error", e.message); }
+}
+function renderFiles(d) {
+  const i = d.info, r = d.range;
+  const kindTxt = d.kind === "moe" ? `MoE${d.moe_layers ? "（全 " + d.moe_layers + " 層）" : ""}` : "dense（MoE ではない）";
+  let head = `<div class="card"><strong>${esc(d.repo)}</strong> <a href="${esc(d.page)}" target="_blank" rel="noopener noreferrer">HF のページ</a>
+    <div class="note">DL ${fmtNum(i.downloads)} ・ ♥ ${fmtNum(i.likes)} ・ 更新 ${esc(i.updated)} ・ ライセンス ${esc(i.license || "不明")} ・ ゲート: ${i.gated ? "あり" : "なし"} ・ 種類: ${kindTxt}（${d.kind_source === "metadata" ? "GGUF のメタデータから" : "名前からの推定"}）</div>`;
+  if (i.gated && d.access === false) head += `<div class="msg warn">このモデルはゲート付きで、まだ利用条件に同意していません。<a href="${esc(d.page)}" target="_blank" rel="noopener noreferrer">HF のページで利用条件に同意してください</a>（同意するとダウンロードできます）。</div>`;
+  else if (i.gated) head += `<div class="msg info">ゲート付きのモデルです（このトークンのアカウントは同意済みです）。</div>`;
+  head += `<div class="note">${esc(rangeText(r))}</div></div>`;
+  const rows = d.groups.map((g, k) => {
+    const ok = g.status === "ok";
+    const notes = (g.reasons || []).map((t) => `<div style="color:var(--err)">${esc(t)}</div>`).join("") + (g.cautions || []).map((c) => `<div style="color:${c.level === "warn" ? "var(--warn)" : "var(--muted)"}">${c.level === "warn" ? "注意: " : ""}${esc(c.text)}</div>`).join("");
+    return `<tr class="${ok ? "" : "gray"}" style="${ok ? "" : "opacity:.5;background:var(--chip)"}"><td>${esc(g.quant || "?")}</td><td>${fmtGiB(g.size_gib)}</td><td>${g.parts > 1 ? g.parts + " 分割" : ""}</td>
+      <td style="font-size:13px">${notes || "<span class='note'>範囲内</span>"}${g.installed ? "<div style='color:var(--ok)'>ダウンロード済み</div>" : ""}</td>
+      <td><button class="btn" data-pick="${k}" type="button" ${ok ? "" : "disabled"}>選ぶ</button></td></tr>`;
+  }).join("");
+  $("bFiles").innerHTML = head + `<table><tr><th>量子化</th><th>サイズ</th><th></th><th>範囲との比較・注意</th><th></th></tr>${rows}</table>` + (d.aux_count ? `<div class="note">mmproj など補助ファイル ${d.aux_count} 個は、本体の候補から除いています。</div>` : "");
+  document.querySelectorAll("#bFiles [data-pick]").forEach((b) => b.onclick = () => showPlan(d.groups[+b.dataset.pick]));
+}
+function showPlan(g) {
+  const d = B.data, free = S.hardware.disk_free_gib;
+  const need = g.installed ? 0 : g.size_gib;
+  const cautions = (g.cautions || []).map((c) => `<div class="msg ${c.level === "warn" ? "warn" : "info"}">${esc(c.text)}</div>`).join("");
+  $("bPlan").innerHTML = `<div class="card sel"><div class="title">${esc(d.repo)} / ${esc(g.quant)}</div>
+    <div class="note">サイズ ${fmtGiB(g.size_gib)}${g.parts > 1 ? "（" + g.parts + " 分割の合計）" : ""} ・ インストール先の空き容量 ${fmtGiB(free)} ・ ダウンロード後の空き ${fmtGiB(free - need)}</div>${cautions}
+    <p>${g.installed ? '<button class="btn primary" id="bGo" type="button">このモデルに切り替える（llama-server を再起動）</button>' : '<button class="btn primary" id="bGo" type="button">ダウンロードして切り替える</button>'}
+      <button class="btn" id="bNo" type="button">やめる</button></p>
+    <div class="note">切り替えたあと、短い応答・思考の混入・ツール呼び出しの接続テストを自動で行います。失敗したときは「元のモデルに戻す」ボタンを出します。</div></div>`;
+  $("bNo").onclick = () => { $("bPlan").innerHTML = ""; };
+  $("bGo").onclick = async () => {
+    if (g.installed) { await switchModel(d.repo, g.files); return; }
+    if (!confirm(`${d.repo}\n${g.quant}（${g.files.length} ファイル）\n約 ${g.size_gib.toFixed(1)} GiB をダウンロードします。空き容量は ${free.toFixed(1)} GiB です。\n終わったらこのモデルに切り替えて、llama-server を再起動します。よろしいですか？`)) return;
+    try {
+      await api("/llm/browse/download", "POST", { repo: d.repo, key: g.key, profile: bProfileId(), confirmed: true });
+      B.pending = { repo: d.repo, files: g.files };
+      pollDownload();
+    } catch (e) { msg($("bPlan"), "error", e.message); }
+  };
+}
+async function loadDownloaded() {
+  try {
+    const r = await api("/llm/downloaded");
+    $("bDownloaded").innerHTML = r.items.length ? "<table><tr><th>ファイル</th><th>サイズ</th><th></th><th></th></tr>" + r.items.map((m, k) => `
+      <tr><td>${esc(m.path)}</td><td>${fmtGiB(m.size_gib)}</td><td>${m.in_use ? "<strong style='color:var(--ok)'>使用中</strong>" : ""}${m.partial ? "途中（再開できます）" : ""}</td>
+      <td><button class="btn danger" data-del="${k}" type="button" ${m.in_use ? "disabled" : ""}>削除</button></td></tr>`).join("") + `</table><div class="note">空き容量 ${fmtGiB(r.disk_free_gib)}。削除すると容量が戻ります。</div>` : "（ダウンロード済みのモデルはありません）";
+    document.querySelectorAll("#bDownloaded [data-del]").forEach((b) => b.onclick = async () => {
+      const m = r.items[+b.dataset.del];
+      if (!confirm(`${m.path}（${fmtGiB(m.size_gib)}）を削除します。よろしいですか？`)) return;
+      try { const x = await api("/llm/downloaded/delete", "POST", { path: m.path }); toast(`削除しました（${fmtGiB(x.freed_gib)} 回復）。`); await refresh(true); renderBrowserHead(); loadDownloaded(); if (B.repo) loadFiles(B.repo); }
+      catch (e) { alert(e.message); }
+    });
+  } catch (e) { $("bDownloaded").textContent = "取得できませんでした: " + e.message; }
+}
+async function switchModel(repo, files) {
+  $("bTest").innerHTML = '<div class="msg info">切り替えています…（llama-server を再起動します。モデルの読み込みに 1〜3 分かかることがあります）</div>';
+  try {
+    await api("/llm/browse/activate", "POST", { repo, files, profile: bProfileId() });
+  } catch (e) { msg($("bTest"), "error", e.message); return; }
+  await afterSwitch(files[0].split("/").pop());
+}
+async function afterSwitch(expectFile) {
+  let up = false, sawDown = false;
+  const t0 = Date.now();
+  while (Date.now() - t0 < 10 * 60 * 1000) {
+    await new Promise((r) => setTimeout(r, 3000));
+    try {
+      await refresh(true);
+      const loaded = await api("/llm/loaded");
+      if (!S.services.llm) sawDown = true;
+      if (S.services.llm && loaded.file === expectFile) { up = true; break; }
+    } catch (e) { sawDown = true; }
+  }
+  renderBrowserHead(); loadDownloaded();
+  if (!up) { failedSwitch("llama-server が時間内に起動しませんでした。"); return; }
+  $("bTest").innerHTML = '<div class="msg info">接続テスト中…（短い応答・思考の混入・ツール呼び出し）</div>';
+  try {
+    const r = await api("/llm/test", "POST", { mode: "bundled" });
+    const allOk = r.steps.every((s) => s.ok);
+    $("bTest").innerHTML = `<div class="msg ${allOk ? "ok" : "error"}">${allOk ? "接続テストに合格しました。このモデルで会話できます。" : "接続テストで失敗した項目があります。"}</div>`
+      + '<table>' + r.steps.map((s) => `<tr><td class="step ${s.ok ? "ok" : "ng"}">${esc(s.name)}</td><td>${esc(s.detail)}</td><td>${s.ms != null ? s.ms + " ms" : ""}</td></tr>`).join("") + "</table>";
+    if (!allOk) failedSwitch("", true);
+  } catch (e) { failedSwitch("接続テストを実行できませんでした: " + e.message); }
+}
+function failedSwitch(text, append) {
+  if (!append) msg($("bTest"), "error", text);
+  const b = document.createElement("button"); b.className = "btn primary"; b.type = "button"; b.textContent = "元のモデルに戻す"; b.onclick = revertModel;
+  $("bTest").appendChild(b);
+}
+async function revertModel() {
+  if (!confirm("モデルブラウザで切り替える前のモデルに戻して、llama-server を再起動します。よろしいですか？")) return;
+  try { await api("/llm/revert", "POST", {}); } catch (e) { alert(e.message); return; }
+  $("bTest").innerHTML = '<div class="msg info">元のモデルに戻しています…（再起動に 1〜3 分かかることがあります）</div>';
+  for (let i = 0; i < 200; i++) {
+    await new Promise((r) => setTimeout(r, 3000));
+    try { await refresh(); const l = await api("/llm/loaded"); if (S.services.llm && l.file) { const r = ((S.llm_resolved || {}).model_path || "").split(/[\\/]/).pop(); if (!r || l.file === r) break; } } catch (e) {}
+  }
+  renderBrowserHead(); loadDownloaded();
+  msg($("bTest"), "ok", "元のモデルに戻しました。");
 }
 
 /* ---------------- キャラクター ---------------- */
@@ -893,7 +1121,7 @@ $("rsLlm").onclick = () => restart("llm"); $("rsAll").onclick = () => restart("a
 function toast(t) { const d = document.createElement("div"); d.className = "msg ok"; d.textContent = t; $("toast").appendChild(d); setTimeout(() => d.remove(), 4000); }
 const initialTab = location.hash.slice(1).split("-")[0];
 const openEspDialog = location.hash.endsWith("-espdialog");
-refresh().then(() => { const b = document.querySelector(`#tabs button[data-tab="${initialTab}"]`); if (b) b.click(); if (openEspDialog) { $("espBox").scrollIntoView(); $("espDialog").showModal(); } }).catch((e) => { document.body.insertAdjacentHTML("afterbegin", '<div class="msg error">設定を読み込めませんでした: ' + esc(e.message) + "</div>"); });
+refresh().then(() => { loadDownloaded(); resumeDownloadPoll(); const b = document.querySelector(`#tabs button[data-tab="${initialTab}"]`); if (b) b.click(); if (openEspDialog) { $("espBox").scrollIntoView(); $("espDialog").showModal(); } }).catch((e) => { document.body.insertAdjacentHTML("afterbegin", '<div class="msg error">設定を読み込めませんでした: ' + esc(e.message) + "</div>"); });
 </script>
 </body>
 </html>

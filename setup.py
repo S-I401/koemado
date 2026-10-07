@@ -607,7 +607,8 @@ class Installer:
             return
         say(f"\n[LLM モデル] {m['repo']} / {m['file']}（{m['size_bytes'] / GIB:.1f} GiB）をダウンロードします。")
         os.environ["HF_HOME"] = str(self.root / "hf-home")
-        hf_hub_download(m["repo"], m["file"], local_dir=str(self.root / "models"))
+        # トークン: 環境変数 HF_TOKEN、無ければ設定画面で登録したもの（任意）。huggingface_hub は huggingface.co にだけ送る
+        hf_hub_download(m["repo"], m["file"], local_dir=str(self.root / "models"), token=settings_store.hf_token(self.root) or None)
         if not model_present(self.root, name):
             die("モデルのダウンロードが完了していません。もう一度 setup.bat を実行してください（続きから再開します）。")
 
@@ -780,6 +781,9 @@ def build_config(name: str, hw: dict, ports: dict, args) -> dict:
         "profile": name,
         "gpu": {"index": hw["gpu"]["index"], "name": hw["gpu"]["name"], "vram_mib": hw["gpu"]["vram_mib"],
                 "simulated": bool(hw["simulated"])},
+        # モデルブラウザの上限の計算用（--simulate で ram を指定したときは、その値を使う）
+        "ram_total_gib": round(hw["ram_total_gib"], 1),
+        "ram_simulated": "ram" in hw["simulated"],
         "ports": ports,
         "tts": {"hf_checkpoint": PINNED["tts_hf_checkpoint"]},
         "stt": {"model": PINNED["stt_model"], "cpu_threads": max(2, min(8, hw["cores"]))},

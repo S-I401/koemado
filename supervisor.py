@@ -65,7 +65,9 @@ MASK = "●●●●●●●●"
 _SECRET_PATTERNS = [
     (re.compile(r"(?i)(bearer(?:\s|%20|\+)+)[A-Za-z0-9._~+/=\-%]{8,}"), r"\1" + MASK),
     (re.compile(r"\bsk-[A-Za-z0-9_\-]{12,}"), MASK),
-    (re.compile(r"\bhf_[A-Za-z0-9]{20,}"), MASK),
+    # Hugging Face のトークン（hf_ + 英数字。大文字か数字を含むものだけ。hf_hub_download のような名前は伏せない）と、組織用（api_org_）
+    (re.compile(r"\bhf_(?=[A-Za-z0-9]*[A-Z0-9])[A-Za-z0-9]{8,}"), MASK),
+    (re.compile(r"\bapi_org_[A-Za-z0-9]{20,}"), MASK),
     (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}"), MASK),
     (re.compile(r"(?i)((?:api[_\-]?key|apikey|access[_\-]?token|auth[_\-]?token|(?<![A-Za-z_])token|secret|password|passwd|authorization|x-api-key)[\"']?\s*[:=]\s*[\"']?)(?!Bearer\b)[^\s\"',;&}]{6,}"), r"\1" + MASK),
 ]
@@ -90,11 +92,14 @@ class Redactor:
         lits = set()
         try:
             s = ss.load_settings(ROOT)
-            for v in (s["llm"]["external"].get("api_key"), s["tools"]["agent"].get("api_key")):
+            for v in (s["llm"]["external"].get("api_key"), s["tools"]["agent"].get("api_key"), (s.get("hf") or {}).get("token")):
                 if v:
                     lits.add(v)
         except Exception:
             pass
+        for name in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"):
+            if len(os.environ.get(name, "")) >= 8:
+                lits.add(os.environ[name])
         try:
             data = json.loads((ROOT / "config" / "mcp.json").read_text(encoding="utf-8-sig"))
             for sv in (data.get("mcpServers") or {}).values():

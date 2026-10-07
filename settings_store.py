@@ -12,6 +12,7 @@ import time
 from pathlib import Path
 from urllib.parse import urlparse
 
+import hf_hub
 import profiles
 
 ROOT = Path(__file__).resolve().parent
@@ -67,7 +68,9 @@ DEFAULT_SETTINGS = {
     "llm": {
         "mode": "bundled",            # bundled / external
         "profile": "",                # 空 = 導入時のプロファイル。high / mid / low / custom
-        "custom": {"source": "hf", "repo": "", "file": "", "path": ""},
+        # hf: repo + file（分割なら files に全パーツ。先頭が -m に渡るファイル）。size_bytes / kind(dense|moe) / moe_layers はモデルブラウザが入れる
+        "custom": {"source": "hf", "repo": "", "file": "", "path": "", "files": [], "size_bytes": 0, "kind": "", "moe_layers": 0},
+        "previous": None,             # モデルブラウザで切り替える前の {profile, custom}。「元のモデルに戻す」用
         "ctx": 0,                     # 0 = プロファイルの既定
         "temperature": 0.8,
         "thinking": False,            # True = モデルの既定どおり思考させる（遅くなる）
@@ -87,6 +90,8 @@ DEFAULT_SETTINGS = {
         "vision": {"enabled": False, "store_images": False},
     },
     "tts": {"voice": "mio_a", "num_steps": 24, "seed": 42},
+    # Hugging Face のトークン（任意。config/settings.json にだけ保存。画面・ログ・報告には出さない）
+    "hf": {"token": ""},
     "character": "mio",
     "weather_location": "東京",
     # ツール。変更は「保存して再起動」で反映する（ツールの定義は起動時に固定し、LLM の会話キャッシュを守る）
@@ -153,6 +158,17 @@ def update_settings(patch: dict, root: Path = ROOT) -> dict:
     ext = (patch.get("llm") or {}).get("external")
     if ext is not None and (ext.get("api_key") in (None, "") or set(ext.get("api_key", "")) <= {"●", "*"}):
         ext.pop("api_key", None)
+    hf = patch.get("hf")
+    if hf is not None:
+        tok = hf.get("token")
+        if hf.pop("clear_token", False):
+            hf["token"] = ""
+        elif tok in (None, "") or set(tok) <= {"●", "*"}:
+            hf.pop("token", None)
+        elif not hf_hub.valid_token(tok.strip()):
+            raise ValueError("Hugging Face のトークンの形式が違います（hf_ で始まる英数字です）。")
+        else:
+            hf["token"] = tok.strip()
     ag = (patch.get("tools") or {}).get("agent")
     if ag is not None and "api_key" in ag and (ag.get("api_key") in (None, "") or set(ag.get("api_key", "")) <= {"●", "*"}):
         if not ag.pop("clear_api_key", False):
@@ -185,6 +201,13 @@ def validate_settings(s: dict):
         raise ValueError("コンテキスト長は 1024〜131072 で指定してください。")
     if llm["mode"] not in ("bundled", "external"):
         raise ValueError("LLM の方式は bundled か external です。")
+    c = llm["custom"]
+    if c.get("kind") not in ("", "dense", "moe"):
+        raise ValueError("モデルの種類が不正です。")
+    c["size_bytes"] = int(c.get("size_bytes") or 0)
+    c["moe_layers"] = int(c.get("moe_layers") or 0)
+    if not isinstance(c.get("files"), list) or not all(isinstance(f, str) and hf_hub.GGUF_FILE_RE.match(f) and ".." not in f for f in c["files"]):
+        raise ValueError("ファイル名が不正です。")
     tl = s["tools"]
     for k in ("web_search", "weather", "memory", "mcp", "skills"):
         tl[k] = bool(tl.get(k))
@@ -236,10 +259,36 @@ def masked(s: dict) -> dict:
     ag = s["tools"]["agent"]
     ag["api_key_set"] = bool(ag.get("api_key"))
     ag["api_key"] = ("●●●●●●●●" if ag.get("api_key") else "")
+    hf = s.setdefault("hf", {})
+    hf["token_set"] = bool(hf.get("token"))
+    hf["token"] = ("●●●●●●●●" if hf.get("token") else "")
     return s
 
 
+def hf_token(root: Path = ROOT) -> str:
+    """HF のトークン（環境変数 HF_TOKEN が優先。無ければ設定済みのもの）。送信先は hf_hub が huggingface.co だけに限る"""
+    import os
+    env = (os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN") or "").strip()
+    if hf_hub.valid_token(env):
+        return env
+    try:
+        return load_settings(root).get("hf", {}).get("token") or ""
+    except Exception:
+        return ""
+
+
 # ------------------------------------------------------------------ LLM の実効設定 ----
+
+def hf_model_rel_path(repo: str, file: str, root: Path = ROOT) -> str:
+    """HF からダウンロードしたモデルの置き場所（インストール先からの相対）。リポジトリごとのフォルダに分ける
+    （別のリポジトリに同じファイル名があっても混ざらない）。以前の置き場所 models/<ファイル名> に既にあればそちらを使う"""
+    name = Path(file).name
+    legacy = Path("models") / name
+    new = Path("models") / repo.replace("/", "--") / name
+    if not (root / new).exists() and (root / legacy).exists():
+        return str(legacy)
+    return str(new)
+
 
 def resolve_llm(cfg: dict, settings: dict, root: Path = ROOT) -> dict:
     """config.json（導入時の値）と settings.json から、実際に使う LLM 設定を作る"""
@@ -274,9 +323,12 @@ def resolve_llm(cfg: dict, settings: dict, root: Path = ROOT) -> dict:
         if c.get("source") == "local" and c.get("path"):
             model_path = c["path"]
         else:
-            model_path = str(Path("models") / Path(c.get("file", "")).name)
-        built = profiles.custom_llm_settings()
-        ctx = 8192
+            first = (c.get("files") or [c.get("file", "")])[0]
+            model_path = hf_model_rel_path(c.get("repo", ""), first, root)
+        mode = profiles.PROFILES.get(cfg.get("profile"), {}).get("llm_mode", "fit")
+        built = profiles.custom_llm_settings(vram, c.get("size_bytes") or None, c.get("kind") or "", c.get("moe_layers") or None, mode)
+        ram = cfg.get("ram_total_gib")
+        ctx = profiles.custom_ctx(c.get("size_bytes") or None, profiles.hw_cap_gib(vram, ram) if ram else None)
     else:
         p = profiles.PROFILES[profile]
         model_path = str(Path("models") / p["model"]["file"])

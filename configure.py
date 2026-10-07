@@ -10,6 +10,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
+import hf_hub  # noqa: E402
 import profiles  # noqa: E402
 import settings_store as ss  # noqa: E402
 import tools_store as ts  # noqa: E402
@@ -42,6 +43,7 @@ def show():
         print(f"  キャラクター: 読み込めません（{e}）")
     print(f"  num_steps: {s['tts']['num_steps']}  seed: {s['tts']['seed']}")
     t = s["tools"]
+    print(f"  Hugging Face トークン: {'登録済み' if s['hf'].get('token') else '未登録（任意）'}")
     onoff = lambda v: "オン" if v else "オフ"  # noqa: E731
     print(f"  ツール: Web検索 {onoff(t['web_search'])} / 天気 {onoff(t['weather'])} / 記憶 {onoff(t['memory'])} / スキル {onoff(t['skills'])} / 外部エージェント {onoff(t['agent']['enabled'])}")
     if llm["mode"] == "bundled":
@@ -126,6 +128,35 @@ def menu_llm():
         menu_strata_extras()
     if kind:
         print("※ LLM の方式・モデル・接続先を変えたら、start.bat を再実行（または stop.bat のあと start.bat）してください。")
+
+
+def menu_hf():
+    """Hugging Face のトークン（任意）。登録すると、設定画面のモデルブラウザで GGUF の一覧から選べる。ゲート付きモデルのダウンロードにも使う"""
+    import getpass
+    s = ss.load_settings(ROOT)
+    is_set = bool(s["hf"].get("token"))
+    print("\nHugging Face のトークン（任意）")
+    print("  ・登録すると、設定画面（LLM タブ）で GGUF の一覧から自由にモデルを選べます。ゲート付きモデルのダウンロードにも使います。")
+    print("  ・作り方: https://huggingface.co/settings/tokens で「Create new token」→ 種類は Read（読み取り）で足ります。")
+    print("  ・トークンは huggingface.co にだけ送ります。config/settings.json に保存し、画面・ログ・不具合報告には出しません。")
+    print(f"  ・いまの状態: {'登録済み（値は表示しません）' if is_set else '未登録'}")
+    act = pick("操作", [("set", "登録・変更"), ("check", "確認（有効か、ユーザー名）"), ("del", "削除")])
+    if act == "set":
+        tok = getpass.getpass("トークン（入力は表示されません。hf_ で始まる文字列）: ").strip()
+        if tok:
+            _apply({"hf": {"token": tok}})
+            r = hf_hub.whoami(tok)
+            print("  確認:", f"有効です（ユーザー名: {r['name']}）" if r.get("valid") else f"{'無効です' if r.get('valid') is False else '確認できませんでした'}: {r.get('error', '')}")
+    elif act == "check":
+        tok = s["hf"].get("token") or ""
+        if not tok:
+            print("トークンが登録されていません。")
+        else:
+            r = hf_hub.whoami(tok)
+            print("  ", f"有効です。ユーザー名: {r['name']}（権限: {r.get('role') or '?'}）" if r.get("valid") else f"{'無効です' if r.get('valid') is False else '確認できませんでした'}: {r.get('error', '')}")
+    elif act == "del":
+        if is_set and input("登録したトークンを削除しますか？ [y/N]: ").strip().lower() in ("y", "yes"):
+            _apply({"hf": {"clear_token": True}})
 
 
 def menu_strata_extras():
@@ -268,11 +299,13 @@ def main():
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     while True:
         show()
-        choice = pick("設定する項目", [("voice", "声"), ("llm", "LLM"), ("char", "キャラクター"), ("tools", "ツール（Web検索・MCP・外部エージェント）")])
+        choice = pick("設定する項目", [("voice", "声"), ("llm", "LLM"), ("hf", "Hugging Face のトークン（モデルを一覧から選ぶ）"), ("char", "キャラクター"), ("tools", "ツール（Web検索・MCP・外部エージェント）")])
         if choice == "voice":
             menu_voice()
         elif choice == "llm":
             menu_llm()
+        elif choice == "hf":
+            menu_hf()
         elif choice == "char":
             menu_character()
         elif choice == "tools":

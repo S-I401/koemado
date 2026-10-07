@@ -23,6 +23,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
+import hf_hub  # noqa: E402
 import settings_store  # noqa: E402
 CONFIG_PATH = ROOT / "config.json"
 RUN_DIR = ROOT / "run"
@@ -632,19 +633,21 @@ def restart(cfg: dict, target: str) -> int:
     return start(cfg, open_browser=False)
 
 
-def download(url: str, dest: Path, label: str = None, headers: dict = None, progress=None):
-    """進捗表示つき・再開可能のダウンロード（setup.py と設定画面が共有する）"""
+def download(url: str, dest: Path, label: str = None, headers: dict = None, progress=None, token: str = ""):
+    """進捗表示つき・再開可能のダウンロード（setup.py と設定画面が共有する）。
+    token: Hugging Face のトークン（ゲート付きモデル用）。huggingface.co にだけ送り、リダイレクト先の CDN には送らない。
+    progress の中で例外を出すと中断できる（.part を残すので、あとで続きから再開できる）"""
     dest.parent.mkdir(parents=True, exist_ok=True)
     part = dest.with_suffix(dest.suffix + ".part")
     label = label or dest.name
     done = part.stat().st_size if part.exists() else 0
-    hdrs = {"User-Agent": "koemado"}
+    hdrs = {}
     hdrs.update(headers or {})
     if done:
         hdrs["Range"] = f"bytes={done}-"
-    req = urllib.request.Request(url, headers=hdrs)
+    req = hf_hub.make_request(url, token, hdrs)
     try:
-        resp = urllib.request.urlopen(req, timeout=60)
+        resp = hf_hub.open_url(req, 60)
     except urllib.error.HTTPError as e:
         if e.code == 416:   # すでに全部ある
             part.replace(dest)

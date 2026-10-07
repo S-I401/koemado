@@ -26,6 +26,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import ctl  # noqa: E402
+import hf_hub  # noqa: E402
 import profiles  # noqa: E402
 import settings_store as ss  # noqa: E402
 import tools_store as ts  # noqa: E402
@@ -111,7 +112,8 @@ def hardware() -> dict:
     probe = ROOT
     return {
         "gpu": c["gpu"]["name"], "vram_gib": c["gpu"]["vram_mib"] / 1024, "simulated": c["gpu"].get("simulated", False),
-        "ram_gib": ram_gib(), "disk_free_gib": shutil.disk_usage(probe).free / profiles.GIB,
+        "ram_gib": (c["ram_total_gib"] if c.get("ram_simulated") and c.get("ram_total_gib") else ram_gib()), "ram_simulated": bool(c.get("ram_simulated")),
+        "disk_free_gib": shutil.disk_usage(probe).free / profiles.GIB,
     }
 
 
@@ -135,14 +137,7 @@ def model_warnings(size_bytes: int | None, existing_bytes: int = 0) -> list[dict
 
 
 def remote_size(repo: str, file: str) -> int | None:
-    url = f"https://huggingface.co/{repo}/resolve/main/{file}"
-    req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "koemado"})
-    try:
-        with urllib.request.urlopen(req, timeout=20) as r:
-            n = r.headers.get("Content-Length")
-            return int(n) if n else None
-    except Exception:
-        return None
+    return hf_hub.head_size(repo, file, ss.hf_token(ROOT))
 
 
 async def tts_synth(text: str, voice: str, num_steps: int, caption: str | None = None, seed: int | None = None) -> bytes:
@@ -183,23 +178,128 @@ def spawn_detached(args: list[str]):
 
 DOWNLOAD = {"status": "idle"}
 _download_lock = threading.Lock()
+_cancel = threading.Event()
 
 
-def _start_download(repo: str, file: str):
-    dest = ROOT / "models" / Path(file).name
+class _Cancelled(Exception):
+    pass
+
+
+def hf_page(repo: str) -> str:
+    return f"https://huggingface.co/{repo}"
+
+
+def _download_error(e: Exception, repo: str, has_token: bool) -> dict:
+    """ダウンロードの失敗を、画面に出す形にする（トークンの値は含めない）"""
+    if isinstance(e, urllib.error.HTTPError) and e.code in (401, 403):
+        if e.code == 401 and has_token:
+            return {"error_kind": "invalid_token", "error": "Hugging Face に拒否されました。トークンが無効、または期限切れの可能性があります。", "link": "https://huggingface.co/settings/tokens"}
+        if e.code == 401:
+            return {"error_kind": "token_required", "error": "このモデルのダウンロードには、Hugging Face のトークンの登録が必要です。", "link": "https://huggingface.co/settings/tokens"}
+        return {"error_kind": "gated", "error": "HF のページで利用条件に同意してください（同意すると、このモデルをダウンロードできます）。", "link": hf_page(repo)}
+    if isinstance(e, urllib.error.HTTPError):
+        return {"error_kind": "http", "error": f"ダウンロードに失敗しました（HTTP {e.code}）。もう一度押すと続きから再開します。"}
+    return {"error_kind": "other", "error": f"{type(e).__name__}: {e}"[:300]}
+
+
+def _start_download(repo: str, files: list[dict], layout: str = "flat", extra: dict | None = None):
+    """files: [{path, size?}]。layout: flat = models/<ファイル名>（プロファイルの既定モデル）、repo = models/<owner>--<name>/<ファイル名>。
+    途中のファイルは .part に残り、もう一度始めると続きから再開する。キャンセルは cancel_download()"""
+    token = ss.hf_token(ROOT)
+    rel = (lambda p: Path("models") / repo.replace("/", "--") / Path(p).name) if layout == "repo" else (lambda p: Path("models") / Path(p).name)
+    known = sum(int(f.get("size") or 0) for f in files)
+    _cancel.clear()
 
     def work():
+        base = 0
         try:
-            def progress(done, total):
-                DOWNLOAD.update(done=done, total=total, updated=time.time())
-            ctl.download(f"https://huggingface.co/{repo}/resolve/main/{file}", dest, progress=progress)
-            DOWNLOAD.update(status="done", file=dest.name)
+            for f in files:
+                dest = ROOT / rel(f["path"])
+                size = int(f.get("size") or 0)
+                if size and dest.exists() and dest.stat().st_size == size:
+                    base += size
+                    DOWNLOAD.update(done=base, updated=time.time())
+                    continue
+
+                def progress(done, total, base=base):
+                    if _cancel.is_set():
+                        raise _Cancelled()
+                    DOWNLOAD.update(done=base + done, total=known or (base + total), file=dest.name, updated=time.time())
+                ctl.download(hf_hub.file_url(repo, f["path"]), dest, progress=progress, token=token)
+                base += dest.stat().st_size
+            DOWNLOAD.update(status="done", file=Path(files[0]["path"]).name, done=base, total=known or base)
+        except _Cancelled:
+            DOWNLOAD.update(status="cancelled")
         except Exception as e:  # noqa: BLE001
-            DOWNLOAD.update(status="error", error=str(e))
+            DOWNLOAD.update(status="error", **_download_error(e, repo, bool(token)))
 
     DOWNLOAD.clear()
-    DOWNLOAD.update(status="running", repo=repo, file=dest.name, done=0, total=0, started=time.time())
+    DOWNLOAD.update(status="running", repo=repo, file=Path(files[0]["path"]).name, files=[f["path"] for f in files], done=0, total=known, started=time.time(), **(extra or {}))
     threading.Thread(target=work, daemon=True).start()
+
+
+def models_in_use() -> set[Path]:
+    """いま LLM が使っているモデルファイル（分割ファイルは全パーツ）"""
+    try:
+        res = ss.resolve_llm(cfg(), ss.load_settings(ROOT), ROOT)
+    except Exception:
+        return set()
+    if res["mode"] != "bundled":
+        return set()
+    mp = Path(res["model_path"])
+    mp = mp if mp.is_absolute() else ROOT / mp
+    out = {mp.resolve()}
+    m = re.match(r"^(.*)-\d{5}-of-(\d{5})\.gguf$", mp.name, re.I)
+    if m:
+        out |= {p.resolve() for p in mp.parent.glob(f"{m.group(1)}-*-of-{m.group(2)}.gguf")}
+    return out
+
+
+def downloaded_models() -> list[dict]:
+    d = ROOT / "models"
+    used = models_in_use()
+    out = []
+    if d.exists():
+        for f in sorted(d.rglob("*")):
+            if not f.is_file() or f.suffix.lower() not in (".gguf", ".part") or any(x.startswith(".") for x in f.relative_to(d).parts):
+                continue
+            rel = f.relative_to(d)
+            repo = rel.parts[0].replace("--", "/", 1) if len(rel.parts) > 1 else ""
+            out.append({"path": rel.as_posix(), "size_gib": f.stat().st_size / profiles.GIB, "size_bytes": f.stat().st_size, "repo": repo,
+                        "partial": f.suffix.lower() == ".part", "in_use": f.resolve() in used})
+    return out
+
+
+def local_gguf_meta(path: Path) -> dict | None:
+    """ダウンロード済みの GGUF の先頭を読んで、アーキテクチャ・層数・専門家の数を得る"""
+    try:
+        with open(path, "rb") as fh:
+            data = fh.read(8 * 1024 * 1024)
+        return hf_hub.parse_gguf_meta(data)
+    except Exception:
+        return None
+
+
+def current_profile_id(s: dict | None = None) -> str:
+    """範囲の基準にするプロファイル（いまの設定。任意の GGUF や外部のときは、導入時のプロファイル）"""
+    s = s or ss.load_settings(ROOT)
+    p = s["llm"].get("profile") or cfg()["profile"]
+    return p if p in profiles.PROFILES else (cfg()["profile"] if cfg()["profile"] in profiles.PROFILES else "mid")
+
+
+def range_for(profile: str) -> dict:
+    hw = hardware()
+    return profiles.model_range(profile, hw["vram_gib"] * 1024, hw["ram_gib"], hw["disk_free_gib"])
+
+
+def install_mode() -> str:
+    return profiles.PROFILES.get(cfg().get("profile"), {}).get("llm_mode", "fit")
+
+
+def dev_browse_without_token() -> bool:
+    """テスト専用: 環境変数 KOEMADO_DEV_BROWSE_NO_TOKEN=1 のときだけ、トークン無しでも一覧を使える（公開 API のみ）"""
+    import os
+    return os.environ.get("KOEMADO_DEV_BROWSE_NO_TOKEN") == "1"
 
 
 def strata_state(s: dict) -> dict:
@@ -280,9 +380,13 @@ def make_router(page_path: Path) -> APIRouter:
                  "size_gib": p["model"]["size_bytes"] / profiles.GIB,
                  "installed": (ROOT / "models" / p["model"]["file"]).exists(),
                  "warnings": model_warnings(p["model"]["size_bytes"], (ROOT / "models" / p["model"]["file"]).stat().st_size if (ROOT / "models" / p["model"]["file"]).exists() else 0),
-                 "min_vram_gib": p["min_vram_gib"], "min_ram_gib": p["min_ram_gib"]}
+                 "min_vram_gib": p["min_vram_gib"], "min_ram_gib": p["min_ram_gib"], "range": range_for(pid)}
                 for pid, p in profiles.PROFILES.items()
             ],
+            "range_profile": current_profile_id(s),
+            "has_previous": bool(s["llm"].get("previous")),
+            "dev_browse": dev_browse_without_token(),
+            "ja_families": [f["label"] for f in profiles.JA_FAMILIES],
             "presets": ss.EXTERNAL_PRESETS,
             "reasoning_modes": ss.REASONING_MODES,
             "llm_resolved": {k: v for k, v in resolved.items() if k not in ("api_key",)},
@@ -406,33 +510,283 @@ def make_router(page_path: Path) -> APIRouter:
                 raise HTTPException(400, ".gguf のファイルが見つかりません。")
             return {"size_gib": path.stat().st_size / profiles.GIB, "installed": True, "warnings": model_warnings(path.stat().st_size, path.stat().st_size)}
         repo, file = b.get("repo", ""), b.get("file", "")
-        if not re.fullmatch(r"[\w.\-]+/[\w.\-]+", repo) or not re.fullmatch(r"[\w.\-/]+\.gguf", file):
+        if not hf_hub.REPO_RE.match(repo) or not re.fullmatch(r"[\w.\-/]+\.gguf", file):
             raise HTTPException(400, "リポジトリは owner/name、ファイルは .gguf の名前で指定してください。")
         size = await asyncio.get_running_loop().run_in_executor(None, remote_size, repo, file)
         if size is None:
-            raise HTTPException(404, "Hugging Face でファイルが見つかりませんでした（非公開・ゲート付きのモデルは未対応です）。")
-        local = ROOT / "models" / Path(file).name
+            raise HTTPException(404, "Hugging Face でファイルが見つかりませんでした（非公開、またはゲート付きのモデルは、HF のトークンの登録と、HF のページでの利用条件への同意が必要です）。")
+        local = ROOT / ss.hf_model_rel_path(repo, file, ROOT)
         have = local.stat().st_size if local.exists() else 0
         return {"size_gib": size / profiles.GIB, "installed": have >= size, "warnings": model_warnings(size, have)}
 
     @r.post("/settings/api/llm/download")
     async def llm_download(request: Request):
+        """プロファイルの既定モデル、または手入力の「リポジトリ + ファイル名」のダウンロード"""
         guard_write(request)
         b = await request.json()
         repo, file = b.get("repo", ""), b.get("file", "")
-        if not re.fullmatch(r"[\w.\-]+/[\w.\-]+", repo) or not re.fullmatch(r"[\w.\-/]+\.gguf", file):
+        if not hf_hub.REPO_RE.match(repo) or not re.fullmatch(r"[\w.\-/]+\.gguf", file):
             raise HTTPException(400, "リポジトリまたはファイル名が不正です。")
         if b.get("confirmed") is not True:
             raise HTTPException(400, "ダウンロードの確認が必要です。")
+        is_profile = any(p["model"]["repo"] == repo and p["model"]["file"] == file for p in profiles.PROFILES.values())
         with _download_lock:
             if DOWNLOAD.get("status") == "running":
                 raise HTTPException(409, "ダウンロード中です。")
-            _start_download(repo, file)
+            _start_download(repo, [{"path": file}], layout="flat" if is_profile else "repo")
         return {"ok": True}
 
     @r.get("/settings/api/llm/download/status")
     async def llm_download_status():
         return dict(DOWNLOAD)
+
+    @r.post("/settings/api/llm/download/cancel")
+    async def llm_download_cancel(request: Request):
+        guard_write(request)
+        if DOWNLOAD.get("status") != "running":
+            raise HTTPException(400, "ダウンロード中ではありません。")
+        _cancel.set()
+        return {"ok": True}
+
+    # ---- Hugging Face のトークン ----
+    @r.post("/settings/api/hf/token")
+    async def hf_token_save(request: Request):
+        guard_write(request)
+        b = await request.json()
+        try:
+            ss.update_settings({"hf": {"token": b.get("token", "")}}, ROOT)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"token_set": bool(ss.load_settings(ROOT)["hf"]["token"])}
+
+    @r.delete("/settings/api/hf/token")
+    async def hf_token_delete(request: Request):
+        guard_write(request)
+        ss.update_settings({"hf": {"clear_token": True}}, ROOT)
+        return {"token_set": False}
+
+    @r.post("/settings/api/hf/whoami")
+    async def hf_whoami(request: Request):
+        """トークンの確認（https://huggingface.co/api/whoami-v2 だけを呼ぶ）。body に token があればそれを、なければ保存済みのものを調べる"""
+        guard_write(request)
+        b = await request.json()
+        tok = (b.get("token") or "").strip()
+        if not tok or set(tok) <= {"●", "*"}:
+            tok = ss.load_settings(ROOT)["hf"].get("token") or ""
+        if not tok:
+            raise HTTPException(400, "トークンが登録されていません。")
+        return await asyncio.get_running_loop().run_in_executor(None, hf_hub.whoami, tok)
+
+    # ---- モデルブラウザ（Hugging Face の GGUF 一覧から選ぶ） ----
+    def browse_token() -> str:
+        tok = ss.load_settings(ROOT)["hf"].get("token") or ""
+        if not tok and not dev_browse_without_token():
+            raise HTTPException(403, "Hugging Face のトークンを登録すると、一覧から選べます。")
+        return tok
+
+    def hf_http(e: hf_hub.HFError):
+        raise HTTPException({"invalid_token": 401, "gated": 403, "not_found": 404, "rate_limit": 429}.get(e.kind, 502), e.message)
+
+    @r.get("/settings/api/hf/limits")
+    async def hf_limits(profile: str = ""):
+        """プロファイルごとのサイズの下限・上限（このPCの検出値で補正したもの）"""
+        out = {}
+        for pid in profiles.PROFILE_ORDER:
+            out[pid] = range_for(pid)
+        return {"limits": out, "current": profile if profile in profiles.PROFILES else current_profile_id(), "hardware": hardware(),
+                "ja_families": [f["label"] for f in profiles.JA_FAMILIES]}
+
+    @r.post("/settings/api/hf/search")
+    async def hf_search(request: Request):
+        guard_write(request)
+        b = await request.json()
+        tok = browse_token()
+        try:
+            return await asyncio.get_running_loop().run_in_executor(
+                None, lambda: hf_hub.search(str(b.get("q", ""))[:100], b.get("sort", "downloads"), int(b.get("page") or 0), 12, tok,
+                                            bool(b.get("ja")), profiles.JA_FAMILIES))
+        except hf_hub.HFError as e:
+            hf_http(e)
+
+    @r.post("/settings/api/hf/files")
+    async def hf_files(request: Request):
+        """リポジトリの GGUF の一覧。量子化の種類・サイズ（分割は合計）・範囲との比較・注意を付ける"""
+        guard_write(request)
+        b = await request.json()
+        repo = str(b.get("repo", ""))
+        if not hf_hub.REPO_RE.match(repo):
+            raise HTTPException(400, "リポジトリ名が不正です。")
+        profile = b.get("profile") if b.get("profile") in profiles.PROFILES else current_profile_id()
+        tok = browse_token()
+        loop = asyncio.get_running_loop()
+        try:
+            files = await loop.run_in_executor(None, hf_hub.list_files, repo, tok)
+        except hf_hub.HFError as e:
+            hf_http(e)
+        try:
+            info = await loop.run_in_executor(None, hf_hub.repo_info, repo, tok)
+        except hf_hub.HFError:
+            info = {"id": repo, "downloads": 0, "likes": 0, "updated": "", "license": "", "gated": False}
+        groups, aux = hf_hub.group_gguf(files)
+        if not groups:
+            raise HTTPException(404, "このリポジトリには、使える GGUF（本体）がありません。")
+        # 種類（dense / MoE）と層数: 最小の候補の先頭を読んでメタデータから。読めなければ名前から推定する
+        probe = next((g for g in groups if g["complete"]), groups[0])
+        meta = await loop.run_in_executor(None, hf_hub.read_gguf_meta, repo, probe["files"][0], tok)
+        if meta and meta.get("block_count") is not None:
+            kind = "moe" if (meta.get("expert_count") or 0) > 1 else "dense"
+            source = "metadata"
+        else:
+            kind = "moe" if hf_hub.guess_moe_from_name(repo) else "dense"
+            source = "name"
+        layers = (meta or {}).get("block_count") if kind == "moe" else None
+        access = None
+        if info.get("gated"):
+            access = await loop.run_in_executor(None, hf_hub.probe_access, repo, probe["files"][0], tok)
+        rng = range_for(profile)
+        mode = install_mode()
+        out = []
+        for g in groups:
+            gib = g["size"] / profiles.GIB
+            a = profiles.assess_model(rng, gib, kind, layers, mode)
+            if not g["complete"]:
+                a = {"status": "unavailable", "reasons": ["分割ファイルの一部がリポジトリにありません"], "cautions": []}
+            local_ok = all((ROOT / "models" / repo.replace("/", "--") / Path(p).name).exists() for p in g["files"])
+            out.append({**g, "size_gib": gib, "installed": local_ok, **a})
+        return {"repo": repo, "info": info, "kind": kind, "kind_source": source, "moe_layers": layers, "meta": meta, "access": access,
+                "page": hf_page(repo), "range": rng, "mode": mode, "groups": out, "aux_count": len(aux)}
+
+    @r.post("/settings/api/llm/browse/download")
+    async def browse_download(request: Request):
+        """モデルブラウザで選んだモデルのダウンロード。範囲・空き容量はここでも検査する（画面の灰色表示に頼らない）"""
+        guard_write(request)
+        b = await request.json()
+        repo, key = str(b.get("repo", "")), str(b.get("key", ""))
+        if not hf_hub.REPO_RE.match(repo):
+            raise HTTPException(400, "リポジトリ名が不正です。")
+        if b.get("confirmed") is not True:
+            raise HTTPException(400, "ダウンロードの確認が必要です。")
+        profile = b.get("profile") if b.get("profile") in profiles.PROFILES else current_profile_id()
+        tok = browse_token()
+        loop = asyncio.get_running_loop()
+        try:
+            files = await loop.run_in_executor(None, hf_hub.list_files, repo, tok)
+        except hf_hub.HFError as e:
+            hf_http(e)
+        groups, _ = hf_hub.group_gguf(files)
+        g = next((x for x in groups if x["key"] == key), None)
+        if g is None or not g["complete"]:
+            raise HTTPException(404, "そのファイルは、リポジトリに見つかりませんでした。")
+        rng = range_for(profile)
+        a = profiles.assess_model(rng, g["size"] / profiles.GIB)
+        if a["status"] != "ok":
+            raise HTTPException(400, a["reasons"][0] if a["reasons"] else "このモデルは選べません。")
+        have = sum(((ROOT / "models" / repo.replace("/", "--") / Path(p).name).stat().st_size if (ROOT / "models" / repo.replace("/", "--") / Path(p).name).exists() else 0)
+                   + (((ROOT / "models" / repo.replace("/", "--") / (Path(p).name + ".part")).stat().st_size) if (ROOT / "models" / repo.replace("/", "--") / (Path(p).name + ".part")).exists() else 0)
+                   for p in g["files"])
+        need = max(0, g["size"] - have) / profiles.GIB
+        free = hardware()["disk_free_gib"]
+        if free < need + profiles.DISK_MARGIN_GIB:
+            raise HTTPException(400, f"容量が足りません: ダウンロードに約 {need:.1f}GiB 必要ですが、空きは {free:.1f}GiB です。")
+        sizes = {f["path"]: f["size"] for f in files}
+        with _download_lock:
+            if DOWNLOAD.get("status") == "running":
+                raise HTTPException(409, "ダウンロード中です。")
+            _start_download(repo, [{"path": p, "size": sizes.get(p, 0)} for p in g["files"]], layout="repo", extra={"browse": True, "key": key})
+        return {"ok": True}
+
+    @r.post("/settings/api/llm/browse/activate")
+    async def browse_activate(request: Request):
+        """ダウンロード済みのモデルに切り替えて、llama-server を再起動する（切り替え前の設定を previous に残す）"""
+        guard_write(request)
+        b = await request.json()
+        repo = str(b.get("repo", ""))
+        files = b.get("files")
+        if not hf_hub.REPO_RE.match(repo) or not isinstance(files, list) or not files or not all(isinstance(f, str) and re.fullmatch(r"[\w.\-/ ]+\.gguf", f) and ".." not in f for f in files):
+            raise HTTPException(400, "リポジトリまたはファイル名が不正です。")
+        d = ROOT / "models" / repo.replace("/", "--")
+        paths = [d / Path(f).name for f in sorted(files)]
+        if not all(p.is_file() for p in paths):
+            raise HTTPException(404, "ダウンロード済みのファイルが見つかりません。")
+        size = sum(p.stat().st_size for p in paths)
+        meta = local_gguf_meta(paths[0])
+        kind = "dense"
+        layers = 0
+        if meta and meta.get("block_count") is not None:
+            kind = "moe" if (meta.get("expert_count") or 0) > 1 else "dense"
+            layers = (meta.get("block_count") or 0) if kind == "moe" else 0
+        elif hf_hub.guess_moe_from_name(repo):
+            kind = "moe"
+        profile = b.get("profile") if b.get("profile") in profiles.PROFILES else current_profile_id()
+        a = profiles.assess_model(range_for(profile), size / profiles.GIB, kind, layers, install_mode())
+        if a["status"] != "ok":
+            raise HTTPException(400, a["reasons"][0])
+        s = ss.load_settings(ROOT)
+        llm = s["llm"]
+        patch = {"llm": {"mode": "bundled", "profile": "custom",
+                         "custom": {"source": "hf", "repo": repo, "file": Path(sorted(files)[0]).name, "path": "", "files": [Path(f).name for f in sorted(files)],
+                                    "size_bytes": size, "kind": kind, "moe_layers": layers}}}
+        already = llm["mode"] == "bundled" and llm.get("profile") == "custom" and llm["custom"].get("repo") == repo and llm["custom"].get("file") == Path(sorted(files)[0]).name
+        if not already:
+            patch["llm"]["previous"] = {"mode": llm["mode"], "profile": llm.get("profile", ""), "custom": llm["custom"], "external": {"preset": llm["external"].get("preset", ""), "base_url": llm["external"].get("base_url", "")}}
+        try:
+            ss.update_settings(patch, ROOT)
+        except (ValueError, KeyError) as e:
+            raise HTTPException(400, str(e))
+        res = ss.resolve_llm(cfg(), ss.load_settings(ROOT), ROOT)
+        spawn_detached([str(ROOT / "app" / ".venv" / "Scripts" / "python.exe"), str(ROOT / "ctl.py"), "restart", "all" if llm["mode"] == "external" else "llm"])
+        return {"ok": True, "kind": kind, "moe_layers": layers, "ctx": res["ctx"], "args": res["extra_args"], "fit_target_mib": res["fit_target_mib"]}
+
+    @r.post("/settings/api/llm/revert")
+    async def llm_revert(request: Request):
+        """モデルブラウザで切り替える前の設定に戻して、llama-server を再起動する"""
+        guard_write(request)
+        s = ss.load_settings(ROOT)
+        prev = s["llm"].get("previous")
+        if not prev:
+            raise HTTPException(400, "戻す先の設定がありません。")
+        patch = {"llm": {"mode": prev.get("mode") or "bundled", "profile": prev.get("profile", ""), "custom": prev.get("custom") or {}, "previous": None}}
+        try:
+            ss.update_settings(patch, ROOT)
+        except (ValueError, KeyError) as e:
+            raise HTTPException(400, str(e))
+        spawn_detached([str(ROOT / "app" / ".venv" / "Scripts" / "python.exe"), str(ROOT / "ctl.py"), "restart", "all" if prev.get("mode") == "external" else "llm"])
+        return {"ok": True}
+
+    @r.get("/settings/api/llm/loaded")
+    async def llm_loaded():
+        """いま llama-server が読み込んでいるモデルのファイル名（/props の model_path）。切り替えの完了待ちに使う"""
+        base = f"http://127.0.0.1:{cfg()['ports']['llm']}"
+        try:
+            async with httpx.AsyncClient(timeout=5, trust_env=False) as client:
+                pr = await client.get(base + "/props")
+            path = pr.json().get("model_path") or ""
+        except Exception:
+            path = ""
+        return {"file": Path(path.replace("\\", "/")).name if path else ""}
+
+    @r.get("/settings/api/llm/downloaded")
+    async def llm_downloaded():
+        return {"items": downloaded_models(), "disk_free_gib": hardware()["disk_free_gib"]}
+
+    @r.post("/settings/api/llm/downloaded/delete")
+    async def llm_downloaded_delete(request: Request):
+        guard_write(request)
+        b = await request.json()
+        rel = str(b.get("path", ""))
+        base = (ROOT / "models").resolve()
+        target = (base / rel).resolve()
+        if base not in target.parents or target.suffix.lower() not in (".gguf", ".part") or not target.is_file():
+            raise HTTPException(400, "削除できるのは、models フォルダの中の .gguf（と途中の .part）だけです。")
+        if target in models_in_use():
+            raise HTTPException(400, "いま使っているモデルは削除できません。先に別のモデルに切り替えてください。")
+        if DOWNLOAD.get("status") == "running" and target.name.startswith(Path(DOWNLOAD.get("file", "?")).name):
+            raise HTTPException(400, "ダウンロード中のファイルは削除できません。")
+        size = target.stat().st_size
+        target.unlink()
+        if target.parent != base and not any(target.parent.iterdir()):
+            target.parent.rmdir()
+        return {"ok": True, "freed_gib": size / profiles.GIB}
 
     @r.post("/settings/api/llm/models")
     async def llm_models(request: Request):
@@ -485,6 +839,12 @@ def make_router(page_path: Path) -> APIRouter:
                 step("接続（/v1/models）", True, f"モデル {len(ids)} 件: " + ", ".join(ids[:5]), int((time.perf_counter() - t) * 1000))
                 if not model and ids:
                     model = ids[0]
+                if b.get("mode", s["llm"]["mode"]) == "bundled":
+                    try:
+                        pr = await client.get(base.rsplit("/v1", 1)[0] + "/props")
+                        step("読み込まれているモデル", True, Path((pr.json().get("model_path") or "?").replace("\\", "/")).name)
+                    except Exception:
+                        pass
             except Exception as e:  # noqa: BLE001
                 step("接続（/v1/models）", False, f"{type(e).__name__}: {e}"[:200])
                 return report
