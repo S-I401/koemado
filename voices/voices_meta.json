@@ -1,4 +1,16 @@
 {
+  "mio_bright": {
+    "source": "shipped",
+    "caption": "高めで軽やかな、明るく可愛らしい若い女性の声。元気で弾むような話し方。",
+    "seed": 23,
+    "num_steps": 32,
+    "ref_text": "こんにちは、ミオだよ。今日はどんなことがあったの？楽しかったことも、ちょっと困ったことも、ぜんぶ聞かせてね。",
+    "f0_hz": 310.7,
+    "pitch_std_semitones": 0.72,
+    "clone_f0_hz": 327.3,
+    "clone_pitch_std_semitones": 0.81,
+    "note": "Irodori Voice Design で作った声（実在の人物の声ではない）。サンプルキャラ「ミオ」の既定の声"
+  },
   "mio_a": {
     "source": "shipped",
     "caption": "明るく落ち着いた20代後半の女性の声。柔らかく自然な話し方。",

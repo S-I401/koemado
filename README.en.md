@@ -452,7 +452,7 @@ Irodori-TTS (MIT license) has the following usage restrictions in addition to th
 3. A voice made from a caption alone (without a reference voice) may happen to resemble a real person. This is a probabilistic effect and there is no intent to reproduce any specific person.
 4. The developers take no responsibility for misuse. Using the output in compliance with the laws of your region is the user's responsibility.
 
-The bundled voices (`voices/mio_a` to `mio_d`) were made with Voice Design using adult-female captions and fixed seeds, and are not the voice of any real person (captions, seeds and stability are in `voices/voices_meta.json`). Irodori embeds a watermark (SilentCipher) in the audio it generates.
+The bundled voices (`voices/mio_bright` and `mio_a` to `mio_d`) were made with Voice Design using text captions and fixed seeds, and are not the voice of any real person (captions, seeds and stability are in `voices/voices_meta.json`). The sample character Mio uses `mio_bright` (a high, light and bright voice) by default. Irodori embeds a watermark (SilentCipher) in the audio it generates.
 
 ## Licenses of the software this depends on
 

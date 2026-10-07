@@ -163,7 +163,7 @@ DISK_MARGIN_GB = 3.0
 STATE_FILE = "config.json"
 
 # ---- 既定のキャラクターの声（voices/ に同梱。Voice Design で作った成人女性の声） ----
-DEFAULT_VOICE = "mio_a"
+DEFAULT_VOICE = "mio_bright"
 DEFAULT_TTS_NUM_STEPS = 24
 DEFAULT_TTS_SEED = 42
 
