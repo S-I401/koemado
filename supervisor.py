@@ -8,7 +8,9 @@
   - 管理画面（ログ・状態・不具合報告 zip）は supervisor 自身が持つ（127.0.0.1 の別ポート。既定 8099）
   - タスクトレイのアイコン（pystray）。使えない環境でも本体は動き続ける
 
-  python.exe supervisor.py launch   すでに動いていればブラウザを開くだけ。無ければ起動する（koemado.vbs が、ウィンドウを出さずに呼ぶ）
+  - デスクトップのキャラ（mascot.py）も、サービスの 1 つとして起動・監視する（表示方法がキャラ / 両方のとき。ログは管理画面の「キャラ」）
+
+  python.exe supervisor.py launch   すでに動いていれば、表示方法に従ってキャラかブラウザを出すだけ。無ければ起動する（koemado.vbs が、ウィンドウを出さずに呼ぶ）
   python.exe supervisor.py run      常駐本体（launch が CREATE_NO_WINDOW で起動する）
 （venv の pythonw.exe は、実際には base の python.exe（コンソール版）を起動するため使わない）
 """
@@ -36,6 +38,7 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "app"))
 
 import ctl  # noqa: E402
+import display_env  # noqa: E402
 import settings_store as ss  # noqa: E402
 
 CREATE_NO_WINDOW = 0x08000000
@@ -50,7 +53,10 @@ LOG_KEEP = 4                                  # logs/<service>.log.1 〜 .4
 RING_PER_SERVICE = 3000
 RING_ALL = 12000
 ALL_SERVICES = ["llm", "tts", "stt", "app"]
+LOG_SERVICES = ALL_SERVICES + ["mascot"]      # ログを持つもの（キャラは起動の順番や準備完了の判定には入れない）
 LABEL = dict(ctl.LABEL)
+LABEL["mascot"] = "デスクトップのキャラ"
+MASCOT_INFO = RUN_DIR / "mascot.json"
 CONSOLE_HEADER = "x-console-request"
 
 
@@ -343,6 +349,8 @@ class Supervisor:
         self.console_port = self.cfg["ports"].get("console", DEFAULT_CONSOLE_PORT)
         self.started_at = time.time()
         self.tray_ok = False
+        self.mascot = Service("mascot")
+        self.mascot_fallback_done = False
 
     # ---- 設定の読み直し ----
     def reload(self):
@@ -518,6 +526,11 @@ class Supervisor:
             time.sleep(1.5)
             if self.phase in ("stopping", "idle"):
                 continue
+            mp = self.mascot.proc
+            if mp is not None and not self.mascot.stop_requested and mp.poll() is not None:
+                code = mp.poll()
+                self.mascot.proc = None
+                threading.Thread(target=self._mascot_exited, args=(code,), daemon=True, name="mascot-exit").start()
             for s in self.services.values():
                 p = s.proc
                 if p is None or s.stop_requested:
@@ -670,6 +683,7 @@ class Supervisor:
         log("終了します。")
         self.shutdown_event.set()
         try:
+            self.stop_mascot()
             self.stop_all()
         finally:
             try:
@@ -685,6 +699,115 @@ class Supervisor:
             time.sleep(0.5)
             os._exit(0)
 
+    # ---- デスクトップのキャラ ----
+    def display_mode(self) -> tuple[str, str]:
+        """(実際の表示方法, ブラウザ版にした理由)"""
+        try:
+            return display_env.effective_mode(ss.load_settings(ROOT), ROOT)
+        except Exception as e:  # noqa: BLE001
+            return "browser", f"設定を読めませんでした: {e}"
+
+    def mascot_alive(self) -> bool:
+        p = self.mascot.proc
+        return p is not None and p.poll() is None
+
+    def start_mascot(self, force: bool = False) -> bool:
+        """キャラのプロセスを起動する。表示方法がブラウザのときは、force（トレイ・API からの明示）がなければ起動しない"""
+        with self.lock:
+            if self.mascot_alive():
+                return True
+            mode, why = self.display_mode()
+            if mode == "browser" and not force:
+                if why:
+                    log(f"デスクトップのキャラは使えないため、ブラウザ版で表示します: {why}", "WARNING")
+                return False
+            ok, why2 = display_env.mascot_available(ROOT)
+            if not ok:
+                log(f"デスクトップのキャラは使えません: {why2}", "WARNING")
+                return False
+            s = self.mascot
+            s.stop_requested = False
+            s.message = ""
+            cmd = [interpreter(), str(ROOT / "mascot.py")]
+            env = ctl.base_env(self.cfg)
+            env["PYTHONUTF8"] = "1"
+            proc = subprocess.Popen(cmd, cwd=str(ROOT), env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, creationflags=CREATE_NO_WINDOW)
+            self.job.add(proc)
+            s.proc, s.started_at, s.ready_at, s.state = proc, time.time(), None, "ready"
+            log(f"{s.label} を起動しました（PID {proc.pid}）")
+            threading.Thread(target=self._pump, args=(s, proc), daemon=True, name="pump-mascot").start()
+            return True
+
+    def stop_mascot(self):
+        s = self.mascot
+        s.stop_requested = True
+        p = s.proc
+        if p is not None and p.poll() is None:
+            ctl.kill_tree(p.pid)
+        s.proc, s.state = None, "stopped"
+        try:
+            MASCOT_INFO.unlink()
+        except OSError:
+            pass
+
+    def mascot_cmd(self, cmd: str) -> bool:
+        """動いているキャラに show / hide / toggle / reset_position を送る。動いていなければ起動する（show / toggle のとき）"""
+        try:
+            if self.mascot_alive():
+                info = json.loads(MASCOT_INFO.read_text(encoding="utf-8"))
+                req = urllib.request.Request(f"http://127.0.0.1:{info['port']}/{cmd}", method="POST", data=b"{}", headers={"X-Mascot-Token": info["token"]})
+                with urllib.request.urlopen(req, timeout=5):
+                    return True
+        except Exception as e:  # noqa: BLE001
+            log(f"キャラに {cmd} を送れませんでした: {type(e).__name__}", "WARNING")
+        if cmd in ("show", "toggle"):
+            return self.start_mascot(force=True)
+        return False
+
+    def _mascot_exited(self, code: int):
+        s = self.mascot
+        s.proc, s.state = None, "stopped"
+        if code == 0:
+            log("デスクトップのキャラが終了しました。")
+            return
+        if code == 3:      # 使えない（WebView2 が無いなど）: ブラウザ版にする
+            log("デスクトップのキャラを起動できないため、ブラウザ版で開きます。", "WARNING")
+            self._open_browser_fallback()
+            return
+        limit, window = restart_policy()
+        now = time.time()
+        while s.restarts and now - s.restarts[0] > window:
+            s.restarts.popleft()
+        log(f"デスクトップのキャラが異常終了しました（コード {code}）。", "ERROR")
+        if len(s.restarts) >= limit:
+            s.state, s.message = "failed", "デスクトップのキャラが起動できません。ログ（キャラ）を確認してください。自動の再起動は止めました。"
+            log(s.message, "ERROR")
+            self._open_browser_fallback()
+            return
+        s.restarts.append(now)
+        s.total_restarts += 1
+        log(f"デスクトップのキャラを再起動します（{len(s.restarts)}/{limit}）。", "WARNING")
+        time.sleep(1.5)
+        self.start_mascot(force=True)
+
+    def _open_browser_fallback(self):
+        if self.mascot_fallback_done or os.environ.get("KOEMADO_NO_BROWSER") == "1":
+            return
+        self.mascot_fallback_done = True
+        webbrowser.open(f"http://127.0.0.1:{self.console_port}/?boot=1")
+
+    def notify(self, title: str, message: str):
+        icon = getattr(self, "tray_icon", None)
+        if icon is not None:
+            try:
+                icon.notify(message, title)
+                log(f"Windows の通知を出しました: {title}")
+            except Exception as e:  # noqa: BLE001
+                log(f"通知を出せませんでした: {e}", "WARNING")
+        else:
+            log("トレイのアイコンが無いため、通知は出せません。", "WARNING")
+
     # ---- 状態 ----
     def state(self) -> dict:
         gpu = ctl.nvidia_gpu(self.cfg["gpu"]["index"]) if time.time() - getattr(self, "_gpu_t", 0) > 2 else getattr(self, "_gpu", None)
@@ -699,6 +822,7 @@ class Supervisor:
             "settings_url": f"http://127.0.0.1:{ports['app']}/settings",
             "gpu": self._gpu, "ram": ram_info(), "uptime": int(time.time() - self.started_at), "tray": self.tray_ok,
             "restart_limit": list(restart_policy()),
+            "display": self.display_mode()[0], "mascot": self.mascot.view(),
         }
 
 
@@ -801,7 +925,7 @@ def make_app(sup: Supervisor):
         return JSONResponse(await asyncio.get_running_loop().run_in_executor(None, sup.state), headers={"Cache-Control": "no-store"})
 
     def valid(svc: str):
-        if svc not in ("all", "supervisor", *ALL_SERVICES):
+        if svc not in ("all", "supervisor", *LOG_SERVICES):
             raise HTTPException(404, "サービス名が不正です。")
 
     @app.get("/api/logs")
@@ -853,10 +977,31 @@ def make_app(sup: Supervisor):
         guard(request)
         if svc == "all":
             sup.restart_all()
+        elif svc == "mascot":
+            sup.stop_mascot()
+            sup.mascot.restarts.clear()
+            threading.Timer(1.0, lambda: sup.start_mascot(force=True)).start()
         elif svc in ALL_SERVICES:
             sup.restart_service(svc)
         else:
             raise HTTPException(404, "サービス名が不正です。")
+        return {"ok": True}
+
+    @app.post("/api/mascot/{cmd}")
+    async def mascot(cmd: str, request: Request):
+        guard(request)
+        if cmd == "start":
+            cmd = "show"
+        if cmd not in ("show", "hide", "toggle", "reset_position"):
+            raise HTTPException(404, "コマンドが不正です。")
+        ok = await asyncio.get_running_loop().run_in_executor(None, sup.mascot_cmd, cmd)
+        return {"ok": ok}
+
+    @app.post("/api/notify")
+    async def notify(request: Request):
+        guard(request)
+        b = await request.json()
+        sup.notify(str(b.get("title") or "koemado")[:60], str(b.get("message") or "")[:240])
         return {"ok": True}
 
     @app.post("/api/shutdown")
@@ -912,6 +1057,16 @@ class TrayActions:
     def open_console(self, *_):
         webbrowser.open(f"http://127.0.0.1:{self.sup.console_port}/")
 
+    def toggle_mascot(self, *_):
+        threading.Thread(target=self.sup.mascot_cmd, args=("toggle",), daemon=True).start()
+
+    def default(self, *_):
+        """トレイのアイコンの左クリック: キャラがあればキャラの表示／隠す、無ければ会話画面"""
+        if self.sup.display_mode()[0] == "browser":
+            self.open_chat()
+        else:
+            self.toggle_mascot()
+
     def restart(self, *_):
         self.sup.restart_all()
 
@@ -924,7 +1079,9 @@ def run_tray(sup: Supervisor):
         import pystray
         act = TrayActions(sup)
         menu = pystray.Menu(
-            pystray.MenuItem("会話画面を開く", act.open_chat, default=True),
+            pystray.MenuItem("キャラを表示／隠す", act.toggle_mascot, visible=lambda item: sup.display_mode()[0] != "browser"),
+            pystray.MenuItem("会話画面を開く（ブラウザ）", act.open_chat),
+            pystray.MenuItem("既定", act.default, default=True, visible=False),
             pystray.MenuItem("設定", act.open_settings),
             pystray.MenuItem("ログ・状態", act.open_console),
             pystray.MenuItem("再起動", act.restart),
@@ -976,9 +1133,21 @@ def interpreter() -> str:
     return str(p if p.exists() else sys.executable)
 
 
+def configured_display() -> str:
+    """start.bat・ショートカットが使う表示方法（mascot / browser / both）。キャラが使えない PC は browser"""
+    try:
+        mode, why = display_env.effective_mode(ss.load_settings(ROOT), ROOT)
+    except Exception:
+        return "browser"
+    return mode
+
+
 def launch(open_browser: bool = True) -> int:
-    """すでに動いていればブラウザを開くだけ。無ければ supervisor を起動して、管理画面を開く"""
+    """すでに動いていれば、表示方法に従ってキャラかブラウザを出すだけ。無ければ supervisor を起動する
+    （キャラは supervisor が起動する。ブラウザは、表示方法がブラウザ / 両方のときに、起動中の画面を開く）"""
     open_browser = open_browser and os.environ.get("KOEMADO_NO_BROWSER") != "1"     # テスト用: ブラウザを開かない
+    mode = configured_display()
+    want_browser = open_browser and mode in ("browser", "both")
     info = running_supervisor()
     if info is None:
         RUN_DIR.mkdir(exist_ok=True)
@@ -993,12 +1162,17 @@ def launch(open_browser: bool = True) -> int:
         if info is None:
             return 1
         base = f"http://127.0.0.1:{info['port']}"
-        if open_browser:
+        if want_browser:
             webbrowser.open(base + "/?boot=1")        # 起動中の表示。準備ができたら会話画面へ自動で移る
         return 0
     st = ping(info["port"]) or {}
     base = f"http://127.0.0.1:{info['port']}"
-    if open_browser:
+    if mode in ("mascot", "both"):
+        try:
+            request(info["port"], "/api/mascot/show")     # すでに動いている: キャラを出す（隠れていれば出す）
+        except Exception:
+            pass
+    if want_browser:
         if st.get("ready"):
             try:
                 webbrowser.open(json.loads(urllib.request.urlopen(base + "/api/state", timeout=5).read().decode())["chat_url"])
@@ -1049,6 +1223,8 @@ def run() -> int:
     if os.environ.get("KOEMADO_NO_TRAY") != "1":
         threading.Thread(target=run_tray, args=(sup,), daemon=True, name="tray").start()
     sup.start_all()
+    if os.environ.get("KOEMADO_NO_MASCOT") != "1":
+        sup.start_mascot()          # 表示方法がキャラ / 両方のときだけ起動する。起動中は「起動中…」の吹き出しを出す
     while True:             # 終了は shutdown() が、子プロセスを止めたあとで os._exit する（ここで抜けない）
         time.sleep(1)
 
