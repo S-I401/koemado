@@ -13,9 +13,15 @@ Browser (mic) ─ AIAvatarKit ─ STT: faster-whisper (CPU)
                     └─ TTS: Irodori-TTS v4.1 Small (int8, CUDA)
 ```
 
-> **Adult characters only.**
-> A character must have an age of 18 or older, and settings that imply a minor (for example "girl" or "middle school student" in Japanese) cannot be saved.
-> The bundled sample character, Mio, is a 28-year-old adult, and her voice is an adult female voice made with Voice Design (not the voice of a real person).
+> **A rule shared by every character.**
+> No character responds to sexual content, or to sexual topics involving minors.
+> The rule lives in `characters/_common.md` (the part shared by all characters), so a character's settings cannot remove it.
+> A character's age is optional.
+> However, Strata's "refusal suppression (ESP)" can be turned on only while the character in use has an age of 18 or older (it cannot be used when the age is under 18 or not set).
+> The bundled sample character, Mio, has no age set, so ESP cannot be used with her.
+> Her voice was made with Voice Design (not the voice of a real person).
+> The sample character's images are fetched at setup time from the examples of AIAvatarKit (uezo/aiavatarkit, Apache License 2.0).
+> They are not included in the koemado repository.
 
 ## Language note: the app is Japanese-first
 
@@ -80,7 +86,7 @@ With 12 to 19 GB of VRAM the expert cache is smaller and speed drops (measured i
 
 Switch these in the LLM tab of the settings screen (when using Strata) or with `configure.bat`.
 
-- **Refusal suppression (Strata's "experimental speed projection")**: off by default. **Despite its name it is not a speed-up.** It uses a control vector shipped with Strata to remove the "refusal direction", so **the model almost never declines a request (its safety behavior is removed)**. It costs only about 0.2 to 0.4 % per token. You are responsible for the output. The vector is specific to Qwen3.8-Flash-Next (it does not work with Swift 1.5 or the Coder edition) and is under the Qwen Community License 1.0. A confirmation dialog appears when you turn it on. The adult-characters-only rule applies whether or not ESP is on.
+- **Refusal suppression (Strata's "experimental speed projection")**: off by default. **Despite its name it is not a speed-up.** It uses a control vector shipped with Strata to remove the "refusal direction", so **the model almost never declines a request (its safety behavior is removed)**. It costs only about 0.2 to 0.4 % per token. You are responsible for the output. The vector is specific to Qwen3.8-Flash-Next (it does not work with Swift 1.5 or the Coder edition) and is under the Qwen Community License 1.0. A confirmation dialog appears when you turn it on. ESP can be turned on only while the character in use has an age of 18 or older; otherwise the settings screen and configure.bat show the reason and keep it off. If ESP is on and you try to switch to a character under 18 or with no age set, you are asked whether to turn ESP off and switch, or to cancel the switch. The shared rule against sexual content applies whether or not ESP is on.
   - **Strata started by `start.bat` (`strata\`)**: when on, a `strata-<model>-esp.json` (same format as Strata's setup; the log is named `-esp.log`) is created and used. When off, the original config is used. Strata must be restarted after a change (the screen shows a restart button).
   - **A Strata you started yourself**: its launch arguments cannot be changed, so the app only sends `experimental_speed_projection` (`true` when on, `false` when off) with each request. It only has an effect on a Strata that was started with the vector loaded. Whether it is effective is not exposed in `/props`, so it cannot be detected.
 - **Image recognition (vision)**: on the Strata path of `setup.bat` you can choose "GPU (recommended; 0.1 to 0.5 s per image, about 1.4 GB VRAM) / CPU (10 to 30 s per image) / off (default)" with `--vision gpu|cpu|no` (also passed to Strata's installer). With GPU, 4900 MiB (the 3500 MiB TTS headroom plus 1400 MiB for the encoder) is set as `--vram-reserve-mib`, because Strata's setup writes only 700 for both GPU and CPU and does not add the encoder's share automatically.
@@ -164,6 +170,7 @@ The supervisor starts and watches the LLM (llama-server, or Strata), TTS, STT an
 ## Usage
 
 - Conversation screen: `http://127.0.0.1:8100/static/index.html` (the "starting..." page moves there automatically). Microphone permission is required.
+  - The screen is in Japanese (setup rewrites the fetched AIAvatarKit page). The "割り込み" (barge-in) toggle lets you speak and stop the avatar while it is talking; with speakers it can pick up the avatar's own voice and stop, so headphones are recommended. When it is off (the default), the microphone is not accepted until the avatar has finished speaking.
 - **Settings screen: `http://127.0.0.1:8100/settings`** (voice, LLM, character, tools; `configure.bat` changes the same settings interactively).
 - Admin screen (metrics, logs): `http://127.0.0.1:8100/admin`
 - Try it without a browser: `app\.venv\Scripts\python.exe tools\e2e_test.py "こんにちは" --repeat 3` (sends text over WebSocket and prints the reply, expression tags, audio and timing; the sample text means "hello").
@@ -227,11 +234,11 @@ For example, on a PC with 8 GB VRAM and 32 GB RAM the hardware limit is about 24
 
 ![Character](docs/screenshots/settings_char.png)
 
-**Character**: one character is one folder (`characters/<id>/character.yaml` and `image.png`). You can set name, age (required), first-person pronoun, how to address the user, speech style, personality, likes and dislikes, background, relationship, example lines and the voice to use, and switch between several characters.
+**Character**: one character is one folder (`characters/<id>/character.yaml` and `image.png`). You can set name, age (optional), first-person pronoun, how to address the user, speech style, personality, likes and dislikes, background, relationship, example lines and the voice to use, and switch between several characters.
 - The system prompt is built from `character.yaml` (rules for speech, expression and motion tags, weather and memory are shared in `characters/_common.md`). Long texts such as the background are the same string throughout a conversation, so the LLM's prompt cache works.
-- Standing picture: upload a PNG from the settings screen and it is shown on the conversation screen. If expression-specific images such as `image_joy.png` exist (neutral / joy / angry / sorrow / fun / surprised / eyes_closed), they switch with the expression. Without an image a silhouette is shown.
+- Standing picture: upload a PNG from the settings screen and it is shown on the conversation screen. If expression-specific images such as `image_joy.png` exist (neutral / joy / angry / sorrow / fun / surprised / eyes_closed), they switch with the expression. Without an image a silhouette is shown. The images of the sample character Mio are fetched from AIAvatarKit's official samples at setup time and placed in `characters/mio/` (if the download fails, setup continues and she stays a silhouette; running setup.bat again retries).
 - Memory (`app/data/memory_<id>.db`) is separate for each character.
-- **Adults only**: a character cannot be saved if the age is under 18, or if the text contains a minor's age (such as 17) or words implying a minor (girl, middle school student, high school student and so on).
+- **Age is optional**: it may be left empty. ESP can be used only with characters whose age is set to 18 or older. Every character declines sexual content and sexual topics involving minors (a shared rule that character settings cannot change).
 
 Settings are stored in `config/settings.json` (voice, LLM) and `characters/` (characters). `.env` (`app/.env`) holds only low-level values such as ports and is rebuilt by `start.bat`.
 
@@ -285,9 +292,8 @@ Tips for making them with image generation (inpainting):
 
 ### Please note
 
-- Characters must be **adults only**. Use assets of adult characters.
 - If you use pictures drawn by someone else, check the creator's terms of use (secondary use, modification, streaming).
-- The bundled sample character, Mio, has no picture yet (the silhouette is animated lightly).
+- The sample character Mio's images are fetched from AIAvatarKit's official samples at setup time (see the credit above). AIAvatarKit's mouth shapes are already transparent 512x512 PNGs on the same canvas as the faces, so they only need renaming into koemado's format (`mouth/e.png` and so on). There is no closed-mouth image; "no overlay" (the mouth drawn on the face) is the closed state.
 - For testing there is a script, `tools/make_test_avatar.py`, that makes a plain geometric face and mouth shapes (not a sample artwork).
 
 ## Troubleshooting
@@ -381,7 +387,7 @@ The bundled voices (`voices/mio_a` to `mio_d`) were made with Voice Design using
 | [Strata](https://github.com/Niko1221/Strata) (optional) | LLM for high-end PCs | MIT (each model has its own license; follow Strata's guidance) |
 | [uv](https://github.com/astral-sh/uv) / [MinGit](https://github.com/git-for-windows/git) | Setup tools | MIT, Apache-2.0 / GPL-2.0 (installed only when needed) |
 
-The browser UI does not use AIAvatarKit's sample picture; it shows the standing picture of the character chosen in the settings screen (or a silhouette if there is none).
+The browser UI shows the standing picture of the character chosen in the settings screen (or a silhouette if there is none). The sample character's images are fetched at setup time from the examples of AIAvatarKit (uezo/aiavatarkit, Apache License 2.0); they are not included in the koemado repository.
 
 ## File layout
 
@@ -397,7 +403,7 @@ profiles.py            LLM profile table, the size range for choosable models, l
 hf_dl.py               Hugging Face downloads (running hf download, progress, cancel; the parallel Range fallback with SHA256 verification)
 model_picker.py        model selection (grouping GGUFs, comparing with the range; shared by the settings screen and setup.bat's interactive mode)
 hf_hub.py              Hugging Face API (search, file list, GGUF metadata, token check); sends the token only to huggingface.co
-settings_store.py      reading and writing settings and characters, and the adult check
+settings_store.py      reading and writing settings and characters, and the ESP age check
 tools_store.py         MCP config (config/mcp.json) and skills (skills/) reading and writing
 skills/                skills (news-topics and research are bundled)
 app/                   AIAvatarKit itself (run.py), settings screen (settings_api.py / settings_ui), weather, memory, web search, MCP, skills, external agent

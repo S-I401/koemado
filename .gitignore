@@ -30,6 +30,11 @@
 /app/recorded_voices/
 /app/server.log
 
+# サンプルキャラの画像（AIAvatarKit の公式サンプルから、導入時に取得する。再配布しない）
+/characters/mio/image*.png
+/characters/mio/mouth/
+/characters/mio/.sample_images
+
 # --- 個人情報・秘密・生成物 ---
 .env
 .env.*

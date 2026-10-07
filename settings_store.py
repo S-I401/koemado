@@ -3,7 +3,8 @@
 - 設定画面（/settings）、configure.bat、start.bat（ctl.py）、run.py が共有する。
 - config.json は setup.py が作る低レベルの値（ポート・GPU・導入済みバージョン）。
   config/settings.json はユーザーが変える値（声・LLM・キャラクター）。
-- キャラクターは成人のみ。年齢が 18 歳未満、または未成年を示す記述は保存できない。
+- キャラクターの年齢は任意。ただし ESP（拒否の抑制）は、使用中のキャラの年齢が 18 歳以上のときだけ有効にできる（esp_character_block）。
+  すべてのキャラに共通する禁止事項は characters/_common.md に書く（キャラ設定では消せない）。
 """
 import copy
 import json
@@ -185,6 +186,12 @@ def update_settings(patch: dict, root: Path = ROOT) -> dict:
         ag.pop("clear_api_key", None)
     new = _merge(cur, patch)
     validate_settings(new)
+    if new["llm"].get("esp", {}).get("enabled"):
+        touched = (patch.get("llm") or {}).get("esp", {}).get("enabled") is True or "character" in patch
+        if touched:
+            why = esp_character_block(_character_for(new, root))
+            if why:
+                raise EspCharacterError(why)
     save_settings(new, root)
     return new
 
@@ -308,8 +315,8 @@ def resolve_llm(cfg: dict, settings: dict, root: Path = ROOT) -> dict:
         extra = {"chat_template_kwargs": {"enable_thinking": False}} if template else {}
         if ext.get("preset") == "strata":
             # Strata は、ベクトルを読み込んで起動したときだけ ESP を持つ。読み込み済みなら、リクエストごとに
-            # true / false で切り替えられる（false = 素のモデルと同じ出力）。オフのときも false を送り、勝手に効かないようにする
-            extra["experimental_speed_projection"] = bool(llm.get("esp", {}).get("enabled"))
+            # true / false で切り替えられる（false = 素のモデルと同じ出力）。オフのとき（キャラクターが 18 歳以上と確認できないときも）false を送り、勝手に効かないようにする
+            extra["experimental_speed_projection"] = esp_effective(settings, root)
         return {
             "mode": "external",
             "base_url": ext["base_url"].rstrip("/"),
@@ -409,12 +416,7 @@ def valid_voice_id(name: str) -> bool:
 CHAR_FIELDS = ["name", "age", "first_person", "second_person", "speech_style", "personality",
                "likes", "dislikes", "background", "relationship", "examples", "voice"]
 
-# 未成年を示す語。年齢欄だけでなく、全項目に対して調べる
-MINOR_WORDS = [
-    "少女", "幼女", "幼児", "園児", "児童", "小学生", "中学生", "高校生", "女子高生", "女子中学生", "女子小学生",
-    "JC", "JK", "JS", "ロリ", "ショタ", "未成年", "ティーン", "十代", "10代", "一桁", "ローティーン", "ハイティーン",
-    "minor", "underage", "teenager", "schoolgirl", "child", "loli",
-]
+
 _KANJI_NUM = {"〇": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
 
 
@@ -452,41 +454,49 @@ def parse_age(value) -> int | None:
 
 
 def validate_character(data: dict) -> list[str]:
-    """保存してよいか調べる。問題があれば理由のリストを返す（空なら OK）。成人のみ。"""
+    """保存してよいか調べる。問題があれば理由のリストを返す（空なら OK）。年齢は任意（入れるなら数字）。"""
     errors = []
     if not str(data.get("name") or "").strip():
         errors.append("名前は必須です。")
-    age = parse_age(data.get("age"))
-    if data.get("age") in (None, ""):
-        errors.append("年齢は必須です（成人キャラクターのみ作れます）。")
-    elif age is None:
-        errors.append("年齢は数字で入力してください（例: 28）。")
-    elif age < 18:
-        errors.append(f"年齢が {age} 歳です。成人（18 歳以上）のキャラクターだけ作れます。")
-    # 全項目の文章から、年齢の記述と未成年を示す語を探す
-    texts = []
-    for k in CHAR_FIELDS:
-        v = data.get(k)
-        if k == "age":
-            continue
-        if isinstance(v, list):
-            texts.extend(str(x) for x in v)
-        elif v:
-            texts.append(str(v))
-    blob = "\n".join(texts).translate(str.maketrans("０１２３４５６７８９", "0123456789"))
-    for m in re.finditer(r"(\d{1,3})\s*(?:歳|才|さい)", blob):
-        if int(m.group(1)) < 18:
-            errors.append(f"設定の文章に未成年の年齢（{m.group(0)}）が含まれています。")
-    for m in re.finditer(r"([〇一二三四五六七八九十]{1,3})\s*(?:歳|才)", blob):
-        n = _kanji_to_int(m.group(1))
-        if n is not None and n < 18:
-            errors.append(f"設定の文章に未成年の年齢（{m.group(0)}）が含まれています。")
-    low = blob.lower()
-    for w in MINOR_WORDS:
-        if w.lower() in low:
-            errors.append(f"未成年を示す語「{w}」が含まれています。成人キャラクターのみ作れます。")
-            break
+    if data.get("age") not in (None, "") and parse_age(data.get("age")) is None:
+        errors.append("年齢は数字で入力してください（例: 28）。空欄でもかまいません。")
     return errors
+
+
+# ---- ESP（拒否の抑制）とキャラクターの年齢 ----
+
+ESP_AGE_MIN = 18
+
+
+class EspCharacterError(ValueError):
+    """ESP がオンのまま、18 歳以上と確認できないキャラクターを使おうとした"""
+
+
+def esp_character_block(char: dict | None) -> str:
+    """ESP を使えない理由（使えるなら空文字）。年齢が 18 歳以上と設定されているキャラクターだけ使える"""
+    if not char:
+        return "使用中のキャラクターを読み込めないため、年齢を確認できません。"
+    age = parse_age(char.get("age"))
+    name = char.get("name") or char.get("id") or "このキャラクター"
+    if age is None:
+        return f"「{name}」は年齢が未設定です。拒否の抑制（ESP）は、年齢が 18 歳以上と設定されたキャラクターでだけ使えます。"
+    if age < ESP_AGE_MIN:
+        return f"「{name}」は {age} 歳です。拒否の抑制（ESP）は、年齢が 18 歳以上のキャラクターでだけ使えます。"
+    return ""
+
+
+def _character_for(settings: dict, root: Path) -> dict | None:
+    try:
+        return active_character(settings, root)
+    except Exception:
+        return None
+
+
+def esp_effective(settings: dict, root: Path = ROOT) -> bool:
+    """実際に ESP を有効にするか。設定がオンでも、キャラクターが条件を満たさなければ無効"""
+    if not settings.get("llm", {}).get("esp", {}).get("enabled"):
+        return False
+    return not esp_character_block(_character_for(settings, root))
 
 
 def characters_dir(root: Path = ROOT) -> Path:
@@ -519,7 +529,8 @@ def list_characters(root: Path = ROOT) -> list[dict]:
             try:
                 c = load_character(sub.name, root)
                 out.append({"id": sub.name, "name": c.get("name"), "age": c.get("age"), "voice": c.get("voice"),
-                            "has_image": (sub / "image.png").exists()})
+                            "has_image": (sub / "image.png").exists(),
+                            "esp_block": esp_character_block(c)})
             except Exception as e:
                 out.append({"id": sub.name, "name": f"(読み込み失敗: {e})", "error": True})
     return out
@@ -531,6 +542,11 @@ def save_character(cid: str, data: dict, root: Path = ROOT) -> Path:
     errors = validate_character(data)
     if errors:
         raise ValueError(" / ".join(errors))
+    cur = load_settings(root)
+    if cur["llm"].get("esp", {}).get("enabled") and cid == (cur.get("character") or "mio"):
+        why = esp_character_block({"id": cid, "name": data.get("name"), "age": data.get("age")})
+        if why:
+            raise EspCharacterError(why + " 先に ESP をオフにしてください。")
     clean = {}
     for k in CHAR_FIELDS:
         v = data.get(k)
@@ -563,8 +579,10 @@ def compose_system_prompt(char: dict, root: Path = ROOT, tools: dict | None = No
         if drop:
             common = _drop_sections(common, drop)
     age = parse_age(char.get("age"))
-    lines = [f"あなたは「{char.get('name', '')}」という名前の、{age} 歳の大人のキャラクターです。"
+    lines = [f"あなたは「{char.get('name', '')}」という名前のキャラクターです。"
              "ユーザーと音声で雑談する相手として話します。返答は音声で読み上げられます。", "", "# キャラクター設定"]
+    if age is not None:
+        lines.append(f"- 年齢: {age} 歳")
     rows = [("一人称", "first_person"), ("ユーザーの呼び方", "second_person"), ("口調", "speech_style"),
             ("性格", "personality"), ("好きなもの", "likes"), ("苦手なもの", "dislikes"), ("ユーザーとの関係", "relationship")]
     for label, key in rows:

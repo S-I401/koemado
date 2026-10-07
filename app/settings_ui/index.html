@@ -229,7 +229,7 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
         <strong>名前と違って、高速化の機能ではありません。</strong>Strata に同梱の制御ベクトルで、モデルの「拒否の方向」を取り除きます。
         オンにすると、<strong>モデルが依頼をほとんど断らなくなります（安全上の振る舞いが外れます）</strong>。速度は 1 トークンあたり 0.2〜0.4% 遅くなる程度です。
         <strong>出力の責任は利用者にあります。</strong>ベクトルは Qwen3.8-Flash-Next 専用です（Swift 1.5・Coder 版・Unsloth 版では使えません）。ライセンスは Qwen Community License 1.0 です。
-        キャラクターは成人のみ、という制限は、この設定とは関係なく有効なままです。
+        使用中のキャラクターの年齢が 18 歳以上と設定されているときだけ、オンにできます（未設定・18 歳未満では使えません）。性的な内容や、未成年が関わる性的な話題に応じない、という共通ルールは、この設定とは関係なく有効なままです。
       </div>
       <div class="note" id="espNote"></div>
     </div>
@@ -242,11 +242,13 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
     </div>
   </div>
 
+
+
   <dialog id="espDialog" style="max-width:520px;border:2px solid var(--warn);border-radius:10px;background:var(--panel);color:var(--text)">
     <h3 style="margin-top:0">拒否の抑制をオンにしますか？</h3>
     <p>これは高速化の機能ではありません。オンにすると、<strong>モデルが依頼を断らなくなります（安全上の振る舞いが外れます）</strong>。
     出力の責任は利用者にあります。Qwen3.8-Flash-Next 専用で、Strata を再起動したときに読み込まれます。</p>
-    <p class="note">キャラクターは成人のみ、という制限は変わりません。</p>
+    <p class="note">使えるのは、年齢が 18 歳以上と設定されたキャラクターだけです。性的な内容や、未成年が関わる性的な話題に応じない、という共通ルールも変わりません。</p>
     <div style="display:flex;gap:8px;justify-content:flex-end">
       <button class="btn" id="espCancel" type="button">やめる</button>
       <button class="btn primary" id="espOk" type="button">理解したうえでオンにする</button>
@@ -268,7 +270,7 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
 
 <!-- ============================== キャラクター ============================== -->
 <section class="tab" id="tab-char">
-  <div class="adult"><strong>成人キャラクターのみ。</strong> 年齢は必須で、18 歳未満、または「少女」「中学生」など未成年を示す設定は保存できません。</div>
+  <div class="adult"><strong>共通ルール:</strong> どのキャラクターも、性的な内容や、未成年が関わる性的な話題には応じません（キャラクターの設定では変えられません）。年齢は任意ですが、拒否の抑制（ESP）は、年齢が 18 歳以上と設定されたキャラクターでだけ使えます。</div>
   <h2>キャラクター</h2>
   <div class="row" style="align-items:end">
     <div><label>切り替え</label><select id="charSelect"></select></div>
@@ -280,7 +282,7 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
     <div class="row">
       <div><label>ID（半角英小文字・数字・_・-。フォルダ名になります）</label><input type="text" id="cId"></div>
       <div><label>名前 *</label><input type="text" id="cName"></div>
-      <div><label>年齢 *（18 以上の数字）</label><input type="number" id="cAge" min="18"></div>
+      <div><label>年齢（任意。数字）</label><input type="number" id="cAge" min="0"></div>
     </div>
     <div class="row">
       <div><label>一人称</label><input type="text" id="cFirst" placeholder="私"></div>
@@ -310,7 +312,7 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
     <strong>口の差分</strong>は、顔画像（image.png）と<strong>同じキャンバスサイズ</strong>で、口の部分だけを描いた透過 PNG です（重ねて表示するので位置合わせは要りません）。
     音声に合わせて closed / half / open / e / u を切り替えます。口の差分が無いキャラクター（画像 1 枚・シルエット）は、音量に合わせた軽い揺れだけになります。
     <code>eyes_closed</code> の画像があれば、まばたきに使います。作り方は <a href="https://github.com/S-I401/koemado#表情とリップシンクの素材" target="_blank" rel="noopener noreferrer">README の「表情とリップシンクの素材」</a>を見てください。
-    <strong>成人キャラクターのみ</strong>です。他の人の絵を使うときは、作者の利用条件を確認してください。</p>
+    他の人の絵を使うときは、作者の利用条件を確認してください。</p>
   <div id="mouthMsg"></div>
   <div class="row" style="align-items:flex-start">
     <div style="flex:0 0 270px">
@@ -427,6 +429,16 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
   <div id="rsMsg"></div>
 </section>
 </main>
+
+<dialog id="espSwitchDialog" style="max-width:520px;border:2px solid var(--warn);border-radius:10px;background:var(--panel);color:var(--text)">
+    <h3 style="margin-top:0">拒否の抑制（ESP）がオンです</h3>
+    <p id="espSwitchWhy"></p>
+    <p>ESP をオフにして切り替えるか、切り替えをやめるかを選んでください。</p>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn" id="espSwitchCancel" type="button">切り替えをやめる</button>
+      <button class="btn primary" id="espSwitchOff" type="button">ESP をオフにして切り替える</button>
+    </div>
+  </dialog>
 
 <script>
 const $ = (id) => document.getElementById(id);
@@ -590,6 +602,10 @@ function renderExtras() {
   } else {
     $("espOn").disabled = false;
     $("espNote").textContent = "自分で起動した Strata では、起動の引数を変えられないため、リクエストの experimental_speed_projection（true / false）だけを送ります。ベクトルを読み込んで起動した Strata でのみ効きます（読み込んでいなければ無視されます）。オフのときは false を送ります。効いているかどうかは Strata の /props などに出ないため、この画面からは判別できません。";
+  }
+  if (S.esp_char_block) {
+    $("espOn").checked = false; $("espOn").disabled = true;
+    $("espNote").textContent = "使えません: " + S.esp_char_block + "（キャラクタータブで年齢を設定するか、別のキャラクターに切り替えてください）";
   }
   const vi = st.vision_in_install;
   $("visionNote").textContent = st.managed
@@ -960,12 +976,24 @@ function renderChars() {
   if (!newChar) { $("charSelect").value = S.active_character || (S.characters[0] && S.characters[0].id); loadChar($("charSelect").value); }
 }
 $("charSelect").onchange = () => { newChar = false; loadChar($("charSelect").value); };
-$("charActivate").onclick = async () => {
-  try { await api("/settings", "PUT", { character: $("charSelect").value }); await refresh(); toast("キャラクターを切り替えました。次の会話から反映されます。"); }
+async function activateChar(extra) {
+  try { await api("/settings", "PUT", { character: $("charSelect").value, ...(extra || {}) }); await refresh(); toast("キャラクターを切り替えました。次の会話から反映されます。"); }
   catch (e) { alert(e.message); }
+}
+$("charActivate").onclick = async () => {
+  const c = S.characters.find((x) => x.id === $("charSelect").value);
+  const espOn = !!(S.settings.llm.esp && S.settings.llm.esp.enabled);
+  if (espOn && c && c.esp_block) {
+    $("espSwitchWhy").textContent = c.esp_block;
+    $("espSwitchDialog").showModal();
+    return;
+  }
+  await activateChar();
 };
+$("espSwitchOff").onclick = async () => { $("espSwitchDialog").close(); await activateChar({ llm: { esp: { enabled: false } } }); };
+$("espSwitchCancel").onclick = () => $("espSwitchDialog").close();
 $("charNew").onclick = () => {
-  newChar = true; msg($("charMsg"), "info", "新しいキャラクターを入力してください（成人のみ）。");
+  newChar = true; msg($("charMsg"), "info", "新しいキャラクターを入力してください。");
   for (const id of ["cId", "cName", "cAge", "cFirst", "cSecond", "cStyle", "cPersonality", "cLikes", "cDislikes", "cBackground", "cRelationship", "cExamples"]) $(id).value = "";
   $("cId").disabled = false; fillVoiceSelect(""); $("imgBox").innerHTML = '<div class="note">画像と口の差分は、保存したあとにアップロードできます。</div>'; $("mouthSlots").innerHTML = ""; $("mouthShapeBtns").innerHTML = ""; $("mouthMsg").innerHTML = "";
 };

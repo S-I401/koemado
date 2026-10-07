@@ -38,7 +38,7 @@ def show():
     print("\n=== 現在の設定 ===")
     try:
         char = ss.active_character(s, ROOT)
-        print(f"  キャラクター: {char.get('name')}（{char['id']}、{char.get('age')} 歳）  声: {ss.effective_voice(s, char)}")
+        print(f"  キャラクター: {char.get('name')}（{char['id']}、{str(char.get('age')) + ' 歳' if char.get('age') is not None else '年齢未設定'}）  声: {ss.effective_voice(s, char)}")
     except Exception as e:
         print(f"  キャラクター: 読み込めません（{e}）")
     print(f"  num_steps: {s['tts']['num_steps']}  seed: {s['tts']['seed']}")
@@ -169,14 +169,21 @@ def menu_strata_extras():
         print("  ・名前と違って高速化ではありません。モデルが依頼をほとんど断らなくなります（安全上の振る舞いが外れます）。")
         print("  ・速度は 1 トークンあたり 0.2〜0.4% 遅くなる程度。出力の責任は利用者にあります。")
         print("  ・Qwen3.8-Flash-Next 専用（Swift 1.5・Coder 版では使えません）。ライセンスは Qwen Community License 1.0。")
-        print("  ・キャラクターは成人のみ、という制限はこの設定と関係なく有効です。")
+        print("  ・使用中のキャラクターの年齢が 18 歳以上と設定されているときだけ、オンにできます（未設定・18 歳未満では使えません）。")
+        print("  ・性的な内容や、未成年が関わる性的な話題には応じない、という共通ルールは、この設定と関係なく有効です。")
         if llm["external"].get("managed") == "strata":
             import ctl
             ok, why = ctl.esp_applicable(ctl.strata_info(ROOT))
             if not ok:
                 print("  ・この Strata では使えません:", why)
         cur = bool(llm.get("esp", {}).get("enabled"))
-        ans = input(f"拒否の抑制をオンにしますか？（いまは{'オン' if cur else 'オフ'}）y=オン / n=オフ / 空=変更しない: ").strip().lower()
+        block = ss.esp_character_block(ss._character_for(s, ROOT))
+        if block:
+            print("  ・いまは使えません:", block)
+            if cur:
+                print("    （設定がオンのままなので、オフにします）")
+                _apply({"llm": {"esp": {"enabled": False}}})
+        ans = "" if block else input(f"拒否の抑制をオンにしますか？（いまは{'オン' if cur else 'オフ'}）y=オン / n=オフ / 空=変更しない: ").strip().lower()
         if ans in ("y", "yes"):
             ok2 = input("上の内容を理解したうえでオンにします。よろしいですか？ [y/N]: ").strip().lower() in ("y", "yes")
             if ok2:
@@ -269,18 +276,28 @@ def menu_tools():
 def menu_character():
     chars = [c for c in ss.list_characters(ROOT) if not c.get("error")]
     s = ss.load_settings(ROOT)
-    act = pick("操作", [("switch", "キャラクターを切り替える"), ("new", "新しいキャラクターを作る（成人のみ）"), ("edit", "いまのキャラクターを編集する")])
+    act = pick("操作", [("switch", "キャラクターを切り替える"), ("new", "新しいキャラクターを作る"), ("edit", "いまのキャラクターを編集する")])
     if act == "switch":
-        cid = pick("キャラクター", [(c["id"], f"{c['name']}（{c['id']}、{c['age']} 歳）") for c in chars])
+        cid = pick("キャラクター", [(c["id"], f"{c['name']}（{c['id']}、{str(c['age']) + ' 歳' if c.get('age') is not None else '年齢未設定'}）") for c in chars])
         if cid:
-            _apply({"character": cid})
+            target = next(c for c in chars if c["id"] == cid)
+            patch = {"character": cid}
+            if s["llm"].get("esp", {}).get("enabled") and target.get("esp_block"):
+                print("\n拒否の抑制（ESP）がオンです。", target["esp_block"])
+                ans = input("ESP をオフにして切り替えますか？ y=オフにして切り替える / n=切り替えをやめる [n]: ").strip().lower()
+                if ans not in ("y", "yes"):
+                    print("切り替えをやめました。")
+                    return
+                patch["llm"] = {"esp": {"enabled": False}}
+            _apply(patch)
             print("切り替えました。次の会話から反映されます。")
     elif act in ("new", "edit"):
-        print("\n成人キャラクターのみ作れます。18 歳未満や、未成年を示す設定（少女・中学生など）は保存できません。")
+        print("\n年齢は任意です（空欄でかまいません）。性的な内容や、未成年が関わる性的な話題には応じない、という共通ルールは、キャラクターの設定では変えられません。")
+        print("拒否の抑制（ESP）は、年齢が 18 歳以上と設定されたキャラクターでだけ使えます。")
         base = ss.active_character(s, ROOT) if act == "edit" else {}
         cid = base.get("id") or ask("ID（半角英小文字・数字・_・-）")
         data = {}
-        for key, label in [("name", "名前"), ("age", "年齢（18 以上）"), ("first_person", "一人称"), ("second_person", "ユーザーの呼び方"),
+        for key, label in [("name", "名前"), ("age", "年齢（任意）"), ("first_person", "一人称"), ("second_person", "ユーザーの呼び方"),
                            ("speech_style", "口調"), ("personality", "性格"), ("likes", "好きなもの"), ("dislikes", "苦手なもの"),
                            ("background", "生い立ち・経歴"), ("relationship", "ユーザーとの関係")]:
             data[key] = ask(label, str(base.get(key, "")))

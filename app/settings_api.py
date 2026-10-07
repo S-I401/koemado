@@ -397,6 +397,7 @@ def make_router(page_path: Path) -> APIRouter:
             "llama_installed": (ROOT / "llama.cpp" / "llama-server.exe").exists(),
             "active_voice": ss.effective_voice(s, active),
             "active_character": active.get("id"),
+            "esp_char_block": ss.esp_character_block(active or None),
             "voices": ss.list_voices(ROOT),
             "characters": chars,
             "profiles": [

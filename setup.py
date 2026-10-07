@@ -62,6 +62,10 @@ PINNED = {
     # AIAvatarKit: ブラウザ UI（examples/websocket/html）を、この版のタグから取る
     "aiavatar_ui_tarball": "https://github.com/uezo/aiavatarkit/archive/refs/tags/v0.9.1.tar.gz",
     "aiavatar_ui_prefix": "aiavatarkit-0.9.1/examples/websocket/html",
+    # サンプルキャラクター（ミオ）の画像: 同じタグの examples/websocket/html/images/（AIAvatarKit は Apache-2.0）。
+    # koemado のリポジトリには入れず、導入時にここから取得する。環境変数 KOEMADO_SAMPLE_TARBALL_URL で取得先を差し替えられる（取得失敗のテスト用）
+    "aiavatar_sample_tarball": "https://github.com/uezo/aiavatarkit/archive/refs/tags/v0.9.1.tar.gz",
+    "aiavatar_sample_prefix": "aiavatarkit-0.9.1/examples/websocket/html/images",
     # git が無い PC 向けの持ち運べる Git（uv が git 依存の取得に使う）
     "mingit_url": "https://github.com/git-for-windows/git/releases/download/v2.47.1.windows.2/MinGit-2.47.1.2-64-bit.zip",
     "stt_model": "small",
@@ -88,6 +92,7 @@ SIZE_LABELS = {
     "stt_model": "STT のモデル（Whisper small）",
     "app_env": "AIAvatarKit の実行環境",
     "ui": "ブラウザ UI",
+    "sample_images": "サンプルキャラの画像（AIAvatarKit の公式サンプルから取得）",
 }
 # (ダウンロード量, ディスク使用量) の概算 GiB。ディスクは展開後で、導入中のキャッシュ分を含む
 SIZES_GB = {
@@ -98,7 +103,61 @@ SIZES_GB = {
     "stt_model": (0.5, 0.5),
     "app_env": (0.4, 1.2),       # Python 3.12 + fastmcp・ddgs などを含む
     "ui": (0.04, 0.05),
+    "sample_images": (0.04, 0.002),   # UI と同じアーカイブを使うので、UI も未導入のときはダウンロードを数えない
 }
+
+# サンプルキャラクターの画像（AIAvatarKit の examples の名前 → koemado の素材の名前）。
+# 表情はそのまま。口の差分は、AIAvatarKit のものがすでに顔画像と同じキャンバス（512x512）の透過 PNG なので、名前を変えるだけでよい。
+# 口を閉じた画像（closed）は無い。closed は「口なし」（顔画像に描かれた口のまま）として扱われる
+SAMPLE_CHARACTER = "mio"
+SAMPLE_EXPRESSIONS = ["neutral", "joy", "angry", "sorrow", "fun", "surprised", "eyes_closed"]
+SAMPLE_MOUTHS = {"mouth_e": "e", "mouth_half": "half", "mouth_open": "open", "mouth_u": "u"}
+SAMPLE_MARK = ".sample_images"
+SAMPLE_MAX_BYTES = 5 * 1024 * 1024
+
+# 会話画面（AIAvatarKit の examples/websocket/html）の英語表示を日本語にする。取得した HTML / JS をインストール先で書き換える
+# （AIAvatarKit のファイルはリポジトリに入れない）。(ファイル, 元の文字列, 新しい文字列)
+BARGE_IN_TIP = "オンにすると、アバターが話している途中でも話しかけて止められます。スピーカーで使うと、アバター自身の声を拾って止まることがあるので、ヘッドホンでの利用がおすすめです。オフ（既定）のときは、アバターが話し終わるまでマイクを受け付けません。"
+JA_UI_STYLE = """    <style>
+        .koemado-tip { position: relative; display: inline-block; width: 18px; height: 18px; line-height: 18px; text-align: center; font-size: 12px; color: #fff; background: #8e8e93; border-radius: 50%; cursor: help; outline: none; }
+        .koemado-tip::after { content: attr(data-tip); position: absolute; left: 50%; bottom: 140%; transform: translateX(-50%); width: min(300px, 80vw); padding: 8px 10px; border-radius: 8px; background: #333; color: #fff; font-size: 12px; line-height: 1.5; text-align: left; opacity: 0; pointer-events: none; transition: opacity 0.15s; z-index: 300; }
+        .koemado-tip:hover::after, .koemado-tip:focus::after { opacity: 1; }
+    </style>
+</head>"""
+JA_UI_PATCHES = [
+    ("index.html", "</head>", JA_UI_STYLE),
+    ("index.html", '<button id="chatBtn">Start</button>', '<button id="chatBtn">開始</button>'),
+    ("index.html", '<div class="toggle-container">',
+     '<div class="toggle-container" title="' + BARGE_IN_TIP + '">'),
+    ("index.html", '<span class="toggle-label">Barge-in</span>',
+     '<span class="toggle-label">割り込み</span>\n            <span class="koemado-tip" tabindex="0" role="note" aria-label="割り込みの説明" data-tip="' + BARGE_IN_TIP + '">?</span>'),
+    ("index.html", "<span>Input: </span>", "<span>入力: </span>"),
+    ("index.html", 'alt="Avatar Face"', 'alt="アバター"'),
+    ("index.html", 'aria-label="Camera: Off" title="Camera: Off"', 'aria-label="カメラ: オフ" title="カメラ: オフ"'),
+    ("index.html", '["Camera: Off", "Camera: On-demand", "Camera: Stream"]', '["カメラ: オフ", "カメラ: 必要なときだけ", "カメラ: 常時"]'),
+    ("index.html", '"send_query_to_openclaw": "Asking OpenClaw🦞",',
+     '"send_query_to_openclaw": "OpenClaw に頼んでいます🦞",\n                "get_weather": "天気を調べています",\n                "web_search": "検索しています",\n                "web_fetch": "ページを読んでいます",\n                "remember": "覚えています",\n                "recall": "思い出しています",\n                "ask_agent": "エージェントに頼んでいます",\n                "check_agent_tasks": "作業の進み具合を確認しています",'),
+    ("ui.js", 'this.chatBtn.textContent = "Start";', 'this.chatBtn.textContent = "開始";'),
+    ("ui.js", 'this.chatBtn.textContent = "Stop";', 'this.chatBtn.textContent = "停止";'),
+    ("ui.js", 'this.speakerLabelUser = "User";', 'this.speakerLabelUser = "あなた";'),
+    ("ui.js", "`Tool Call: ${name}`", "`ツールを使っています: ${name}`"),
+]
+JA_UI_MARK = ".koemado_ja"
+
+
+def localize_ui(html: Path) -> list[str]:
+    """会話画面の英語表示を日本語にする。書き換えた項目の一覧を返す（元の文字列が見つからないものは飛ばす）"""
+    done = []
+    for fname, old, new in JA_UI_PATCHES:
+        f = html / fname
+        if not f.exists():
+            continue
+        text = f.read_text(encoding="utf-8")
+        if old in text and new not in text:
+            f.write_text(text.replace(old, new, 1), encoding="utf-8")
+            done.append(f"{fname}: {old[:40]}")
+    (html / JA_UI_MARK).write_text("ok")
+    return done
 DISK_MARGIN_GB = 3.0
 
 STATE_FILE = "config.json"
@@ -265,6 +324,14 @@ def meets(hw: dict, name: str) -> bool:
     return vram_gib >= p["min_vram_gib"] * RAM_VRAM_TOLERANCE and hw["ram_total_gib"] >= p["min_ram_gib"] * RAM_VRAM_TOLERANCE
 
 
+def sample_images_done(install: Path) -> bool:
+    """サンプルキャラの画像を取得済み（または、サンプルキャラのフォルダが無い）"""
+    d = install / "characters" / SAMPLE_CHARACTER
+    if (d / SAMPLE_MARK).exists():
+        return True
+    return (install / "characters").exists() and not d.exists()
+
+
 def component_state(install: Path, name: str) -> bool:
     """その部品がすでに導入済みか（容量の見積もりから差し引く）"""
     return {
@@ -275,6 +342,7 @@ def component_state(install: Path, name: str) -> bool:
         "stt_model": (install / "hf-home" / ".stt_prefetched").exists(),
         "app_env": (install / "app" / ".venv" / ".setup_ok").exists(),
         "ui": (install / "app" / "html" / ".portable_overlay").exists(),
+        "sample_images": sample_images_done(install),
     }[name]
 
 
@@ -312,6 +380,8 @@ def _components(install: Path, skip: tuple = ()) -> list[dict]:
     for key, (dl, disk) in SIZES_GB.items():
         if key in skip:
             continue
+        if key == "sample_images" and not component_state(install, "ui"):
+            dl = 0.0
         out.append(_item(SIZE_LABELS[key], dl, disk, component_state(install, key)))
     return out
 
@@ -790,9 +860,9 @@ class Installer:
         # ブラウザ UI
         html = app / "html"
         overlay_mark = html / ".portable_overlay"
+        tarball = self.root / ".downloads" / "aiavatarkit-ui.tar.gz"
         if not overlay_mark.exists():
             say("[AIAvatarKit] ブラウザ UI を取得します。")
-            tarball = self.root / ".downloads" / "aiavatarkit-ui.tar.gz"
             download(PINNED["aiavatar_ui_tarball"], tarball, "AIAvatarKit UI")
             tmp = self.root / ".downloads" / "ui-extract"
             shutil.rmtree(tmp, ignore_errors=True)
@@ -805,7 +875,7 @@ class Installer:
             shutil.rmtree(html, ignore_errors=True)
             shutil.copytree(tmp / prefix, html)
             shutil.rmtree(tmp, ignore_errors=True)
-            tarball.unlink()
+            # tarball は、サンプル画像の取り出しにも使うので、あとで消す
             # 同梱のプレースホルダ画像で、サンプルのキャラクター画像を差し替える
             ov = self.root / "html-overrides"
             if ov.exists():
@@ -818,6 +888,67 @@ class Installer:
                 text = text.replace("</body>", '    <script src="image-panel.js"></script>\n</body>', 1)
             index.write_text(text, encoding="utf-8")
             overlay_mark.write_text("ok")
+        if html.exists() and not (html / JA_UI_MARK).exists():
+            n = len(localize_ui(html))
+            say(f"[AIAvatarKit] 会話画面の表示を日本語にしました（{n} か所）。")
+        try:
+            self.install_sample_images(tarball)
+        finally:
+            tarball.unlink(missing_ok=True)
+
+    def install_sample_images(self, ui_tarball: Path):
+        """サンプルキャラ（ミオ）の画像を、AIAvatarKit の公式サンプル（同じタグの examples/websocket/html/images/）から取り出して置く。
+        失敗しても導入は止めない（シルエットのまま進み、警告を出す）。すでにある画像は上書きしない"""
+        char = self.root / "characters" / SAMPLE_CHARACTER
+        if not char.exists() or (char / SAMPLE_MARK).exists():
+            return
+        say("[サンプルキャラ] 画像を AIAvatarKit の公式サンプルから取得します。")
+        url = os.environ.get("KOEMADO_SAMPLE_TARBALL_URL") or PINNED["aiavatar_sample_tarball"]
+        own = None
+        try:
+            if ui_tarball.exists() and url == PINNED["aiavatar_ui_tarball"]:
+                src = ui_tarball
+            else:
+                own = self.root / ".downloads" / "aiavatarkit-sample.tar.gz"
+                download(url, own, "サンプル画像")
+                src = own
+            prefix = PINNED["aiavatar_sample_prefix"]
+            want = {f"{n}.png": (n, "face") for n in SAMPLE_EXPRESSIONS}
+            want.update({f"{n}.png": (m, "mouth") for n, m in SAMPLE_MOUTHS.items()})
+            got = {}
+            with tarfile.open(src) as t:
+                for m in t.getmembers():
+                    if not m.isfile() or not m.name.startswith(prefix + "/"):
+                        continue
+                    name = m.name[len(prefix) + 1:]
+                    if name in want and m.size <= SAMPLE_MAX_BYTES:
+                        data = t.extractfile(m).read()
+                        if data.startswith(b"\x89PNG\r\n\x1a\n"):
+                            got[name] = data
+            missing = sorted(set(want) - set(got))
+            if missing:
+                raise RuntimeError("アーカイブに画像が足りません: " + ", ".join(missing))
+            (char / "mouth").mkdir(exist_ok=True)
+
+            def put(dst: Path, data: bytes):
+                if not dst.exists():
+                    dst.write_bytes(data)
+            for fn, (n, kind) in want.items():
+                if kind == "face":
+                    put(char / f"image_{n}.png", got[fn])
+                    if n == "neutral":
+                        put(char / "image.png", got[fn])
+                else:
+                    put(char / "mouth" / f"{n}.png", got[fn])
+            (char / SAMPLE_MARK).write_text("ok")
+            say(f"  サンプルキャラの画像 {len(want)} 枚を置きました。")
+        except Exception as e:
+            say(f"\n[警告] サンプルキャラの画像を取得できませんでした（{type(e).__name__}: {e}）。")
+            say("  シルエットのまま進みます。あとから setup.bat を再実行すると、もう一度取得します。")
+        finally:
+            if own:
+                own.unlink(missing_ok=True)
+                own.with_suffix(own.suffix + ".part").unlink(missing_ok=True)
 
     # ---- Strata（別ソフトウェア。インストール先の strata\\ に取得し、Strata 自身のインストーラーを起動する） ----
     def clone_strata(self):

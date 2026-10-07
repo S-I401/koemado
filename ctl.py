@@ -520,9 +520,13 @@ def start_managed_strata(cfg: dict) -> bool:
         return wait_external_llm(cfg, cfg.get("strata_wait_sec", STRATA_WAIT_SEC), what="Strata")
     if ensure_strata_reserve(info):
         print(f"Strata の設定に TTS 用の VRAM の余白を入れました（--vram-reserve-mib {STRATA_RESERVE_MIB}）。")
-    esp_on = bool(settings_store.load_settings(ROOT)["llm"].get("esp", {}).get("enabled"))
+    _st = settings_store.load_settings(ROOT)
+    esp_on = bool(_st["llm"].get("esp", {}).get("enabled"))
     if esp_on:
-        ok, why = esp_applicable(info)
+        why = settings_store.esp_character_block(settings_store._character_for(_st, ROOT))
+        ok = not why
+        if ok:
+            ok, why = esp_applicable(info)
         if not ok:
             print(f"ESP（拒否の抑制）は使えないため、オフで起動します: {why}")
             esp_on = False
