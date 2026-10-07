@@ -290,9 +290,8 @@ def hf_token(root: Path = ROOT) -> str:
 def hf_model_rel_path(repo: str, file: str, root: Path = ROOT) -> str:
     """HF からダウンロードしたモデルの置き場所（インストール先からの相対）。リポジトリごとのフォルダに分ける
     （別のリポジトリに同じファイル名があっても混ざらない）。以前の置き場所 models/<ファイル名> に既にあればそちらを使う"""
-    name = Path(file).name
-    legacy = Path("models") / name
-    new = Path("models") / repo.replace("/", "--") / name
+    legacy = Path("models") / Path(file).name
+    new = Path("models") / repo.replace("/", "--") / file
     if not (root / new).exists() and (root / legacy).exists():
         return str(legacy)
     return str(new)

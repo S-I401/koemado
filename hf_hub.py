@@ -195,14 +195,14 @@ def _next_link(headers) -> str | None:
 
 
 def list_files(repo: str, token: str = "", max_pages: int = 5) -> list[dict]:
-    """リポジトリの全ファイル（[{path, size}]）。LFS のサイズを優先する"""
+    """リポジトリの全ファイル（[{path, size, sha256}]）。LFS のサイズと sha256（oid）を優先する。sha256 は LFS のファイルだけ"""
     url = f"{API}/api/models/{repo}/tree/main?recursive=true"
     out = []
     for _ in range(max_pages):
         data, headers = get_json(url, token)
         for e in data:
             if e.get("type") == "file":
-                out.append({"path": e["path"], "size": int((e.get("lfs") or {}).get("size") or e.get("size") or 0)})
+                out.append({"path": e["path"], "size": int((e.get("lfs") or {}).get("size") or e.get("size") or 0), "sha256": (e.get("lfs") or {}).get("oid") or ""})
         url = _next_link(headers)
         if not url or not is_hf_host(url):
             break

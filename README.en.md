@@ -44,6 +44,7 @@ On a PC without an NVIDIA GPU, TTS takes more than ten seconds per sentence and 
 2. Double-click `setup.bat`.
    - It inspects the PC (GPU, VRAM, RAM, free disk space, ports in use), picks a matching profile and shows the plan.
      Press **Enter** to start installing.
+   - After the profile is chosen, you can **choose the LLM model** (see "Choosing the model" below). If you choose nothing, the profile's default model is installed.
    - If uv (a Python manager) is missing, it is installed into the repository's `tools\` folder.
      Nothing is installed system-wide.
    - If it stops halfway, run `setup.bat` again and it resumes (finished downloads are not fetched again).
@@ -96,10 +97,32 @@ setup.bat --install-dir D:\aiavatar       choose the install location (default: 
 setup.bat --llm external --llm-url http://127.0.0.1:1234/v1 --llm-model MODEL
                                           use an external inference server (no llama.cpp or model installed)
 setup.bat --llm strata                    install and use Strata (for high-end PCs; about 70 GB)
+setup.bat --model unsloth/Qwen3-8B-GGUF:Qwen3-8B-Q4_K_M.gguf
+                                          choose the bundled LLM's model (repository:file; models outside the range are refused)
+setup.bat --model <repo>:<file> --hf-token-env   use the HF_TOKEN environment variable (never put a token on the command line)
 setup.bat --dry-run --simulate "vram=8,ram=32,disk=60"   judge as if on another PC (for testing)
 ```
 
 If the environment variable `HF_TOKEN` is set, or a Hugging Face token is already saved in the settings, `setup.bat` uses it for the model download.
+
+### Choosing the model (during setup)
+
+After the profile is chosen, `setup.bat` asks how to choose the LLM model (with `--yes` it does not ask and uses the default).
+
+- **[1] Recommended (default)**: the profile's default model.
+- **[2] Pick from the Hugging Face list** (a token is required): the token is typed without echo (`getpass`). It is verified with `whoami-v2`; if valid, the user name is shown and you are asked whether to save it to `config/settings.json` (shared with the settings screen). If the `HF_TOKEN` environment variable exists, it asks whether to use it. Then you choose a search term, a candidate (sorted by downloads), a repository, and a GGUF file from a list showing sizes, whether each is within range, and the reason and cautions for those outside. Models outside the range cannot be chosen. For a gated model you have not accepted, the URL of the terms page is shown. An invalid token gives an error and lets you type it again.
+- **[3] Type the repository and file name** (a token is optional): the size is fetched and checked against the range.
+- The chosen model is reflected in the confirmation table (download size, disk use, time estimate).
+- Non-interactively, use `--model <repo>:<file>`. If a token is needed, set the `HF_TOKEN` environment variable and add `--hf-token-env`. There is no option to pass a token directly on the command line (it would stay in history and process lists).
+- After setup you can still change the model in the settings screen (LLM tab).
+
+### Downloads use `hf download`
+
+All model downloads from Hugging Face (GGUF, Irodori, Whisper and so on) use `hf download` (the `huggingface_hub` CLI, with `hf_xet`). It is installed with pinned versions into `tools\hf-venv` (`setup.bat` and the settings screen use the same `hf.exe`).
+
+- The token is passed to the child process only through the `HF_TOKEN` environment variable, never as a command-line argument (arguments show up in process lists).
+- A split GGUF (`-0000N-of-`) is fetched with a single `hf download` covering all parts. If interrupted, running it again resumes where it stopped. In the settings screen, Cancel stops the process.
+- **Fallback when slow**: if the 60-second average speed falls below 1 MB/s, `hf download` is stopped and the download switches to 16 parallel Range requests (for environments where the Xet/CDN connection is throttled to a single stream). The switch is shown in the log and on the screen. The file is verified against the SHA256 from HF (the LFS oid). The token is attached only to huggingface.co. The thresholds can be changed with the environment variables `KOEMADO_HF_SLOW_BPS` (bytes per second) and `KOEMADO_HF_SLOW_WINDOW_SEC` (seconds), for testing.
 
 ## Profiles
 
@@ -187,7 +210,7 @@ The token is optional. Without it, you can still use the models in the profile t
   - Whether a model is dense or MoE, and its layer count, are read from the GGUF metadata (the first bytes of the file). If that fails, they are guessed from the name (for example `35B-A3B`).
 - **Download and switching**: it shows the size and free disk space and asks for confirmation, then downloads (progress, resume from where it stopped, cancel). When finished it restarts llama-server with that model and automatically runs the connection test (short reply, no thinking leaking, tool calling). If the test fails, a "go back to the previous model" button appears.
   - llama-server arguments are decided the same way as for the existing profiles. For a MoE model whose layer count is known, when the installed profile is mid, the number of layers whose experts stay on the CPU (`--n-cpu-moe`) is computed from VRAM. Otherwise `--fit` decides. `--jinja` is always added. The context length is 8192 (4096 for large models close to this PC's limit).
-  - There is also a list of downloaded models with deletion (to recover disk space). They are stored in `models\<owner>--<name>\`.
+  - There is also a list of downloaded models with deletion (to recover disk space). They are stored in `models\<owner>--<name>\` (keeping the path inside the repository). Downloads work as described in "Downloads use `hf download`" above.
 
 | Profile | Selectable size range | Caution threshold | Basis of the range |
 |---|---|---|---|
@@ -371,6 +394,8 @@ koemado.vbs / .ico     windowless launch (shortcuts use it too), icon
 configure.bat / .py    interactive CLI for settings (a fallback for the settings screen)
 ctl.py                 shared code for start, stop, restart, download and shortcuts (the console start lives here too)
 profiles.py            LLM profile table, the size range for choosable models, llama-server arguments
+hf_dl.py               Hugging Face downloads (running hf download, progress, cancel; the parallel Range fallback with SHA256 verification)
+model_picker.py        model selection (grouping GGUFs, comparing with the range; shared by the settings screen and setup.bat's interactive mode)
 hf_hub.py              Hugging Face API (search, file list, GGUF metadata, token check); sends the token only to huggingface.co
 settings_store.py      reading and writing settings and characters, and the adult check
 tools_store.py         MCP config (config/mcp.json) and skills (skills/) reading and writing

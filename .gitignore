@@ -18,6 +18,7 @@
 /tools/python/
 /tools/uv-cache/
 /tools/mingit/
+/tools/hf-venv/
 /stt/.venv/
 /app/.venv/
 /app/html/

@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.12"
-# dependencies = ["huggingface_hub>=0.34"]
+# dependencies = []
 # ///
 """koemado セットアップ。
 
@@ -26,6 +26,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import threading
 import time
 import urllib.request
 import zipfile
@@ -34,6 +35,9 @@ from pathlib import Path
 SRC_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SRC_DIR))
 import ctl  # noqa: E402  （起動・設定の共通処理）
+import hf_dl  # noqa: E402  （Hugging Face からの取得は hf download にそろえる）
+import hf_hub  # noqa: E402
+import model_picker  # noqa: E402
 import settings_store  # noqa: E402  （ユーザー設定・キャラクター）
 
 # =====================================================================
@@ -288,13 +292,19 @@ def _item(label: str, dl: float, disk: float, done: bool = False, partial_gb: fl
     return {"label": label, "dl": dl - got, "disk": max(0.0, disk - got), "done": False, "partial": got}
 
 
-def model_partial_gb(install: Path, size_bytes: int) -> float:
-    d = install / "models" / ".cache" / "huggingface" / "download"
-    best = 0
-    if d.is_dir():
-        for f in d.glob("*.incomplete"):
-            best = max(best, f.stat().st_size)
-    return min(best, size_bytes) / GIB
+def model_partial_gb(install: Path, size_bytes: int, local_dir: Path | None = None) -> float:
+    """hf download の途中ファイル（<local-dir>/.cache/huggingface/download/*.incomplete）の合計（同じファイルの重複は最大の 1 つ）"""
+    inc = hf_dl.incomplete_map(local_dir or (install / "models"))
+    return min(sum(inc.values()), size_bytes) / GIB
+
+
+def choice_dir(install: Path, choice: dict) -> Path:
+    return install / "models" / choice["repo"].replace("/", "--")
+
+
+def choice_present(install: Path, choice: dict) -> bool:
+    d = choice_dir(install, choice)
+    return all((d / f["path"]).exists() and (not f.get("size") or (d / f["path"]).stat().st_size == f["size"]) for f in choice["files"])
 
 
 def _components(install: Path, skip: tuple = ()) -> list[dict]:
@@ -312,7 +322,14 @@ def _finish_plan(items: list[dict]) -> dict:
     return {"items": items, "download_gb": dl, "disk_gb": disk, "need_gb": disk + DISK_MARGIN_GB}
 
 
-def plan_for(install: Path, name: str) -> dict:
+def plan_for(install: Path, name: str, choice: dict | None = None) -> dict:
+    if choice:
+        gb = choice["size_bytes"] / GIB
+        first = sorted(f["path"] for f in choice["files"])[0]
+        items = [_item(f"LLM モデル {choice['repo']}:{Path(first).name}", gb, gb, choice_present(install, choice),
+                       model_partial_gb(install, choice["size_bytes"], choice_dir(install, choice)))]
+        items += _components(install)
+        return _finish_plan(items)
     m = PROFILES[name]["model"]
     gb = m["size_bytes"] / GIB
     items = [_item(f"LLM モデル {m['file']}", gb, gb, model_present(install, name), model_partial_gb(install, m["size_bytes"]))]
@@ -404,7 +421,7 @@ def llm_settings(name: str, hw: dict) -> dict:
     return _llm_settings(name, hw["gpu"]["vram_mib"])
 
 
-def show_plan(hw: dict, name: str, notes: list[str], plan: dict, llm: dict, install: Path, ports: dict, args=None):
+def show_plan(hw: dict, name: str, notes: list[str], plan: dict, llm: dict, install: Path, ports: dict, args=None, choice: dict | None = None):
     if name in ("external", "strata"):
         say("\n=== 選んだ構成 ===")
         if name == "strata":
@@ -421,8 +438,19 @@ def show_plan(hw: dict, name: str, notes: list[str], plan: dict, llm: dict, inst
     p = PROFILES[name]
     say("\n=== 選んだプロファイル ===")
     say(f"  {name}: {p['label']}")
-    say(f"  LLM : {p['model']['repo']} / {p['model']['file']}（{p['model']['size_bytes'] / GIB:.1f} GiB）")
-    if p["llm_mode"] == "moe_layers":
+    if choice:
+        first = sorted(f["path"] for f in choice["files"])[0]
+        say(f"  LLM : {choice['repo']} / {first}（{choice['size_bytes'] / GIB:.1f} GiB{'、' + str(len(choice['files'])) + ' 分割' if len(choice['files']) > 1 else ''}）  ← 自分で選んだモデル")
+        say(f"        種類: {'MoE' if choice['kind'] == 'moe' else 'dense'}。プロファイルの既定（{p['model']['repo']}）の代わりに、こちらを入れます")
+        if llm["info"].get("n_cpu_moe") is not None:
+            say(f"        専門家（MoE）のうち {llm['info']['n_cpu_moe']}/{choice['moe_layers']} 層を CPU 側に置く（サイズからの推定。LLM の VRAM 見込み 約 {llm['info']['llm_vram_estimate_mib'] / 1024:.1f} GiB）")
+        else:
+            say(f"        VRAM に収まる分だけ GPU に載せる（--fit。TTS 用に約 {llm['fit_target_mib'] / 1024:.1f} GiB の余白を残す）")
+    else:
+        say(f"  LLM : {p['model']['repo']} / {p['model']['file']}（{p['model']['size_bytes'] / GIB:.1f} GiB）")
+    if choice:
+        pass
+    elif p["llm_mode"] == "moe_layers":
         say(f"        専門家（MoE）のうち {llm['info']['n_cpu_moe']}/{p['moe_layers']} 層を CPU 側に置く（LLM の VRAM 見込み 約 {llm['info']['llm_vram_estimate_mib'] / 1024:.1f} GiB）")
     else:
         say(f"        VRAM に収まる分だけ GPU に載せる（TTS 用に約 {llm['fit_target_mib'] / 1024:.1f} GiB の余白を残す）")
@@ -555,7 +583,7 @@ class Installer:
         say("\n[配置] プログラムのファイルをインストール先にコピーします。")
         ignore = shutil.ignore_patterns(".venv", "__pycache__", ".env", ".env.local", "data", "html", "*.db", "*.db-*",
                                         "recorded_voices", "logs")
-        for name in ["ctl.py", "supervisor.py", "profiles.py", "settings_store.py", "tools_store.py", "configure.py", "setup.py",
+        for name in ["ctl.py", "supervisor.py", "profiles.py", "hf_hub.py", "hf_dl.py", "model_picker.py", "settings_store.py", "tools_store.py", "configure.py", "setup.py",
                      "start.bat", "debug-start.bat", "stop.bat", "setup.bat", "configure.bat", "koemado.ico", "koemado.vbs", "README.md", "LICENSE"]:
             if (SRC_DIR / name).exists():
                 shutil.copy2(SRC_DIR / name, self.root / name)
@@ -598,17 +626,67 @@ class Installer:
         if not (dest / "llama-server.exe").exists():
             die("llama-server.exe が展開されませんでした。")
 
+    # ---- Hugging Face の CLI（hf。モデルの取得はすべて hf download）----
+    def install_hf_cli(self):
+        if hf_dl.hf_exe(self.root).exists():
+            return
+        say("\n[準備] Hugging Face の CLI（hf download。hf_xet 入り）を入れます。")
+        hf_dl.ensure_hf_cli(self.root, self.uv, env=self.env, python=PINNED["python"], log=say)
+
+    def run_download(self, repo: str, files: list[dict], local_dir: Path, label: str):
+        """hf download（遅いときは並列の Range 取得に切り替わる）。進捗を 1 行で出す。Ctrl+C で中断（続きから再開できる）"""
+        status = {}
+        job = hf_dl.Job(self.root, repo, files, local_dir, getattr(self, "hf_token", ""), status=status, log=lambda line: None,
+                        uv=self.uv, base_env=self.env)
+        t = threading.Thread(target=job.run, daemon=True)
+        t.start()
+        last = ""
+        try:
+            while t.is_alive():
+                time.sleep(1.0)
+                if status.get("status") == "running":
+                    d, tot = status.get("done", 0), status.get("total", 0)
+                    line = f"  {label}: {d / 1e9:6.2f} / {tot / 1e9:.2f} GB" + (f" ({d * 100 / tot:5.1f}%)" if tot else "") \
+                           + f"  {status.get('speed', 0) / 1e6:6.1f} MB/s" + ("  [並列の Range 取得]" if status.get("engine") == "range" else "")
+                    if line != last:
+                        print("\r" + line + " " * 6, end="", flush=True)
+                        last = line
+        except KeyboardInterrupt:
+            job.cancel()
+            t.join(timeout=15)
+            die("中断しました。もう一度 setup.bat を実行すると、続きから再開します。")
+        print()
+        if status.get("status") != "done":
+            if status.get("link"):
+                say(f"  {status.get('error')}\n  {status['link']}")
+            die(f"{label} のダウンロードに失敗しました: {status.get('error') or status.get('status')}\n  もう一度 setup.bat を実行すると、続きから再開します。")
+        if status.get("message"):
+            say("  " + status["message"])
+
     # ---- GGUF ----
-    def install_model(self, name: str):
-        from huggingface_hub import hf_hub_download
+    def install_model(self, name: str, choice: dict | None = None):
+        token = getattr(self, "hf_token", "") or settings_store.hf_token(self.root)
+        self.hf_token = token
+        if choice:
+            if choice_present(self.root, choice):
+                say("\n[LLM モデル] 導入済み")
+                return
+            say(f"\n[LLM モデル] {choice['repo']}（{choice['size_bytes'] / GIB:.1f} GiB、{len(choice['files'])} ファイル）をダウンロードします（hf download）。")
+            self.run_download(choice["repo"], choice["files"], choice_dir(self.root, choice), "LLM モデル")
+            if not choice_present(self.root, choice):
+                die("モデルのダウンロードが完了していません。もう一度 setup.bat を実行してください（続きから再開します）。")
+            return
         m = PROFILES[name]["model"]
         if model_present(self.root, name):
             say("\n[LLM モデル] 導入済み")
             return
-        say(f"\n[LLM モデル] {m['repo']} / {m['file']}（{m['size_bytes'] / GIB:.1f} GiB）をダウンロードします。")
-        os.environ["HF_HOME"] = str(self.root / "hf-home")
-        # トークン: 環境変数 HF_TOKEN、無ければ設定画面で登録したもの（任意）。huggingface_hub は huggingface.co にだけ送る
-        hf_hub_download(m["repo"], m["file"], local_dir=str(self.root / "models"), token=settings_store.hf_token(self.root) or None)
+        say(f"\n[LLM モデル] {m['repo']} / {m['file']}（{m['size_bytes'] / GIB:.1f} GiB）をダウンロードします（hf download）。")
+        entry = {"path": m["file"], "size": m["size_bytes"]}
+        try:
+            entry = next((f for f in hf_hub.list_files(m["repo"], token) if f["path"] == m["file"]), entry)   # SHA256（遅いときの予備の検証用）
+        except hf_hub.HFError:
+            pass
+        self.run_download(m["repo"], [entry], self.root / "models", "LLM モデル")
         if not model_present(self.root, name):
             die("モデルのダウンロードが完了していません。もう一度 setup.bat を実行してください（続きから再開します）。")
 
@@ -639,7 +717,12 @@ class Installer:
         # 重みのダウンロードと動作確認（サーバーを一度起動して、読み込めたら止める）
         pre = self.root / "hf-home" / ".tts_prefetched"
         if not pre.exists():
-            say("\n[TTS] モデルの重みを取得し、GPU で読み込めるか確認します。")
+            say("\n[TTS] モデルの重みを取得し（hf download）、GPU で読み込めるか確認します。")
+            cache = self.root / "hf-home" / "hub"
+            tok = getattr(self, "hf_token", "") or settings_store.hf_token(self.root)
+            for repo, include in (("Aratako/Irodori-TTS-v4.1-Small-Quantized", ["int8-weight-only/*", "tokenizer/*"]),
+                                  ("Aratako/Semantic-DACVAE-Japanese-32dim", None), ("sony/silentcipher", None)):
+                hf_dl.hf_fetch(self.root, repo, include, cache, tok, log=say, uv=self.uv, base_env=self.env)
             port = ctl.pick_ports({"llm": 1, "tts": 18088, "stt": 1, "app": 1})["tts"]
             cmd, cwd, env = ctl.service_command({**self.cfg, "ports": {**self.cfg["ports"], "tts": port}}, "tts", self.root)
             env["HF_HUB_DISABLE_PROGRESS_BARS"] = "0"
@@ -675,7 +758,9 @@ class Installer:
             say("\n[STT] 導入済み")
         pre = self.root / "hf-home" / ".stt_prefetched"
         if not pre.exists():
-            say(f"[STT] Whisper {PINNED['stt_model']} のモデルを取得します。")
+            say(f"[STT] Whisper {PINNED['stt_model']} のモデルを取得します（hf download）。")
+            hf_dl.hf_fetch(self.root, f"Systran/faster-whisper-{PINNED['stt_model']}", None, self.root / "hf-home" / "hub",
+                           getattr(self, "hf_token", "") or settings_store.hf_token(self.root), log=say, uv=self.uv, base_env=self.env)
             code = ("from faster_whisper import WhisperModel; "
                     f"WhisperModel('{PINNED['stt_model']}', device='cpu', compute_type='int8'); print('ok')")
             run([stt / ".venv" / "Scripts" / "python.exe", "-c", code], env=self.env)
@@ -793,7 +878,7 @@ def build_config(name: str, hw: dict, ports: dict, args) -> dict:
     }
 
 
-def initial_settings(args, name: str) -> dict:
+def initial_settings(args, name: str, choice: dict | None = None) -> dict:
     """config/settings.json の初期値。すでにあれば、指定された項目だけ更新する"""
     s = settings_store.load_settings(Path(args.install_dir).resolve())
     if settings_store.settings_path(Path(args.install_dir).resolve()).exists() and not args.llm_explicit:
@@ -823,7 +908,11 @@ def initial_settings(args, name: str) -> dict:
                 ext[k] = settings_store.EXTERNAL_PRESETS[preset][k]
     else:
         s["llm"]["mode"] = "bundled"
-        s["llm"]["profile"] = name
+        if choice:
+            s["llm"]["profile"] = "custom"
+            s["llm"]["custom"] = model_picker.custom_settings(choice)
+        else:
+            s["llm"]["profile"] = name
     return s
 
 
@@ -889,6 +978,57 @@ def ask_llm_kind(args, offer_strata: bool, hw: dict, install: Path, profile: str
     return "external"
 
 
+def dev_browse_without_token() -> bool:
+    """テスト専用: KOEMADO_DEV_BROWSE_NO_TOKEN=1 のときだけ、トークン無しでも一覧を使える（公開 API のみ）"""
+    return os.environ.get("KOEMADO_DEV_BROWSE_NO_TOKEN") == "1"
+
+
+def ask_model_choice(args, hw: dict, install: Path, name: str) -> dict | None:
+    """LLM モデルの選び方（プロファイルを決めたあと）。戻り値: 選んだモデル（None = プロファイルの既定）。
+    --model <repo>:<file> なら質問せずに解決する。--yes は既定。--dry-run は、端末（または --ask-model）のときだけ聞く"""
+    rng = profiles.model_range(name, hw["gpu"]["vram_mib"], hw["ram_total_gib"], hw["disk_free_gib"])
+    mode = PROFILES[name]["llm_mode"]
+    if args.model:
+        tok = settings_store.hf_token(install)
+        if args.hf_token_env:
+            tok = (os.environ.get("HF_TOKEN") or os.environ.get("HUGGING_FACE_HUB_TOKEN") or "").strip()
+            if not hf_hub.valid_token(tok):
+                die("--hf-token-env が指定されていますが、環境変数 HF_TOKEN が無い、または形式が違います。")
+            args.hf_token = tok
+        try:
+            return model_picker.resolve_spec(args.model, tok, rng, mode)
+        except ValueError as e:
+            die(str(e))
+    if args.yes or (args.dry_run and not (sys.stdin.isatty() or args.ask_model)):
+        return None
+    m = PROFILES[name]["model"]
+    while True:
+        say(f"\nLLM のモデルを選びます（プロファイル {name} で選べるサイズ: {rng['min_gib']:.0f}〜{rng['max_gib']:.0f} GiB）。")
+        say(f"  [1] おすすめ（プロファイルの既定）: {m['repo']} / {m['file']}（{m['size_bytes'] / GIB:.1f} GiB）  ← 既定")
+        say("  [2] Hugging Face の一覧から選ぶ（トークンが必要。Read 権限で足ります）")
+        say("  [3] リポジトリとファイル名を手入力する（トークンは任意）")
+        ans = ask_text("番号を入力 [1]: ", "1")
+        if ans == "1":
+            return None
+        if ans == "2":
+            tok, save = model_picker.ask_token(say, env_ok=args.hf_token_env, allow_save=not args.dry_run)
+            if not tok and not dev_browse_without_token():
+                say("  トークンが無いので、一覧からは選べません。")
+                continue
+            choice = model_picker.pick_interactive(tok, rng, mode, say, allow_no_token=dev_browse_without_token())
+            if choice:
+                args.hf_token = tok
+                args.hf_save = bool(save and tok and not args.dry_run)
+                return choice
+        elif ans == "3":
+            tok = settings_store.hf_token(install)
+            choice = model_picker.manual_interactive(tok, rng, mode, say)
+            if choice:
+                return choice
+        else:
+            return None
+
+
 def offer_shortcuts(install: Path, args):
     """デスクトップとスタートメニューに、ウィンドウを出さずに起動する「koemado」のショートカットを作るか聞く"""
     mode = args.shortcuts or ("no" if args.yes else "ask")
@@ -925,6 +1065,9 @@ def main():
     ap.add_argument("--llm-model", default="", help="external のときのモデル名")
     ap.add_argument("--shortcuts", choices=["yes", "no", "ask"], default=None,
                     help="デスクトップとスタートメニューに koemado のショートカットを作る（既定: 聞く。--yes のときは作らない）")
+    ap.add_argument("--model", default="", metavar="REPO:FILE", help="同梱の LLM のモデルを指定する（例: unsloth/Qwen3-8B-GGUF:Qwen3-8B-Q4_K_M.gguf）。プロファイルの範囲を超えるものは選べない")
+    ap.add_argument("--hf-token-env", action="store_true", help="環境変数 HF_TOKEN の Hugging Face トークンを使う（トークンをコマンドラインに書かないための指定。保存はしない）")
+    ap.add_argument("--ask-model", action="store_true", help="--dry-run でも、モデルの選び方を質問する（テスト用）")
     ap.add_argument("--llm-api-key", default="", help="external のときの API キー（任意。config/settings.json に保存される）")
     args = ap.parse_args()
 
@@ -934,7 +1077,9 @@ def main():
     say("koemado セットアップ\n")
     hw = detect_hardware(install, sim)
     print_hardware(hw)
-    args.llm_explicit = bool(args.llm)
+    args.llm_explicit = bool(args.llm) or bool(args.model)
+    args.hf_token, args.hf_save = "", False
+    choice = None
     # 先にプロファイルを決める（Strata の案内は、選ばれたプロファイルが high のときだけ）
     name, notes, llm = None, [], None
     if args.llm in (None, "bundled"):
@@ -969,8 +1114,15 @@ def main():
         if hw["disk_free_gib"] < plan["need_gb"]:
             die(f"空き容量が足りません。約 {plan['need_gb']:.0f} GiB 必要ですが、{hw['drive']} の空きは {hw['disk_free_gib']:.1f} GiB です。")
     else:
-        plan = plan_for(install, name)
-        llm = llm_settings(name, hw)
+        choice = ask_model_choice(args, hw, install, name)
+        args.llm_explicit = args.llm_explicit or bool(choice)
+        plan = plan_for(install, name, choice)
+        if choice:
+            llm = profiles.custom_llm_settings(hw["gpu"]["vram_mib"], choice["size_bytes"], choice["kind"], choice["moe_layers"] or None, PROFILES[name]["llm_mode"])
+            if hw["disk_free_gib"] < plan["need_gb"]:
+                die(f"空き容量が足りません。選んだモデルを含めて約 {plan['need_gb']:.0f} GiB 必要ですが、{hw['drive']} の空きは {hw['disk_free_gib']:.1f} GiB です。")
+        else:
+            llm = llm_settings(name, hw)
 
     # ポート: 前回の設定があれば引き継ぎ、使用中なら空きに付け替える
     old_cfg = None
@@ -987,7 +1139,7 @@ def main():
 
     if kind == "strata":
         args.llm_url = f"http://127.0.0.1:{ports['llm']}/v1"
-    show_plan(hw, name, notes, plan, llm, install, ports, args)
+    show_plan(hw, name, notes, plan, llm, install, ports, args, choice)
     if kind == "strata":
         say("  Strata のインストーラーに渡す引数: START-HERE.bat " + " ".join(strata_installer_args(install, ports["llm"], args.vision or "no")))
     if args.dry_run:
@@ -1009,15 +1161,19 @@ def main():
     started = time.time()
     inst.prepare_env()
     inst.deploy_files()
+    inst.hf_token = args.hf_token
+    inst.install_hf_cli()
     if not external:
         inst.install_llama()
-        inst.install_model(name)
+        inst.install_model(name, choice)
     if kind == "strata":
         inst.clone_strata()
     inst.install_stt()
     inst.install_app()
     inst.install_tts()
-    inst.write_config(initial_settings(args, name))
+    inst.write_config(initial_settings(args, name, choice))
+    if args.hf_save and args.hf_token:
+        settings_store.update_settings({"hf": {"token": args.hf_token}}, install)    # 設定画面と共通（config/settings.json）
     inst.cleanup()
     if kind == "strata":
         inst.vision = args.vision or "no"
@@ -1032,6 +1188,7 @@ def main():
     say(f"  うまく動かないとき: {install / 'debug-start.bat'}（従来どおり、各サービスをコンソールで起動します）")
     offer_shortcuts(install, args)
     say(f"  設定（声・LLM・キャラクター）: 起動後に http://127.0.0.1:{ports['app']}/settings、または {install / 'configure.bat'}")
+    say("  あとから、設定画面（LLM タブ）でもモデルを変えられます（Hugging Face のトークンを登録すると、一覧から選べます）。")
     return 0
 
 

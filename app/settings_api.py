@@ -26,7 +26,9 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 import ctl  # noqa: E402
+import hf_dl  # noqa: E402
 import hf_hub  # noqa: E402
+import model_picker  # noqa: E402
 import profiles  # noqa: E402
 import settings_store as ss  # noqa: E402
 import tools_store as ts  # noqa: E402
@@ -231,64 +233,26 @@ def mouth_status(cid: str) -> dict:
 
 DOWNLOAD = {"status": "idle"}
 _download_lock = threading.Lock()
-_cancel = threading.Event()
-
-
-class _Cancelled(Exception):
-    pass
+_job = None
 
 
 def hf_page(repo: str) -> str:
     return f"https://huggingface.co/{repo}"
 
 
-def _download_error(e: Exception, repo: str, has_token: bool) -> dict:
-    """ダウンロードの失敗を、画面に出す形にする（トークンの値は含めない）"""
-    if isinstance(e, urllib.error.HTTPError) and e.code in (401, 403):
-        if e.code == 401 and has_token:
-            return {"error_kind": "invalid_token", "error": "Hugging Face に拒否されました。トークンが無効、または期限切れの可能性があります。", "link": "https://huggingface.co/settings/tokens"}
-        if e.code == 401:
-            return {"error_kind": "token_required", "error": "このモデルのダウンロードには、Hugging Face のトークンの登録が必要です。", "link": "https://huggingface.co/settings/tokens"}
-        return {"error_kind": "gated", "error": "HF のページで利用条件に同意してください（同意すると、このモデルをダウンロードできます）。", "link": hf_page(repo)}
-    if isinstance(e, urllib.error.HTTPError):
-        return {"error_kind": "http", "error": f"ダウンロードに失敗しました（HTTP {e.code}）。もう一度押すと続きから再開します。"}
-    return {"error_kind": "other", "error": f"{type(e).__name__}: {e}"[:300]}
-
-
 def _start_download(repo: str, files: list[dict], layout: str = "flat", extra: dict | None = None):
-    """files: [{path, size?}]。layout: flat = models/<ファイル名>（プロファイルの既定モデル）、repo = models/<owner>--<name>/<ファイル名>。
-    途中のファイルは .part に残り、もう一度始めると続きから再開する。キャンセルは cancel_download()"""
+    """files: [{path, size?, sha256?}]。layout: flat = models/<ファイル>（プロファイルの既定モデル）、repo = models/<owner>--<name>/<ファイル>。
+    取得は `hf download`（hf_dl.Job。分割 GGUF は全パーツを 1 回で）。途中で止めても、もう一度始めると続きから再開する。
+    トークンは環境変数 HF_TOKEN で子プロセスにだけ渡す。遅いときは hf_dl が並列の Range 取得に切り替える"""
+    global _job
     token = ss.hf_token(ROOT)
-    rel = (lambda p: Path("models") / repo.replace("/", "--") / Path(p).name) if layout == "repo" else (lambda p: Path("models") / Path(p).name)
-    known = sum(int(f.get("size") or 0) for f in files)
-    _cancel.clear()
-
-    def work():
-        base = 0
-        try:
-            for f in files:
-                dest = ROOT / rel(f["path"])
-                size = int(f.get("size") or 0)
-                if size and dest.exists() and dest.stat().st_size == size:
-                    base += size
-                    DOWNLOAD.update(done=base, updated=time.time())
-                    continue
-
-                def progress(done, total, base=base):
-                    if _cancel.is_set():
-                        raise _Cancelled()
-                    DOWNLOAD.update(done=base + done, total=known or (base + total), file=dest.name, updated=time.time())
-                ctl.download(hf_hub.file_url(repo, f["path"]), dest, progress=progress, token=token)
-                base += dest.stat().st_size
-            DOWNLOAD.update(status="done", file=Path(files[0]["path"]).name, done=base, total=known or base)
-        except _Cancelled:
-            DOWNLOAD.update(status="cancelled")
-        except Exception as e:  # noqa: BLE001
-            DOWNLOAD.update(status="error", **_download_error(e, repo, bool(token)))
-
+    local_dir = ROOT / "models" / repo.replace("/", "--") if layout == "repo" else ROOT / "models"
+    total = sum(int(f.get("size") or 0) for f in files)
     DOWNLOAD.clear()
-    DOWNLOAD.update(status="running", repo=repo, file=Path(files[0]["path"]).name, files=[f["path"] for f in files], done=0, total=known, started=time.time(), **(extra or {}))
-    threading.Thread(target=work, daemon=True).start()
+    DOWNLOAD.update(status="running", repo=repo, file=Path(files[0]["path"]).name, files=[f["path"] for f in files], done=0, total=total,
+                    started=time.time(), engine="hf", speed=0, message="", **(extra or {}))
+    _job = hf_dl.Job(ROOT, repo, files, local_dir, token, status=DOWNLOAD, log=lambda line: print(line, flush=True), flags=hf_dl.CREATE_NO_WINDOW)
+    threading.Thread(target=_job.run, daemon=True).start()
 
 
 def models_in_use() -> set[Path]:
@@ -314,12 +278,19 @@ def downloaded_models() -> list[dict]:
     out = []
     if d.exists():
         for f in sorted(d.rglob("*")):
-            if not f.is_file() or f.suffix.lower() not in (".gguf", ".part") or any(x.startswith(".") for x in f.relative_to(d).parts):
+            if not f.is_file() or f.suffix.lower() != ".gguf" or any(x.startswith(".") for x in f.relative_to(d).parts):
                 continue
             rel = f.relative_to(d)
             repo = rel.parts[0].replace("--", "/", 1) if len(rel.parts) > 1 else ""
             out.append({"path": rel.as_posix(), "size_gib": f.stat().st_size / profiles.GIB, "size_bytes": f.stat().st_size, "repo": repo,
-                        "partial": f.suffix.lower() == ".part", "in_use": f.resolve() in used})
+                        "partial": False, "in_use": f.resolve() in used})
+        # hf download の途中ファイル（.cache/huggingface/download/*.incomplete）と、並列取得の途中ファイル（*.koemado-part）
+        for f in sorted(d.rglob("*")):
+            if f.is_file() and (f.name.endswith(".incomplete") or f.name.endswith(".koemado-part")) and f.stat().st_size > 0:
+                rel = f.relative_to(d)
+                out.append({"path": rel.as_posix(), "size_gib": f.stat().st_size / profiles.GIB, "size_bytes": f.stat().st_size,
+                            "repo": rel.parts[0].replace("--", "/", 1) if len(rel.parts) > 1 and not rel.parts[0].startswith(".") else "",
+                            "partial": True, "in_use": False})
     return out
 
 
@@ -583,10 +554,16 @@ def make_router(page_path: Path) -> APIRouter:
         if b.get("confirmed") is not True:
             raise HTTPException(400, "ダウンロードの確認が必要です。")
         is_profile = any(p["model"]["repo"] == repo and p["model"]["file"] == file for p in profiles.PROFILES.values())
+        entry = {"path": file}
+        try:
+            found = await asyncio.get_running_loop().run_in_executor(None, hf_hub.list_files, repo, ss.hf_token(ROOT))
+            entry = next((f for f in found if f["path"] == file), entry)
+        except hf_hub.HFError:
+            pass    # サイズと SHA256 が分からなくても取得はできる（hf download に任せる）
         with _download_lock:
             if DOWNLOAD.get("status") == "running":
                 raise HTTPException(409, "ダウンロード中です。")
-            _start_download(repo, [{"path": file}], layout="flat" if is_profile else "repo")
+            _start_download(repo, [entry], layout="flat" if is_profile else "repo")
         return {"ok": True}
 
     @r.get("/settings/api/llm/download/status")
@@ -598,7 +575,8 @@ def make_router(page_path: Path) -> APIRouter:
         guard_write(request)
         if DOWNLOAD.get("status") != "running":
             raise HTTPException(400, "ダウンロード中ではありません。")
-        _cancel.set()
+        if _job:
+            _job.cancel()
         return {"ok": True}
 
     # ---- Hugging Face のトークン ----
@@ -671,43 +649,10 @@ def make_router(page_path: Path) -> APIRouter:
             raise HTTPException(400, "リポジトリ名が不正です。")
         profile = b.get("profile") if b.get("profile") in profiles.PROFILES else current_profile_id()
         tok = browse_token()
-        loop = asyncio.get_running_loop()
         try:
-            files = await loop.run_in_executor(None, hf_hub.list_files, repo, tok)
+            return await asyncio.get_running_loop().run_in_executor(None, lambda: model_picker.inspect_repo(repo, tok, range_for(profile), install_mode(), ROOT))
         except hf_hub.HFError as e:
             hf_http(e)
-        try:
-            info = await loop.run_in_executor(None, hf_hub.repo_info, repo, tok)
-        except hf_hub.HFError:
-            info = {"id": repo, "downloads": 0, "likes": 0, "updated": "", "license": "", "gated": False}
-        groups, aux = hf_hub.group_gguf(files)
-        if not groups:
-            raise HTTPException(404, "このリポジトリには、使える GGUF（本体）がありません。")
-        # 種類（dense / MoE）と層数: 最小の候補の先頭を読んでメタデータから。読めなければ名前から推定する
-        probe = next((g for g in groups if g["complete"]), groups[0])
-        meta = await loop.run_in_executor(None, hf_hub.read_gguf_meta, repo, probe["files"][0], tok)
-        if meta and meta.get("block_count") is not None:
-            kind = "moe" if (meta.get("expert_count") or 0) > 1 else "dense"
-            source = "metadata"
-        else:
-            kind = "moe" if hf_hub.guess_moe_from_name(repo) else "dense"
-            source = "name"
-        layers = (meta or {}).get("block_count") if kind == "moe" else None
-        access = None
-        if info.get("gated"):
-            access = await loop.run_in_executor(None, hf_hub.probe_access, repo, probe["files"][0], tok)
-        rng = range_for(profile)
-        mode = install_mode()
-        out = []
-        for g in groups:
-            gib = g["size"] / profiles.GIB
-            a = profiles.assess_model(rng, gib, kind, layers, mode)
-            if not g["complete"]:
-                a = {"status": "unavailable", "reasons": ["分割ファイルの一部がリポジトリにありません"], "cautions": []}
-            local_ok = all((ROOT / "models" / repo.replace("/", "--") / Path(p).name).exists() for p in g["files"])
-            out.append({**g, "size_gib": gib, "installed": local_ok, **a})
-        return {"repo": repo, "info": info, "kind": kind, "kind_source": source, "moe_layers": layers, "meta": meta, "access": access,
-                "page": hf_page(repo), "range": rng, "mode": mode, "groups": out, "aux_count": len(aux)}
 
     @r.post("/settings/api/llm/browse/download")
     async def browse_download(request: Request):
@@ -734,18 +679,17 @@ def make_router(page_path: Path) -> APIRouter:
         a = profiles.assess_model(rng, g["size"] / profiles.GIB)
         if a["status"] != "ok":
             raise HTTPException(400, a["reasons"][0] if a["reasons"] else "このモデルは選べません。")
-        have = sum(((ROOT / "models" / repo.replace("/", "--") / Path(p).name).stat().st_size if (ROOT / "models" / repo.replace("/", "--") / Path(p).name).exists() else 0)
-                   + (((ROOT / "models" / repo.replace("/", "--") / (Path(p).name + ".part")).stat().st_size) if (ROOT / "models" / repo.replace("/", "--") / (Path(p).name + ".part")).exists() else 0)
-                   for p in g["files"])
-        need = max(0, g["size"] - have) / profiles.GIB
+        local_dir = ROOT / "models" / repo.replace("/", "--")
+        by_path = {f["path"]: f for f in files}
+        items = [by_path[p] for p in g["files"]]
+        need = max(0, g["size"] - hf_dl.done_bytes(local_dir, items)) / profiles.GIB
         free = hardware()["disk_free_gib"]
         if free < need + profiles.DISK_MARGIN_GIB:
             raise HTTPException(400, f"容量が足りません: ダウンロードに約 {need:.1f}GiB 必要ですが、空きは {free:.1f}GiB です。")
-        sizes = {f["path"]: f["size"] for f in files}
         with _download_lock:
             if DOWNLOAD.get("status") == "running":
                 raise HTTPException(409, "ダウンロード中です。")
-            _start_download(repo, [{"path": p, "size": sizes.get(p, 0)} for p in g["files"]], layout="repo", extra={"browse": True, "key": key})
+            _start_download(repo, items, layout="repo", extra={"browse": True, "key": key})
         return {"ok": True}
 
     @r.post("/settings/api/llm/browse/activate")
@@ -758,7 +702,7 @@ def make_router(page_path: Path) -> APIRouter:
         if not hf_hub.REPO_RE.match(repo) or not isinstance(files, list) or not files or not all(isinstance(f, str) and re.fullmatch(r"[\w.\-/ ]+\.gguf", f) and ".." not in f for f in files):
             raise HTTPException(400, "リポジトリまたはファイル名が不正です。")
         d = ROOT / "models" / repo.replace("/", "--")
-        paths = [d / Path(f).name for f in sorted(files)]
+        paths = [d / f for f in sorted(files)]
         if not all(p.is_file() for p in paths):
             raise HTTPException(404, "ダウンロード済みのファイルが見つかりません。")
         size = sum(p.stat().st_size for p in paths)
@@ -777,9 +721,9 @@ def make_router(page_path: Path) -> APIRouter:
         s = ss.load_settings(ROOT)
         llm = s["llm"]
         patch = {"llm": {"mode": "bundled", "profile": "custom",
-                         "custom": {"source": "hf", "repo": repo, "file": Path(sorted(files)[0]).name, "path": "", "files": [Path(f).name for f in sorted(files)],
+                         "custom": {"source": "hf", "repo": repo, "file": sorted(files)[0], "path": "", "files": sorted(files),
                                     "size_bytes": size, "kind": kind, "moe_layers": layers}}}
-        already = llm["mode"] == "bundled" and llm.get("profile") == "custom" and llm["custom"].get("repo") == repo and llm["custom"].get("file") == Path(sorted(files)[0]).name
+        already = llm["mode"] == "bundled" and llm.get("profile") == "custom" and llm["custom"].get("repo") == repo and llm["custom"].get("file") == sorted(files)[0]
         if not already:
             patch["llm"]["previous"] = {"mode": llm["mode"], "profile": llm.get("profile", ""), "custom": llm["custom"], "external": {"preset": llm["external"].get("preset", ""), "base_url": llm["external"].get("base_url", "")}}
         try:
@@ -829,12 +773,13 @@ def make_router(page_path: Path) -> APIRouter:
         rel = str(b.get("path", ""))
         base = (ROOT / "models").resolve()
         target = (base / rel).resolve()
-        if base not in target.parents or target.suffix.lower() not in (".gguf", ".part") or not target.is_file():
-            raise HTTPException(400, "削除できるのは、models フォルダの中の .gguf（と途中の .part）だけです。")
+        partial = target.name.endswith((".incomplete", ".koemado-part"))
+        if base not in target.parents or not (target.suffix.lower() == ".gguf" or partial) or not target.is_file():
+            raise HTTPException(400, "削除できるのは、models フォルダの中の .gguf と、ダウンロードの途中ファイルだけです。")
         if target in models_in_use():
             raise HTTPException(400, "いま使っているモデルは削除できません。先に別のモデルに切り替えてください。")
-        if DOWNLOAD.get("status") == "running" and target.name.startswith(Path(DOWNLOAD.get("file", "?")).name):
-            raise HTTPException(400, "ダウンロード中のファイルは削除できません。")
+        if DOWNLOAD.get("status") == "running":
+            raise HTTPException(400, "ダウンロード中は削除できません。")
         size = target.stat().st_size
         target.unlink()
         if target.parent != base and not any(target.parent.iterdir()):

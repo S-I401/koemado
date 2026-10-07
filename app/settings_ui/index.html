@@ -656,7 +656,7 @@ function pollDownload() {
     try { d = await api("/llm/download/status"); } catch (e) { return; }
     if (d.status === "running") {
       const pct = d.total ? d.done / d.total * 100 : 0;
-      $("dlBar").style.width = pct + "%"; $("dlText").textContent = `${d.file}: ${(d.done / 1e9).toFixed(2)} / ${(d.total / 1e9).toFixed(2)} GB（${pct.toFixed(1)}%）`;
+      $("dlBar").style.width = pct + "%"; $("dlText").textContent = `${d.file}: ${(d.done / 1e9).toFixed(2)} / ${(d.total / 1e9).toFixed(2)} GB（${pct.toFixed(1)}%）` + (d.speed ? ` ・ ${(d.speed / 1e6).toFixed(1)} MB/s` : "") + (d.engine === "range" ? " ・ 並列取得" : "") + (d.message ? ` ・ ${d.message}` : "");
     } else {
       clearInterval(dlTimer); $("dlCancel").hidden = true;
       const pend = B.pending; B.pending = null;
