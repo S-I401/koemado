@@ -96,6 +96,12 @@ DEFAULT_SETTINGS = {
     "character": "mio",
     # 会話画面のアバターの動き。none / subtle（控えめ。既定）/ large（大きめ）。画像 1 枚・シルエットのキャラ向けの軽いアニメーション
     "avatar": {"motion": "subtle"},
+    # 表示方法。mode: mascot（デスクトップのキャラ。既定）/ browser（ブラウザのタブ）/ both
+    "display": {"mode": "mascot"},
+    # デスクトップのキャラ。size: small / medium / large。x, y = ウィンドウの下辺の中央（画面の物理ピクセル。null = 右下）。
+    # talk: hold（キャラを押している間だけ聞く）/ hotkey（ショートカットキーで 1 回聞く）/ always（常に聞く）
+    "mascot": {"size": "medium", "x": None, "y": None, "always_on_top": True, "talk": "hold", "hotkey": "ctrl+alt+space",
+               "interrupt": False, "volume": 1.0, "bubble_seconds": 8},
     "weather_location": "東京",
     # ツール。変更は「保存して再起動」で反映する（ツールの定義は起動時に固定し、LLM の会話キャッシュを守る）
     "tools": {
@@ -109,6 +115,11 @@ DEFAULT_SETTINGS = {
         "agent": {"enabled": False, "kind": "hermes", "base_url": "http://127.0.0.1:8642/v1", "api_key": "", "timeout": 600},
     },
 }
+
+DISPLAY_MODES = {"mascot": "デスクトップのキャラ", "browser": "ブラウザ（従来どおり）", "both": "両方"}
+MASCOT_SIZES = {"small": "小", "medium": "中", "large": "大"}
+MASCOT_TALK = {"hold": "キャラを押している間だけ聞く", "hotkey": "ショートカットキー", "always": "常に聞く"}
+HOTKEY_RE = re.compile(r"^(?:(?:ctrl|alt|shift|win)\+){1,3}(?:[a-z0-9]|f(?:[1-9]|1[0-9]|2[0-4])|space|enter|tab|esc|home|end|insert|delete)$")
 
 MOTION_LEVELS = {"none": "なし", "subtle": "控えめ", "large": "大きめ"}
 MOUTH_SHAPES = ["closed", "half", "open", "e", "u"]
@@ -145,7 +156,7 @@ def load_settings(root: Path = ROOT) -> dict:
     hit = _cache.get(str(p))
     if hit and hit[0] == mtime:
         return copy.deepcopy(hit[1])
-    data = _merge(DEFAULT_SETTINGS, json.loads(p.read_text(encoding="utf-8")))
+    data = _merge(DEFAULT_SETTINGS, json.loads(p.read_text(encoding="utf-8-sig")))      # メモ帳で保存した BOM 付きでも読める
     _cache[str(p)] = (mtime, data)
     return copy.deepcopy(data)
 
@@ -223,6 +234,26 @@ def validate_settings(s: dict):
         raise ValueError("ファイル名が不正です。")
     if s["avatar"].get("motion") not in MOTION_LEVELS:
         raise ValueError("アバターの動きは none / subtle / large のどれかです。")
+    if s["display"].get("mode") not in DISPLAY_MODES:
+        raise ValueError("表示方法は mascot / browser / both のどれかです。")
+    m = s["mascot"]
+    if m.get("size") not in MASCOT_SIZES:
+        raise ValueError("キャラの大きさは small / medium / large のどれかです。")
+    if m.get("talk") not in MASCOT_TALK:
+        raise ValueError("話しかけ方は hold / hotkey / always のどれかです。")
+    m["hotkey"] = str(m.get("hotkey") or "").strip().lower().replace(" ", "")
+    if not HOTKEY_RE.match(m["hotkey"]):
+        raise ValueError("ショートカットキーは ctrl+alt+space のように、Ctrl / Alt / Shift / Win のどれかと 1 つのキーで指定してください。")
+    for k in ("x", "y"):
+        m[k] = None if m.get(k) in (None, "") else int(m[k])
+    m["always_on_top"] = bool(m.get("always_on_top"))
+    m["interrupt"] = bool(m.get("interrupt"))
+    m["volume"] = float(m.get("volume", 1.0))
+    if not 0 <= m["volume"] <= 1:
+        raise ValueError("キャラの音量は 0〜1 で指定してください。")
+    m["bubble_seconds"] = int(m.get("bubble_seconds") or 8)
+    if not 2 <= m["bubble_seconds"] <= 60:
+        raise ValueError("吹き出しを出す秒数は 2〜60 で指定してください。")
     tl = s["tools"]
     for k in ("web_search", "weather", "memory", "mcp", "skills"):
         tl[k] = bool(tl.get(k))
