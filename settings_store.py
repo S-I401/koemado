@@ -90,7 +90,7 @@ DEFAULT_SETTINGS = {
         # 画像認識。enabled = アプリが画像を受け付けて LLM に渡す。store_images = 会話の記録に画像を残す（既定は残さない）
         "vision": {"enabled": False, "store_images": False},
     },
-    "tts": {"voice": "mio_a", "num_steps": 24, "seed": 42},
+    "tts": {"voice": "mio_bright", "num_steps": 24, "seed": 42},
     # Hugging Face のトークン（任意。config/settings.json にだけ保存。画面・ログ・報告には出さない）
     "hf": {"token": ""},
     "character": "mio",
