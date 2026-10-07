@@ -90,7 +90,7 @@ SIZE_LABELS = {
     "tts_models": "TTS のモデル（Irodori int8・codec）",
     "stt_env": "STT の実行環境",
     "stt_model": "STT のモデル（Whisper small）",
-    "app_env": "AIAvatarKit の実行環境",
+    "app_env": "AIAvatarKit の実行環境（デスクトップのキャラ用の Qt WebEngine を含む）",
     "ui": "ブラウザ UI",
     "sample_images": "サンプルキャラの画像（AIAvatarKit の公式サンプルから取得）",
 }
@@ -101,7 +101,7 @@ SIZES_GB = {
     "tts_models": (1.3, 1.4),
     "stt_env": (0.1, 0.3),
     "stt_model": (0.5, 0.5),
-    "app_env": (0.4, 1.2),       # Python 3.12 + fastmcp・ddgs などを含む
+    "app_env": (0.7, 1.9),       # Python 3.12 + fastmcp・ddgs などを含む。PySide6（Qt WebEngine）が約 0.3GB / 0.7GB
     "ui": (0.04, 0.05),
     "sample_images": (0.04, 0.002),   # UI と同じアーカイブを使うので、UI も未導入のときはダウンロードを数えない
 }
@@ -654,7 +654,7 @@ class Installer:
         ignore = shutil.ignore_patterns(".venv", "__pycache__", ".env", ".env.local", "data", "html", "*.db", "*.db-*",
                                         "recorded_voices", "logs")
         for name in ["ctl.py", "supervisor.py", "profiles.py", "hf_hub.py", "hf_dl.py", "model_picker.py", "settings_store.py", "tools_store.py", "configure.py", "setup.py",
-                     "start.bat", "debug-start.bat", "stop.bat", "setup.bat", "configure.bat", "koemado.ico", "koemado.vbs", "README.md", "LICENSE"]:
+                     "start.bat", "debug-start.bat", "stop.bat", "setup.bat", "configure.bat", "koemado.ico", "koemado.vbs", "display_env.py", "display.py", "display.bat", "start-mascot.bat", "start-browser.bat", "mascot.py", "README.md", "LICENSE"]:
             if (SRC_DIR / name).exists():
                 shutil.copy2(SRC_DIR / name, self.root / name)
         for d in ["app", "stt", "voices", "html-overrides", "tools", "console_ui"]:
@@ -1068,6 +1068,30 @@ def ask_vision(args) -> str:
     return {"2": "gpu", "3": "cpu"}.get(ans, "no")
 
 
+def ask_display(args, install: Path) -> str:
+    """表示方法（デスクトップのキャラ / ブラウザ / 両方）。--display、または最後に質問する。既定はデスクトップのキャラ。
+    デスクトップのキャラを使えない PC（Qt WebEngine が入っていない・古い Windows）では、ブラウザ版にして理由を案内する"""
+    import display_env
+    ok, why = display_env.mascot_available(install)
+    mode = args.display
+    if mode is None or mode == "ask":
+        if args.yes or args.dry_run:
+            mode = "mascot"
+        else:
+            say("\n画面の出し方を選んでください。")
+            say("  [1] デスクトップのキャラ（既定）: 枠のない透明なウィンドウにキャラクターが浮かびます（イルカのカイル君のように）。ブラウザは開きません")
+            say("  [2] ブラウザ（従来どおり）: ブラウザのタブで話します")
+            say("  [3] 両方")
+            say("  ※ あとから、設定画面の「表示」タブ、または configure.bat で変えられます。")
+            mode = {"2": "browser", "3": "both"}.get(ask_text("番号を入力 [1]: ", "1"), "mascot")
+    if mode != "browser" and not ok:
+        say(f"  ※ この PC ではデスクトップのキャラを使えないため、起動時はブラウザ版になります: {why}")
+    if not args.dry_run:
+        settings_store.update_settings({"display": {"mode": mode}}, install)
+    say(f"  表示方法: {display_env.MODES[mode]}")
+    return mode
+
+
 def ask_llm_kind(args, offer_strata: bool, hw: dict, install: Path, profile: str | None = None) -> str:
     """LLM の方式を決める。戻り値: bundled / external / strata
 
@@ -1200,6 +1224,8 @@ def main():
     ap.add_argument("--hf-token-env", action="store_true", help="環境変数 HF_TOKEN の Hugging Face トークンを使う（トークンをコマンドラインに書かないための指定。保存はしない）")
     ap.add_argument("--ask-model", action="store_true", help="--dry-run でも、モデルの選び方を質問する（テスト用）")
     ap.add_argument("--llm-api-key", default="", help="external のときの API キー（任意。config/settings.json に保存される）")
+    ap.add_argument("--display", choices=["mascot", "browser", "both", "ask"], default=None,
+                    help="表示方法: mascot=デスクトップのキャラ（既定）/ browser=ブラウザのタブ / both=両方 / ask=最後に聞く（--yes のときは mascot）")
     args = ap.parse_args()
 
     install = Path(args.install_dir).resolve()
@@ -1312,8 +1338,12 @@ def main():
     say(f"\n=== 導入が完了しました（{(time.time() - started) / 60:.1f} 分）===")
     if kind == "strata":
         say("  ※ Strata のインストーラー（別ウィンドウ）が終わってから start.bat を実行してください。")
+    display = ask_display(args, install)
     say("\n  次からは start.bat（またはデスクトップのショートカット）で起動します。黒い画面は出ません。")
-    say("  起動中の様子やログは、ブラウザの管理画面（状態・ログ）で見られます。止めるときは、タスクトレイのアイコン、管理画面の「終了」、または stop.bat です。")
+    if display != "browser":
+        say("  デスクトップのキャラは、右クリックのメニューで操作できます（隠す・終了・大きさ・設定など）。キャラのウィンドウが隠れたときは、タスクトレイのアイコンから表示できます。")
+    say("  起動中の様子やログは、ブラウザの管理画面（状態・ログ）で見られます（トレイの「ログ・状態」、キャラの右クリックメニューからも開けます）。")
+    say("  止めるときは、タスクトレイのアイコン、キャラの右クリックメニューの「終了」、管理画面の「終了」、または stop.bat です。")
     say(f"  起動: {install / 'start.bat'} をダブルクリック")
     say(f"  停止: {install / 'stop.bat'}")
     say(f"  うまく動かないとき: {install / 'debug-start.bat'}（従来どおり、各サービスをコンソールで起動します）")

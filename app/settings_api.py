@@ -30,6 +30,7 @@ import hf_dl  # noqa: E402
 import hf_hub  # noqa: E402
 import model_picker  # noqa: E402
 import profiles  # noqa: E402
+import display_env
 import settings_store as ss  # noqa: E402
 import tools_store as ts  # noqa: E402
 
@@ -80,6 +81,17 @@ class LocalOnlyMiddleware:
                     await send({"type": "websocket.close", "code": 1008})
                 return
         await self.app(scope, receive, send)
+
+
+def _apply_display(port: int, mode: str, prev: str):
+    """管理プロセス（supervisor）に、保存済みの表示方法をその場で反映してもらう"""
+    req = urllib.request.Request(f"http://127.0.0.1:{port}/api/display", method="POST",
+                                 data=json.dumps({"mode": mode, "save": False, "prev": prev}).encode(),
+                                 headers={"X-Console-Request": "1", "Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=20).read()
+    except Exception:
+        pass
 
 
 def guard_write(request: Request):
@@ -420,16 +432,23 @@ def make_router(page_path: Path) -> APIRouter:
             "strata": strata_state(s),
             "services": await services_status(c),
             "ports": c["ports"],
+            "display": dict(zip(("effective", "reason"), display_env.effective_mode(s, ROOT))),
         }
 
     @r.put("/settings/api/settings")
     async def put_settings(request: Request):
         guard_write(request)
         patch = await request.json()
+        before = ss.load_settings(ROOT)["display"]["mode"]
         try:
             new = ss.update_settings(patch, ROOT)
         except (ValueError, KeyError) as e:
             raise HTTPException(400, str(e))
+        after = new["display"]["mode"]
+        if after != before:        # 表示方法が変わったら、起動中の画面にその場で反映する（管理プロセスが、キャラを出す・止める・ブラウザを開く）
+            port = cfg()["ports"].get("console")
+            if port:
+                threading.Thread(target=_apply_display, args=(port, after, before), daemon=True).start()
         return ss.masked(new)
 
     # ---- 声 ----

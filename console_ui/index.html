@@ -155,7 +155,7 @@ function renderStatus() {
   $("failBox").innerHTML = (S.phase === "failed" && S.phase_msg ? `<div class="msg error"><strong>${esc(S.phase_msg)}</strong> 下の「ログ」を確認してください。<button class="btn" id="goLog">失敗したログを見る</button></div>` : "")
     + failed.filter((v) => v.message && v.message !== S.phase_msg).map((v) => `<div class="msg ${v.state === "no_response" ? "warn" : "error"}">${esc(v.message)}</div>`).join("");
   if ($("goLog")) { const bad = (S.services.find((v) => v.state === "failed") || {}).key || "all"; $("goLog").onclick = () => { svc = bad; document.querySelector('#tabs button[data-tab="logs"]').click(); buildSvcTabs(); render(true); reconnect(); }; }
-  $("svcTable").innerHTML = '<tr><th>サービス</th><th>状態</th><th>ポート</th><th>起動からの時間</th><th>再起動</th><th></th></tr>' + S.services.map((v) => `<tr>
+  $("svcTable").innerHTML = '<tr><th>サービス</th><th>状態</th><th>ポート</th><th>起動からの時間</th><th>再起動</th><th></th></tr>' + S.services.concat(S.display && S.display !== "browser" && S.mascot ? [S.mascot] : []).map((v) => `<tr>
     <td><span class="dot ${v.state}"></span>${esc(v.label)}</td>
     <td>${esc(STATE[v.state] || v.state)}${v.state === "starting" && v.starting_for != null ? "（" + fmtDur(v.starting_for) + "）" : ""}</td>
     <td>${v.port ?? ""}</td><td>${fmtDur(v.uptime)}</td><td>${v.restarts ? v.restarts + " 回" : "-"}</td>
@@ -180,7 +180,7 @@ $("btnReport").onclick = () => { location.href = "/api/report"; };
 
 /* ---------------- ログ ---------------- */
 let svc = "all", buf = [], lastSeq = 0, es = null, paused = false, pending = [];
-const SVCS = [["all", "すべて"], ["llm", "LLM"], ["tts", "TTS"], ["stt", "STT"], ["app", "AIAvatarKit"], ["supervisor", "管理"]];
+const SVCS = [["all", "すべて"], ["llm", "LLM"], ["tts", "TTS"], ["stt", "STT"], ["app", "AIAvatarKit"], ["mascot", "キャラ"], ["supervisor", "管理"]];
 function buildSvcTabs() {
   $("svcTabs").innerHTML = SVCS.map(([k, l]) => `<button class="btn ${k === svc ? "primary" : ""}" data-svc="${k}">${l}</button>`).join("");
   document.querySelectorAll("[data-svc]").forEach((b) => b.onclick = () => { svc = b.dataset.svc; buildSvcTabs(); reconnect(); });

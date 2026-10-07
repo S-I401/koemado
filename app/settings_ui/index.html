@@ -75,6 +75,7 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
   <button data-tab="voice" class="active">声</button>
   <button data-tab="llm">LLM</button>
   <button data-tab="char">キャラクター</button>
+  <button data-tab="display">表示</button>
   <button data-tab="tools">ツール</button>
   <button data-tab="sys">状態・再起動</button>
 </nav>
@@ -336,6 +337,32 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
   <div class="note">ブラウザの「視覚効果を減らす」設定がオンのときは、この設定にかかわらず動きません。会話画面を再読み込みすると反映されます。</div>
 </section>
 
+<!-- ============================== 表示 ============================== -->
+<section class="tab" id="tab-display">
+  <h2>表示方法</h2>
+  <div id="dpWarn" class="msg warn" hidden></div>
+  <div class="row">
+    <div><label>koemado の画面の出し方（start.bat・ショートカットで起動したとき）</label>
+      <select id="dpMode"><option value="mascot">デスクトップのキャラ（既定）</option><option value="browser">ブラウザ（従来どおり）</option><option value="both">両方</option></select></div>
+  </div>
+  <div class="note">デスクトップのキャラは、枠のない透明なウィンドウにキャラクターが浮かぶ表示です。保存すると、起動中ならその場で反映されます（キャラを出す・止める、ブラウザで会話画面を開く）。bat からは display.bat mascot|browser|both、start.bat --mascot などでも切り替えられます。</div>
+
+  <h2>デスクトップのキャラ</h2>
+  <div class="row">
+    <div><label>話しかけ方</label>
+      <select id="dpTalk"><option value="hold">キャラを押している間だけ聞く（既定）</option><option value="hotkey">ショートカットキーで聞く</option><option value="always">常に聞く（ブラウザ版と同じ）</option></select></div>
+    <div><label>ショートカットキー（「ショートカットキーで聞く」のとき）</label><input type="text" id="dpHotkey" placeholder="ctrl+alt+space"></div>
+    <div><label>大きさ</label><select id="dpSize"><option value="small">小</option><option value="medium">中</option><option value="large">大</option></select></div>
+  </div>
+  <div class="row" style="align-items:end">
+    <div><label><input type="checkbox" id="dpInterrupt"> 割り込み（話している途中でも話しかけて止める。ヘッドホン推奨）</label></div>
+    <div><label><input type="checkbox" id="dpTop"> 常に最前面に表示する</label></div>
+    <div><label>吹き出しを出しておく秒数</label><input type="number" id="dpBubble" min="2" max="60" step="1"></div>
+  </div>
+  <p><button class="btn primary" id="dpSave" type="button">保存</button></p>
+  <div class="note">キャラの大きさ・話しかけ方・ショートカットキー・割り込みは、保存するとすぐ反映されます（キャラのウィンドウが出ているとき）。位置と大きさは、キャラを動かしたとき・右クリックのメニューで変えたときに自動で保存されます。</div>
+</section>
+
 <!-- ============================== ツール ============================== -->
 <section class="tab" id="tab-tools">
   <div class="msg warn" id="tlRestart" hidden>ツールの変更は、<strong>再起動したときに反映されます</strong>（ツールの定義は起動時に固定します。会話の途中で変わると、LLM のプロンプトキャッシュが効かなくなるためです）。
@@ -470,7 +497,7 @@ document.querySelectorAll("#tabs button").forEach((b) => b.onclick = () => {
 
 async function refresh(keepForms = false) {
   S = await api("/state");
-  renderChips(); renderVoices(); renderSys(); $("avMotion").value = (S.settings.avatar || {}).motion || "subtle";
+  renderChips(); renderVoices(); renderSys(); renderDisplay(); $("avMotion").value = (S.settings.avatar || {}).motion || "subtle";
   if (!keepForms) { renderLlm(); renderChars(); }
 }
 
@@ -966,6 +993,25 @@ function renderMouth(cid, m) {
   document.querySelectorAll("[data-mrm]").forEach((b) => b.onclick = async () => { const r = await api(`/characters/${cid}/mouth?shape=${b.dataset.mrm}`, "DELETE"); renderMouth(cid, r); });
   $("mouthClear").onclick = async () => { if (!confirm("口の差分をすべて消します。よろしいですか？")) return; const r = await api(`/characters/${cid}/mouth?shape=all`, "DELETE"); renderMouth(cid, r); };
 }
+/* ---------------- 表示（デスクトップのキャラ） ---------------- */
+function renderDisplay() {
+  const m = S.settings.mascot || {}, d = S.display || {};
+  $("dpMode").value = (S.settings.display || {}).mode || "mascot";
+  $("dpTalk").value = m.talk || "hold"; $("dpHotkey").value = m.hotkey || "ctrl+alt+space"; $("dpSize").value = m.size || "medium";
+  $("dpInterrupt").checked = !!m.interrupt; $("dpTop").checked = m.always_on_top !== false; $("dpBubble").value = m.bubble_seconds || 8;
+  $("dpHotkey").disabled = $("dpTalk").value !== "hotkey";
+  const w = $("dpWarn");
+  w.hidden = !d.reason;
+  w.textContent = d.reason ? "この PC ではデスクトップのキャラを使えないため、起動時はブラウザ版になります。理由: " + d.reason : "";
+}
+$("dpTalk").onchange = () => { $("dpHotkey").disabled = $("dpTalk").value !== "hotkey"; };
+$("dpSave").onclick = async () => {
+  try {
+    await api("/settings", "PUT", { display: { mode: $("dpMode").value }, mascot: { talk: $("dpTalk").value, hotkey: $("dpHotkey").value, size: $("dpSize").value,
+      interrupt: $("dpInterrupt").checked, always_on_top: $("dpTop").checked, bubble_seconds: +$("dpBubble").value || 8 } });
+    await refresh(true); toast("表示の設定を保存しました。");
+  } catch (e) { alert(e.message); }
+};
 $("avMotion").onchange = async () => {
   try { await api("/settings", "PUT", { avatar: { motion: $("avMotion").value } }); toast("アバターの動きを保存しました。会話画面を再読み込みすると反映されます。"); } catch (e) { alert(e.message); }
 };

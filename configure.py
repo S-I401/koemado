@@ -41,6 +41,7 @@ def show():
         print(f"  キャラクター: {char.get('name')}（{char['id']}、{str(char.get('age')) + ' 歳' if char.get('age') is not None else '年齢未設定'}）  声: {ss.effective_voice(s, char)}")
     except Exception as e:
         print(f"  キャラクター: 読み込めません（{e}）")
+    print(f"  表示方法: {ss.DISPLAY_MODES[s['display']['mode']]}")
     print(f"  num_steps: {s['tts']['num_steps']}  seed: {s['tts']['seed']}")
     t = s["tools"]
     print(f"  Hugging Face トークン: {'登録済み' if s['hf'].get('token') else '未登録（任意）'}")
@@ -273,6 +274,34 @@ def menu_tools():
         print("※ 反映するには、start.bat を再実行（または stop.bat のあと start.bat）してください。")
 
 
+def menu_display():
+    import display_env
+    s = ss.load_settings(ROOT)
+    cur = s["display"]["mode"]
+    mode = pick(f"表示方法（いまは「{ss.DISPLAY_MODES[cur]}」）", list(ss.DISPLAY_MODES.items()))
+    if not mode:
+        return
+    patch = {"display": {"mode": mode}}
+    ok, why = display_env.mascot_available(ROOT)
+    if mode != "browser" and not ok:
+        print(f"※ この PC ではデスクトップのキャラを使えないため、起動時はブラウザ版になります: {why}")
+    if mode != "browser":
+        m = s["mascot"]
+        talk = pick(f"キャラへの話しかけ方（いまは「{ss.MASCOT_TALK[m['talk']]}」）", list(ss.MASCOT_TALK.items()))
+        mp = {}
+        if talk:
+            mp["talk"] = talk
+        if (talk or m["talk"]) == "hotkey":
+            mp["hotkey"] = ask("ショートカットキー（例: ctrl+alt+space）", m["hotkey"])
+        size = pick(f"キャラの大きさ（いまは「{ss.MASCOT_SIZES[m['size']]}」）", list(ss.MASCOT_SIZES.items()))
+        if size:
+            mp["size"] = size
+        if mp:
+            patch["mascot"] = mp
+    _apply(patch)
+    print("※ 反映するには、start.bat を再実行（または stop.bat のあと start.bat）してください。")
+
+
 def menu_character():
     chars = [c for c in ss.list_characters(ROOT) if not c.get("error")]
     s = ss.load_settings(ROOT)
@@ -316,7 +345,7 @@ def main():
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     while True:
         show()
-        choice = pick("設定する項目", [("voice", "声"), ("llm", "LLM"), ("hf", "Hugging Face のトークン（モデルを一覧から選ぶ）"), ("char", "キャラクター"), ("tools", "ツール（Web検索・MCP・外部エージェント）")])
+        choice = pick("設定する項目", [("voice", "声"), ("llm", "LLM"), ("hf", "Hugging Face のトークン（モデルを一覧から選ぶ）"), ("char", "キャラクター"), ("display", "表示方法（デスクトップのキャラ / ブラウザ）"), ("tools", "ツール（Web検索・MCP・外部エージェント）")])
         if choice == "voice":
             menu_voice()
         elif choice == "llm":
@@ -325,6 +354,8 @@ def main():
             menu_hf()
         elif choice == "char":
             menu_character()
+        elif choice == "display":
+            menu_display()
         elif choice == "tools":
             menu_tools()
         else:
