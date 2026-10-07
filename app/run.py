@@ -320,7 +320,7 @@ try:
     _t3 = _t3.replace("new ImageAvatar(", "new KoemadoImageAvatar(")
     if _t3 != _t:
         (_html / "index.html").write_text(_t3, encoding="utf-8")
-    for _name in ("console-link.js", "koemado-avatar.js"):
+    for _name in ("console-link.js", "koemado-avatar.js", "mascot.html", "mascot.css", "mascot.js", "mascot-silhouette.svg"):
         _src = ROOT / "html-overrides" / _name
         if _src.exists():
             (_html / _name).write_bytes(_src.read_bytes())

@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 480" width="300" height="480">
+  <!-- 画像が設定されていないキャラの、デスクトップ表示用のシルエット（背景なし） -->
+  <g fill="#7f8db0" stroke="#5d6b90" stroke-width="4" stroke-linejoin="round">
+    <circle cx="150" cy="104" r="62"/>
+    <path d="M150 178c-62 0-100 28-108 82l-14 190c-1 10 7 18 17 18h210c10 0 18-8 17-18l-14-190c-8-54-46-82-108-82z"/>
+  </g>
+  <circle cx="128" cy="104" r="6" fill="#eef1fa"/>
+  <circle cx="172" cy="104" r="6" fill="#eef1fa"/>
+  <path d="M132 130q18 14 36 0" fill="none" stroke="#eef1fa" stroke-width="5" stroke-linecap="round"/>
+</svg>

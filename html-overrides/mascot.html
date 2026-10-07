@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>koemado キャラ</title>
+    <link rel="stylesheet" href="mascot.css">
+</head>
+<body>
+    <!-- デスクトップのキャラ用のページ（mascot.py の透明なウィンドウが開く。ブラウザで開いても動く）。
+         会話の仕組み（WebSocket・口パク・まばたき）は会話画面と同じスクリプトを使う -->
+    <div id="root">
+        <div id="zone">
+            <div id="bubble" hidden><div id="bubbleText"></div></div>
+            <form id="inputBox" hidden autocomplete="off">
+                <input id="textIn" type="text" maxlength="500" placeholder="話しかける（Enter で送る・Esc で閉じる）">
+                <button type="submit">送る</button>
+            </form>
+        </div>
+        <div id="stage">
+            <img id="faceImage" class="face-image" src="../character-image/neutral" alt="" draggable="false">
+            <img id="mouthImage" class="mouth-overlay" alt="" draggable="false">
+            <div id="badge" hidden></div>
+        </div>
+    </div>
+
+    <script src="aiavatar.js"></script>
+    <script src="lipsync.js"></script>
+    <script src="mfcc-lipsync.js"></script>
+    <script src="blink.js"></script>
+    <script src="image-avatar.js"></script>
+    <script src="koemado-avatar.js"></script>
+    <script src="mascot.js"></script>
+</body>
+</html>
