@@ -1,4 +1,4 @@
-# AIAvatar Portable
+# koemado（声の窓）
 
 Windows の PC で、**ワンクリックで導入できるローカル音声会話アバター**です。マイク（またはテキスト）で話しかけると、
 ローカルの LLM が返事を考え、Irodori-TTS が日本語で読み上げます。クラウドへの送信はありません（外部の推論サーバーを自分で選んだ場合を除く）。
@@ -96,12 +96,12 @@ LLM は llama.cpp の `llama-server` で動かします。PC のスペックか�
 
 ### 固定しているバージョン
 
-llama.cpp `b11443`（CUDA 12 ビルド）／ Irodori-TTS-Server `61012c7`（`uv.lock` に従う）／ Irodori-TTS v4.1 Small int8（`Aratako/Irodori-TTS-v4.1-Small-Quantized`）／ aiavatar 0.9.1 ／ faster-whisper 1.2.1（small, CPU int8）。依存のバージョンは `app/requirements.txt` と `stt/requirements.txt` で固定しています。
+llama.cpp `b11443`（CUDA 12 ビルド）／ Irodori-TTS-Server `61012c7`（`uv.lock` に従う）／ Irodori-TTS v4.1 Small int8（`Aratako/Irodori-TTS-v4.1-Small-Quantized`）／ aiavatar 0.9.1 ／ fastmcp 4.0.11 ／ ddgs 9.16.0 ／ faster-whisper 1.2.1（small, CPU int8）。依存のバージョンは `app/requirements.txt` と `stt/requirements.txt` で固定しています。
 
 ## 使い方
 
 - 会話画面: `http://127.0.0.1:8100/static/index.html`（`start.bat` が開きます）。マイクの許可が必要です。
-- **設定画面: `http://127.0.0.1:8100/settings`**（声・LLM・キャラクター。`configure.bat` でも同じ設定を対話式に変えられます）
+- **設定画面: `http://127.0.0.1:8100/settings`**（声・LLM・キャラクター・ツール。`configure.bat` でも同じ設定を対話式に変えられます）
 - 管理画面（計測・ログ）: `http://127.0.0.1:8100/admin`
 - ブラウザを使わずに試す: `app\.venv\Scripts\python.exe tools\e2e_test.py "こんにちは" --repeat 3`（WebSocket でテキストを送り、返答・表情タグ・音声・所要時間を表示）
 
@@ -150,9 +150,50 @@ llama.cpp `b11443`（CUDA 12 ビルド）／ Irodori-TTS-Server `61012c7`（`uv.
 | 起動に失敗する | `logs\llm.log`、`logs\tts.log`、`logs\stt.log`、`logs\app.log` を確認してください |
 | 返答に思考が混ざる | 設定画面の「思考を止める方法」を変えてください（モデルによって `reasoning_effort` か `chat_template_kwargs` のどちらかが効きます） |
 
-## 拡張
+## ツール（Web 検索・MCP・スキル・外部エージェント）
 
-作業エージェント（Hermes など）との連携は、このリポジトリには含みません。AIAvatarKit のツール機構（`llm.add_tool`）に、`app/run.py` から追加できます。
+設定画面の「**ツール**」タブ（と `configure.bat`）で設定します。![ツール](docs/screenshots/settings_tools.png)
+
+**ツールの定義は起動時に固定します**（会話の途中で変わると LLM のプロンプトキャッシュが効かなくなるため）。変更は「保存して再起動」で反映します。LLM タブの外部サーバーで「ツール呼び出しを使う」をオフにすると、ここのツールもすべて使えません。
+
+### Web 検索（既定でオン）
+
+- `web_search(query)`: DuckDuckGo（`ddgs`。API キー不要）の上位 5 件のタイトル・URL・要約を返します。**検索語は外部（DuckDuckGo）に送られます。**
+- `web_fetch(url)`: ページ本文をテキストで読みます。http / https のみ。127.0.0.1・10.x・192.168.x・リンクローカル・`file://` など、この PC や社内ネットワークの宛先は、リダイレクト先も含めて拒否します。本文 1MB・15 秒に上限があります（名前解決の結果は接続の前後で確認しますが、DNS リバインディングへの対策は完全ではありません）。
+- 調べた結果は話し言葉で短く要約し、URL は読み上げません。最新の情報が必要なときだけ使います。
+- 天気（Open-Meteo）と記憶も、このタブで個別にオフにできます。
+
+### MCP
+
+- `config/mcp.json`（Claude Desktop と同じ形式。そのまま貼り付けられます）。例は `docs/mcp.example.json`。
+
+  ```json
+  {"mcpServers": {
+    "demo": {"command": "python", "args": ["tools/mcp_test_server.py"], "allowed_tools": ["roll_dice", "current_time"]},
+    "remote": {"url": "http://127.0.0.1:8765/mcp", "headers": {}, "enabled": false}
+  }}
+  ```
+
+  `enabled`（既定 true）と `allowed_tools`（省略するとすべて許可）を足せます。stdio は command + args（`python` はこのアプリの Python で代用、相対パスはインストール先が基準）、HTTP は streamable-http の URL です。
+- 起動時に接続してツールを LLM に登録します。**接続に失敗したサーバーは飛ばし**（警告ログ `logs\app.log` と、設定画面の「接続失敗」表示）、アプリは起動します。サーバーの標準エラーは `logs\mcp_<名前>.log` です。
+- 設定画面: サーバーの一覧（状態・ツール数）、JSON 編集、接続テスト（ツール一覧を出し、使うツールを個別に許可）、追加・削除。env / headers の値は伏せ字で表示します。
+- **注意**: MCP のツールはこの PC で動くプログラムで、ファイル操作やコマンド実行ができるものもあります。**音声の聞き間違いがそのまま実行される**可能性があるので、信頼できるサーバーだけを追加し、使うツールを絞ってください。ツールが多いと小さい LLM では呼び出しが不安定になります（目安: 標準のツールを含めた合計で low は 8 個、mid は 15 個、大きいモデルでも 30 個程度まで）。
+- `npx` のサーバーには Node.js が必要です（自動では入れません。無ければ接続テストでそう表示します）。
+- 試すには `tools/mcp_test_server.py`（サイコロ・時刻・足し算）を使えます。HTTP は `app\.venv\Scripts\python.exe tools\mcp_test_server.py --http 8765`。
+
+### スキル
+
+- `skills/<name>/SKILL.md`（frontmatter に `name` と `description`、本文に手順。Claude の Agent Skills に似た形）。同梱は「news-topics（今日のニュースの話題）」と「research（調べもの）」。
+- システムプロンプトに入れるのは**一覧（name と description）だけ**で、本文は LLM が `use_skill(name)` で必要なときに読みます（プロンプトが短く、キャッシュも壊れません）。起動時に読み込みます。全キャラクターで共通です。
+- 設定画面で、一覧・オン／オフ・新規作成と編集・削除ができます。
+
+### 外部エージェント（既定オフ）
+
+時間のかかる作業（ファイル操作・コード実行・長い調査）だけを、別の作業エージェントに頼みます。天気と簡単な検索はアバター自身のツールで済ませます。頼んだあとも会話は続き、完了すると結果をアバターが話して伝えます（`ask_agent` と進捗確認の `check_agent_tasks`。AIAvatarKit の `OpenClawTool` と `use_invoke_queue`。連携がオンのときだけ有効）。
+
+- 種類は Hermes Agent / OpenClaw。base_url（`/v1` まで。既定 `http://127.0.0.1:8642/v1`）・API キー（`config/settings.json` にだけ保存し、画面には再表示しません）・タイムアウト（既定 600 秒）。「接続テスト」は `/health` と `/v1/models` を確かめます。
+- **注意**: Hermes の API は、ターミナル実行を含む全ツールへのアクセスを与えます。**127.0.0.1 の中だけで使い、API キーを必ず設定**してください。Hermes 側の承認設定は緩めないでください。
+- Hermes 本体のインストールはこのリポジトリの対象外です。公式の導入ページ: <https://hermes-agent.nousresearch.com/docs/>
 
 ## Irodori-TTS の倫理的な制限（要約）
 
@@ -195,11 +236,13 @@ configure.bat / .py    設定の対話 CLI（設定画面の予備）
 ctl.py                 起動・停止・再起動・ダウンロードの共通処理
 profiles.py            LLM プロファイル表と llama-server の引数
 settings_store.py      設定・キャラクターの読み書きと、成人チェック
-app/                   AIAvatarKit 本体（run.py）、設定画面（settings_api.py / settings_ui）、天気・記憶
+tools_store.py         MCP 設定（config/mcp.json）とスキル（skills/）の読み書き
+skills/                スキル（news-topics / research を同梱）
+app/                   AIAvatarKit 本体（run.py）、設定画面（settings_api.py / settings_ui）、天気・記憶、Web 検索・MCP・スキル・外部エージェント
 stt/                   faster-whisper の STT サーバー
 voices/                同梱の参照音声（Voice Design で作った成人女性の声）
 characters/            キャラクター（_common.md = 共通ルール、mio/ = サンプル）
-tools/                 e2e_test.py（WebSocket テスト）、make_voices.py（Voice Design で声を作る）
+tools/                 e2e_test.py（WebSocket テスト）、make_voices.py（Voice Design で声を作る）、mcp_test_server.py（MCP の確認用）
 ```
 
 導入後にできるもの（Git には入れません）: `strata/` `strata-data/`（Strata を選んだとき）`config.json` `config/` `llama.cpp/` `models/` `tts/` `hf-home/` `torch-home/` `app/.venv` `stt/.venv` `app/html/` `app/data/` `logs/` など。

@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>設定 - AIAvatar</title>
+<title>設定 - koemado</title>
 <style>
 :root {
   --bg: #f4f6fa; --panel: #ffffff; --text: #1d2433; --muted: #5d6880; --line: #d9dfeb;
@@ -65,7 +65,7 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
 </head>
 <body>
 <header>
-  <h1>設定</h1>
+  <h1>koemado 設定</h1>
   <div id="chips"></div>
   <a href="/static/index.html">会話画面へ</a>
 </header>
@@ -73,6 +73,7 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
   <button data-tab="voice" class="active">声</button>
   <button data-tab="llm">LLM</button>
   <button data-tab="char">キャラクター</button>
+  <button data-tab="tools">ツール</button>
   <button data-tab="sys">状態・再起動</button>
 </nav>
 <main>
@@ -272,6 +273,87 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
   <div class="imgs" id="imgBox"></div>
 </section>
 
+<!-- ============================== ツール ============================== -->
+<section class="tab" id="tab-tools">
+  <div class="msg warn" id="tlRestart" hidden>ツールの変更は、<strong>再起動したときに反映されます</strong>（ツールの定義は起動時に固定します。会話の途中で変わると、LLM のプロンプトキャッシュが効かなくなるためです）。
+    <button class="btn primary" id="tlRestartBtn" type="button">いま再起動する</button></div>
+  <div id="tlLlmWarn" class="msg warn" hidden>いまの LLM 設定では「ツール呼び出しを使う」がオフです。ここで有効にしても、どのツールも使われません（LLM タブの外部サーバーの設定）。</div>
+
+  <h2>標準のツール</h2>
+  <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" id="tlWeb">
+    <span><strong>Web 検索</strong>（web_search / web_fetch。API キー不要）</span></label>
+  <div class="note" style="margin-left:26px">検索語は外部（DuckDuckGo）に送られます。ページの本文を読む web_fetch は、この PC や社内ネットワークのアドレス（127.0.0.1・10.x・192.168.x・file:// など）を拒否し、サイズ（1MB）と時間（15 秒）にも上限があります。
+    ネットワークに出したくないときはオフにしてください。</div>
+  <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" id="tlWeather"> <span>天気（get_weather。Open-Meteo に地名を送ります）</span></label>
+  <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" id="tlMemory"> <span>記憶（remember / recall。この PC の中だけに保存します）</span></label>
+  <p><button class="btn primary" id="tlSave">保存</button> <button class="btn primary" id="tlSaveRestart">保存して再起動</button> <span class="note" id="tlCount"></span></p>
+  <div id="tlMsg"></div>
+
+  <h2>スキル</h2>
+  <p class="note">スキルは、手順を書いた <code>skills/&lt;名前&gt;/SKILL.md</code> です。プロンプトには一覧（名前と description）だけを入れ、手順の本文は LLM が必要なときに <code>use_skill</code> で読みます（プロンプトが短く保たれ、キャッシュも壊れません）。起動時に読み込みます。</p>
+  <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" id="tlSkillsOn"> <span>スキルを使う（use_skill）</span></label>
+  <div id="skillList"></div>
+  <p><button class="btn" id="skNew">新しいスキル</button></p>
+  <div id="skForm" hidden class="card">
+    <div class="row">
+      <div><label>名前（半角英数字・_・-。フォルダ名になります）</label><input type="text" id="skName"></div>
+      <div style="flex:3 1 400px"><label>description（いつ使うスキルか。一覧に出る一文。LLM はこれを見て使うか決めます）</label><input type="text" id="skDesc"></div>
+    </div>
+    <label>手順（本文。LLM への指示を、番号つきの短い手順で）</label>
+    <textarea id="skBody" style="min-height:200px;font-family:inherit"></textarea>
+    <p><button class="btn primary" id="skSave">保存</button> <button class="btn" id="skCancel">閉じる</button> <button class="btn danger" id="skDelete">削除</button></p>
+    <div id="skMsg"></div>
+  </div>
+
+  <h2>MCP サーバー</h2>
+  <div class="msg warn">
+    <strong>MCP のツールは、この PC で動くプログラムです。</strong>ファイルの操作やコマンドの実行ができるものもあります。音声は聞き間違えることがあり、<strong>聞き間違いがそのまま実行される</strong>可能性があります。
+    信頼できるサーバーだけを追加し、「使うツール」を必要なものだけに絞ってください。
+  </div>
+  <div class="note">・ツールが多いと、小さい LLM では呼び出しが不安定になります。目安は、標準のツールを含めた合計で、同梱の low（E4B）は 8 個程度まで、mid（26B-A4B）は 15 個程度まで、大きいモデル（Strata・クラウド）でも 30 個程度までです。<br>
+    ・反映には<strong>再起動が必要</strong>です（ツールの定義が会話の途中で変わると、プロンプトキャッシュが効かなくなるため）。<br>
+    ・<code>npx</code> で動かすサーバーには Node.js が必要です（自動では入れません）。<span id="nodeNote"></span></div>
+  <div id="mcpErr"></div>
+  <div id="mcpList"></div>
+  <div id="mcpTest"></div>
+  <details class="card" style="margin-top:12px"><summary class="title">サーバーを追加</summary>
+    <div class="row">
+      <div><label>名前（半角英数字・_・-）</label><input type="text" id="mcpName" placeholder="demo"></div>
+      <div><label>種類</label><select id="mcpKind"><option value="stdio">stdio（command で起動）</option><option value="http">HTTP（streamable-http の URL）</option></select></div>
+    </div>
+    <div id="mcpStdio"><div class="row">
+      <div><label>command</label><input type="text" id="mcpCmd" placeholder="python"></div>
+      <div style="flex:3 1 400px"><label>args（1 行に 1 つ）</label><textarea id="mcpArgs" style="min-height:60px" placeholder="tools/mcp_test_server.py"></textarea></div></div></div>
+    <div id="mcpHttp" hidden><label>url</label><input type="url" id="mcpUrl" placeholder="http://127.0.0.1:8765/mcp"></div>
+    <p><button class="btn primary" id="mcpAdd">追加（保存します。まだ接続はしません）</button></p>
+  </details>
+  <h3 style="font-size:14px;margin:16px 0 4px">config/mcp.json（Claude Desktop と同じ形式。そのまま貼り付けられます）</h3>
+  <textarea id="mcpJson" style="min-height:200px;font-family:Consolas,monospace;font-size:13px" spellcheck="false"></textarea>
+  <div class="note">各サーバーに <code>"enabled": false</code> と <code>"allowed_tools": ["ツール名", …]</code>（省略するとすべて許可）を足せます。env・headers の値は、画面では伏せ字です（伏せ字のまま保存すると、保存済みの値が残ります）。</div>
+  <p><button class="btn primary" id="mcpJsonSave">JSON を保存</button></p>
+  <div id="mcpJsonMsg"></div>
+
+  <h2>外部エージェント</h2>
+  <p class="note">時間のかかる作業（ファイル操作・コード実行・長い調査）だけを、別の作業エージェントに頼みます。天気と簡単な検索は、アバター自身のツールで済ませます。頼んだあとも会話は続けられ、完了すると結果をアバターが話して伝えます。</p>
+  <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" id="agOn"> <span><strong>外部エージェントを使う</strong>（既定はオフ）</span></label>
+  <div id="agBox">
+    <div class="msg warn"><strong>Hermes の API は、ターミナルの実行を含む全ツールへのアクセスを与えます。</strong>127.0.0.1 の中だけで使い、API キーを必ず設定してください。Hermes 側の承認設定は緩めないでください。
+      Hermes 本体のインストールは、このアプリの対象外です（<a href="https://hermes-agent.nousresearch.com/docs/" target="_blank" rel="noopener">Hermes Agent の公式ドキュメント</a>）。</div>
+    <div class="row">
+      <div><label>種類</label><select id="agKind"></select></div>
+      <div style="flex:3 1 400px"><label>base_url（/v1 まで。既定 http://127.0.0.1:8642/v1）</label><input type="url" id="agUrl"></div>
+    </div>
+    <div class="row">
+      <div><label>API キー（保存しますが、画面には再表示しません）</label><input type="password" id="agKey" autocomplete="off"></div>
+      <div><label>タイムアウト（秒。既定 600）</label><input type="number" id="agTimeout" min="10" max="3600"></div>
+    </div>
+    <div id="agWarnLocal" class="msg warn" hidden>127.0.0.1 以外の宛先です。通信が暗号化されない相手に、この PC の会話の内容を送ることになります。</div>
+    <div id="agWarnKey" class="msg warn" hidden>API キーが未設定です。キーなしで使うのはおすすめしません。</div>
+    <p><button class="btn" id="agTest">接続テスト</button> <button class="btn primary" id="agSave">保存</button> <button class="btn primary" id="agSaveRestart">保存して再起動</button></p>
+    <div id="agMsg"></div>
+  </div>
+</section>
+
 <!-- ============================== 状態 ============================== -->
 <section class="tab" id="tab-sys">
   <h2>サービスの状態</h2>
@@ -310,6 +392,7 @@ document.querySelectorAll("#tabs button").forEach((b) => b.onclick = () => {
   document.querySelectorAll("#tabs button").forEach((x) => x.classList.toggle("active", x === b));
   document.querySelectorAll("section.tab").forEach((x) => x.classList.toggle("active", x.id === "tab-" + b.dataset.tab));
   if (b.dataset.tab === "sys") refresh();
+  if (b.dataset.tab === "tools") loadTools().catch((e) => msg($("tlMsg"), "error", e.message));
 });
 
 async function refresh(keepForms = false) {
@@ -630,6 +713,164 @@ $("charSave").onclick = async () => {
 $("charDelete").onclick = async () => {
   const cid = $("cId").value; if (!cid || !confirm(cid + " を削除しますか？（記憶の DB は残ります）")) return;
   try { await api("/characters/" + cid, "DELETE"); newChar = false; await refresh(); } catch (e) { msg($("charMsg"), "error", e.message); }
+};
+
+/* ---------------- ツール ---------------- */
+let T = null;   // /tools の結果
+async function loadTools() {
+  T = await api("/tools");
+  const st = T.settings;
+  $("tlWeb").checked = !!st.web_search; $("tlWeather").checked = !!st.weather; $("tlMemory").checked = !!st.memory;
+  $("tlSkillsOn").checked = !!st.skills;
+  $("tlLlmWarn").hidden = !!T.llm_tools;
+  $("nodeNote").textContent = T.node ? "（この PC には Node.js があります）" : "（この PC では Node.js が見つかりません）";
+  const n = T.running.tools.length;
+  $("tlCount").textContent = `いま動いているツール: ${n} 個` + (n ? "（" + T.running.tools.join(", ") + "）" : "");
+  renderSkills(); renderMcp();
+  if (document.activeElement !== $("agUrl") && document.activeElement !== $("agKey")) renderAgent();
+  // 起動時のツール構成と、保存済みの設定がずれていれば、再起動を促す
+  const run = new Set(T.running.tools);
+  const L = T.llm_tools;
+  const okSkills = T.skills.filter((s) => s.enabled && !s.error).map((s) => s.name);
+  const wantSkills = L && st.skills && okSkills.length > 0;
+  const diff = (run.has("web_search") !== !!(L && st.web_search)) || (run.has("get_weather") !== !!(L && st.weather)) || (run.has("remember") !== !!(L && st.memory))
+    || (run.has("ask_agent") !== !!(L && st.agent.enabled)) || (run.has("use_skill") !== !!wantSkills)
+    || (wantSkills && JSON.stringify(okSkills) !== JSON.stringify(T.running.skills))
+    || T.mcp.servers.some((s) => s.state === "pending" || (s.state === "connected" && !s.enabled));
+  $("tlRestart").hidden = !diff;
+}
+function renderMcp() {
+  const m = T.mcp;
+  msg($("mcpErr"), "error", m.config_error ? "config/mcp.json を読めません: " + m.config_error : "");
+  const mj = (() => { try { return JSON.parse(m.json).mcpServers || {}; } catch (e) { return {}; } })();
+  $("mcpList").innerHTML = m.servers.map((s) => {
+    const label = { connected: `接続中（登録 ${s.tools.length} / 提供 ${(s.available || s.tools).length} ツール）`, failed: "接続失敗", disabled: "オフ", pending: "未接続（再起動で接続します）" }[s.state] || s.state;
+    return `<div class="card"><div class="voice">
+      <label style="margin:0;display:flex;gap:6px;align-items:center;color:var(--text)"><input type="checkbox" data-mcp-en="${esc(s.name)}" ${s.enabled ? "checked" : ""}><span class="name">${esc(s.name)}</span></label>
+      <span class="chip ${{ connected: "on", failed: "off" }[s.state] || ""}">${esc(label)}</span>
+      <span class="meta">${s.kind === "stdio" ? "stdio" : "HTTP"}: ${esc(s.summary)}${s.allowed_tools ? "　使うツール: " + esc(s.allowed_tools.join(", ") || "（なし）") : ""}</span>
+      <button class="btn" data-mcp-test="${esc(s.name)}">接続テスト</button>
+      <button class="btn danger" data-mcp-del="${esc(s.name)}">削除</button></div>
+      ${s.state === "failed" ? `<div class="msg error">${esc(s.error)}</div>` : ""}
+      ${s.tools.length ? `<div class="note">登録されているツール: ${esc(s.tools.join(", "))}</div>` : ""}</div>`;
+  }).join("") || '<div class="msg info">MCP サーバーはまだありません。下の「サーバーを追加」か JSON で追加できます（例は docs/mcp.example.json）。</div>';
+  $("mcpJson").value = m.json;
+  document.querySelectorAll("[data-mcp-en]").forEach((c) => c.onchange = async () => {
+    const def = mj[c.dataset.mcpEn]; if (!def) return;
+    def.enabled = c.checked; await saveMcpServer(c.dataset.mcpEn, def);
+  });
+  document.querySelectorAll("[data-mcp-del]").forEach((b) => b.onclick = async () => {
+    if (!confirm(b.dataset.mcpDel + " を削除しますか？")) return;
+    try { await api("/mcp/servers/" + encodeURIComponent(b.dataset.mcpDel), "DELETE"); await loadTools(); } catch (e) { alert(e.message); }
+  });
+  document.querySelectorAll("[data-mcp-test]").forEach((b) => b.onclick = () => testMcp(b.dataset.mcpTest, mj));
+}
+async function saveMcpServer(name, def) {
+  try { await api("/mcp/servers/" + encodeURIComponent(name), "PUT", def); await loadTools(); }
+  catch (e) { alert(e.message); await loadTools(); }
+}
+async function testMcp(name, mj) {
+  $("mcpTest").innerHTML = `<div class="msg info">「${esc(name)}」に接続しています…（最大 60 秒。初回の npx は時間がかかります）</div>`;
+  try {
+    const r = await api("/mcp/test/" + encodeURIComponent(name), "POST", {});
+    if (!r.ok) { $("mcpTest").innerHTML = `<div class="msg error"><strong>「${esc(name)}」に接続できませんでした。</strong> ${esc(r.error)}</div>`; return; }
+    $("mcpTest").innerHTML = `<div class="card"><div class="title">「${esc(name)}」のツール（${r.tools.length} 個）</div>
+      <div class="note">チェックしたツールだけを LLM に渡します。反映には再起動が必要です。</div>
+      <table>${r.tools.map((t) => `<tr><td><label style="margin:0;display:flex;gap:6px;align-items:center;color:var(--text)"><input type="checkbox" data-allow="${esc(t.name)}" ${t.allowed ? "checked" : ""}> ${esc(t.name)}</label></td><td class="note">${esc(t.description)}</td></tr>`).join("")}</table>
+      <p><button class="btn primary" id="mcpAllowSave">使うツールを保存</button></p></div>`;
+    $("mcpAllowSave").onclick = async () => {
+      const boxes = [...document.querySelectorAll("[data-allow]")];
+      const checked = boxes.filter((b) => b.checked).map((b) => b.dataset.allow);
+      const def = mj[name]; if (!def) return;
+      if (checked.length === boxes.length) delete def.allowed_tools; else def.allowed_tools = checked;
+      await saveMcpServer(name, def); toast("保存しました。再起動で反映されます。");
+    };
+  } catch (e) { $("mcpTest").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
+}
+$("mcpKind").onchange = () => { $("mcpStdio").hidden = $("mcpKind").value !== "stdio"; $("mcpHttp").hidden = $("mcpKind").value !== "http"; };
+$("mcpAdd").onclick = async () => {
+  const name = $("mcpName").value.trim();
+  const def = $("mcpKind").value === "stdio"
+    ? { command: $("mcpCmd").value.trim(), args: $("mcpArgs").value.split("\n").map((x) => x.trim()).filter(Boolean), enabled: true }
+    : { url: $("mcpUrl").value.trim(), enabled: true };
+  if (!name) return alert("名前を入力してください。");
+  try { await api("/mcp/servers/" + encodeURIComponent(name), "PUT", def); toast("追加しました。接続テストで確かめてから、再起動してください。"); await loadTools(); }
+  catch (e) { alert(e.message); }
+};
+$("mcpJsonSave").onclick = async () => {
+  try { await api("/mcp", "PUT", { json: $("mcpJson").value }); msg($("mcpJsonMsg"), "ok", "保存しました。再起動で反映されます。"); await loadTools(); }
+  catch (e) { msg($("mcpJsonMsg"), "error", e.message); }
+};
+
+function renderSkills() {
+  $("skillList").innerHTML = T.skills.map((s) => `<div class="card voice">
+    <label style="margin:0;display:flex;gap:6px;align-items:center;color:var(--text)"><input type="checkbox" data-sk-en="${esc(s.name)}" ${s.enabled ? "checked" : ""}><span class="name">${esc(s.name)}</span></label>
+    <div class="meta">${esc(s.description) || "&nbsp;"}${s.error ? `<div class="msg error">${esc(s.error)}</div>` : ""}</div>
+    <button class="btn" data-sk-edit="${esc(s.name)}">編集</button></div>`).join("") || '<div class="msg info">スキルはまだありません。</div>';
+  document.querySelectorAll("[data-sk-en]").forEach((c) => c.onchange = async () => {
+    const off = new Set(T.settings.skills_disabled); if (c.checked) off.delete(c.dataset.skEn); else off.add(c.dataset.skEn);
+    try { await api("/settings", "PUT", { tools: { skills_disabled: [...off] } }); await loadTools(); } catch (e) { alert(e.message); }
+  });
+  document.querySelectorAll("[data-sk-edit]").forEach((b) => b.onclick = async () => {
+    try { const sk = await api("/skills/" + b.dataset.skEdit); openSkill(sk.name, sk.description, sk.body, false); } catch (e) { alert(e.message); }
+  });
+}
+function openSkill(name, desc, body, isNew) {
+  $("skForm").hidden = false; $("skName").value = name; $("skName").disabled = !isNew; $("skDesc").value = desc; $("skBody").value = body;
+  $("skDelete").hidden = isNew; msg($("skMsg"), "", ""); $("skForm").scrollIntoView({ block: "nearest" });
+}
+$("skNew").onclick = () => openSkill("", "", "1. \n2. \n", true);
+$("skCancel").onclick = () => { $("skForm").hidden = true; };
+$("skSave").onclick = async () => {
+  try { await api("/skills/" + encodeURIComponent($("skName").value.trim()), "PUT", { description: $("skDesc").value, body: $("skBody").value });
+    msg($("skMsg"), "ok", "保存しました。再起動で反映されます。"); $("skName").disabled = true; $("skDelete").hidden = false; await loadTools(); }
+  catch (e) { msg($("skMsg"), "error", e.message); }
+};
+$("skDelete").onclick = async () => {
+  const n = $("skName").value; if (!confirm(n + " を削除しますか？")) return;
+  try { await api("/skills/" + encodeURIComponent(n), "DELETE"); $("skForm").hidden = true; await loadTools(); } catch (e) { msg($("skMsg"), "error", e.message); }
+};
+
+function renderAgent() {
+  const a = T.settings.agent;
+  $("agKind").innerHTML = Object.entries(T.agent_kinds).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join("");
+  $("agOn").checked = !!a.enabled; $("agKind").value = a.kind; $("agUrl").value = a.base_url; $("agTimeout").value = a.timeout;
+  $("agKey").value = ""; $("agKey").placeholder = a.api_key_set ? "設定済み（変更するときだけ入力）" : "（未設定）";
+  syncAgent();
+}
+function syncAgent() {
+  $("agBox").style.opacity = $("agOn").checked ? 1 : .55;
+  const local = /^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])([:\/]|$)/i.test($("agUrl").value.trim());
+  $("agWarnLocal").hidden = local;
+  $("agWarnKey").hidden = !!(T && T.settings.agent.api_key_set) || !!$("agKey").value;
+}
+$("agOn").onchange = syncAgent; $("agUrl").oninput = syncAgent; $("agKey").oninput = syncAgent;
+function collectAgent() {
+  return { enabled: $("agOn").checked, kind: $("agKind").value, base_url: $("agUrl").value.trim(), api_key: $("agKey").value, timeout: +$("agTimeout").value || 600 };
+}
+$("agTest").onclick = async () => {
+  msg($("agMsg"), "info", "接続テスト中…");
+  try {
+    const r = await api("/agent/test", "POST", { base_url: $("agUrl").value.trim(), api_key: $("agKey").value });
+    $("agMsg").innerHTML = '<table>' + r.steps.map((s) => `<tr><td class="step ${s.ok ? "ok" : "ng"}">${esc(s.name)}</td><td>${esc(s.detail)}</td></tr>`).join("") + "</table>"
+      + (r.ok && !r.has_key ? '<div class="msg warn">キーなしで応答しています。API キーを設定してください。</div>' : "");
+  } catch (e) { msg($("agMsg"), "error", e.message); }
+};
+async function saveTools(restart, where) {
+  const patch = { tools: { web_search: $("tlWeb").checked, weather: $("tlWeather").checked, memory: $("tlMemory").checked, skills: $("tlSkillsOn").checked, agent: collectAgent() } };
+  const out = $(where);
+  try {
+    await api("/settings", "PUT", patch);
+    msg(out, "ok", restart ? "保存しました。再起動しています…" : "保存しました。再起動したときに反映されます。");
+    await loadTools();
+    if (restart) { await api("/restart", "POST", { target: "all" }); waitServices().then(() => loadTools()); }
+  } catch (e) { msg(out, "error", e.message); }
+}
+$("tlSave").onclick = () => saveTools(false, "tlMsg"); $("tlSaveRestart").onclick = () => saveTools(true, "tlMsg");
+$("agSave").onclick = () => saveTools(false, "agMsg"); $("agSaveRestart").onclick = () => saveTools(true, "agMsg");
+$("tlRestartBtn").onclick = async () => {
+  if (!confirm("再起動します。よろしいですか？")) return;
+  try { await api("/restart", "POST", { target: "all" }); msg($("tlMsg"), "info", "再起動しています…"); waitServices().then(() => loadTools()); } catch (e) { msg($("tlMsg"), "error", e.message); }
 };
 
 /* ---------------- 状態 ---------------- */

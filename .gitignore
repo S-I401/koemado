@@ -52,3 +52,8 @@ __pycache__/
 !/characters/_common.md
 !/characters/mio/
 /characters/mio/image*.png
+
+# --- ユーザーが作ったスキル（同梱の 2 つだけ入れる） ---
+/skills/*
+!/skills/news-topics/
+!/skills/research/

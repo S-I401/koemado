@@ -89,7 +89,20 @@ DEFAULT_SETTINGS = {
     "tts": {"voice": "mio_a", "num_steps": 24, "seed": 42},
     "character": "mio",
     "weather_location": "東京",
+    # ツール。変更は「保存して再起動」で反映する（ツールの定義は起動時に固定し、LLM の会話キャッシュを守る）
+    "tools": {
+        "web_search": True,            # web_search / web_fetch（DuckDuckGo。検索語は外部に送られる）
+        "weather": True,
+        "memory": True,
+        "mcp": True,                   # config/mcp.json のサーバーを使う
+        "skills": True,                # skills/ のスキルを使う
+        "skills_disabled": [],         # 個別にオフにしたスキル名
+        # 外部エージェント（既定オフ）。kind: hermes / openclaw
+        "agent": {"enabled": False, "kind": "hermes", "base_url": "http://127.0.0.1:8642/v1", "api_key": "", "timeout": 600},
+    },
 }
+
+AGENT_KINDS = {"hermes": "Hermes Agent", "openclaw": "OpenClaw"}
 
 
 # ------------------------------------------------------------------ 読み書き ----
@@ -140,6 +153,14 @@ def update_settings(patch: dict, root: Path = ROOT) -> dict:
     ext = (patch.get("llm") or {}).get("external")
     if ext is not None and (ext.get("api_key") in (None, "") or set(ext.get("api_key", "")) <= {"●", "*"}):
         ext.pop("api_key", None)
+    ag = (patch.get("tools") or {}).get("agent")
+    if ag is not None and "api_key" in ag and (ag.get("api_key") in (None, "") or set(ag.get("api_key", "")) <= {"●", "*"}):
+        if not ag.pop("clear_api_key", False):
+            ag.pop("api_key", None)
+        else:
+            ag["api_key"] = ""
+    if ag is not None:
+        ag.pop("clear_api_key", None)
     new = _merge(cur, patch)
     validate_settings(new)
     save_settings(new, root)
@@ -164,6 +185,22 @@ def validate_settings(s: dict):
         raise ValueError("コンテキスト長は 1024〜131072 で指定してください。")
     if llm["mode"] not in ("bundled", "external"):
         raise ValueError("LLM の方式は bundled か external です。")
+    tl = s["tools"]
+    for k in ("web_search", "weather", "memory", "mcp", "skills"):
+        tl[k] = bool(tl.get(k))
+    if not isinstance(tl.get("skills_disabled"), list):
+        tl["skills_disabled"] = []
+    ag = tl["agent"]
+    ag["enabled"] = bool(ag.get("enabled"))
+    if ag.get("kind") not in AGENT_KINDS:
+        raise ValueError("外部エージェントの種類は hermes か openclaw です。")
+    ag["timeout"] = int(ag.get("timeout") or 600)
+    if not 10 <= ag["timeout"] <= 3600:
+        raise ValueError("外部エージェントのタイムアウトは 10〜3600 秒で指定してください。")
+    if ag["enabled"]:
+        u = urlparse(ag.get("base_url", ""))
+        if u.scheme not in ("http", "https") or not u.netloc:
+            raise ValueError("外部エージェントの base_url は http(s)://host:port/v1 の形式で指定してください。")
     if llm["mode"] == "external":
         ext = llm["external"]
         u = urlparse(ext["base_url"])
@@ -196,6 +233,9 @@ def masked(s: dict) -> dict:
     ext = s["llm"]["external"]
     ext["api_key_set"] = bool(ext.get("api_key"))
     ext["api_key"] = ("●●●●●●●●" if ext.get("api_key") else "")
+    ag = s["tools"]["agent"]
+    ag["api_key_set"] = bool(ag.get("api_key"))
+    ag["api_key"] = ("●●●●●●●●" if ag.get("api_key") else "")
     return s
 
 
@@ -448,9 +488,21 @@ def save_character(cid: str, data: dict, root: Path = ROOT) -> Path:
     return folder
 
 
-def compose_system_prompt(char: dict, root: Path = ROOT) -> str:
-    """character.yaml から system_prompt を作る。内容は設定を変えない限り同じ文字列になる（プロンプトキャッシュ向け）"""
+def _drop_sections(text: str, titles: set[str]) -> str:
+    """_common.md から、「# 見出し」ごとの節を取り除く（使わないツールの説明を LLM に見せないため）"""
+    parts = re.split(r"(?m)^(?=# )", text)
+    keep = [p for p in parts if not (p.startswith("# ") and p[2:].split("\n", 1)[0].strip() in titles)]
+    return "".join(keep).rstrip() + "\n"
+
+
+def compose_system_prompt(char: dict, root: Path = ROOT, tools: dict | None = None) -> str:
+    """character.yaml から system_prompt を作る。内容は設定を変えない限り同じ文字列になる（プロンプトキャッシュ向け）。
+    tools: 使えるツールの on/off（{"weather": bool, "memory": bool}）。オフのツールの節は入れない。"""
     common = (characters_dir(root) / "_common.md").read_text(encoding="utf-8")
+    if tools is not None:
+        drop = {t for t, k in (("天気", "weather"), ("記憶", "memory")) if not tools.get(k)}
+        if drop:
+            common = _drop_sections(common, drop)
     age = parse_age(char.get("age"))
     lines = [f"あなたは「{char.get('name', '')}」という名前の、{age} 歳の大人のキャラクターです。"
              "ユーザーと音声で雑談する相手として話します。返答は音声で読み上げられます。", "", "# キャラクター設定"]

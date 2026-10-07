@@ -2,7 +2,7 @@
 # requires-python = ">=3.12"
 # dependencies = ["huggingface_hub>=0.34"]
 # ///
-"""AIAvatar Portable セットアップ。
+"""koemado セットアップ。
 
 PC のスペック（GPU / VRAM / RAM / 空き容量 / ポート）を調べ、合うモデルを選んで、
 必要なものをすべてインストール先フォルダの中に導入する。途中で止まっても、
@@ -92,7 +92,7 @@ SIZES_GB = {
     "tts_models": (1.3, 1.4),
     "stt_env": (0.1, 0.3),
     "stt_model": (0.5, 0.5),
-    "app_env": (0.3, 0.9),       # Python 3.12 を含む
+    "app_env": (0.4, 1.2),       # Python 3.12 + fastmcp・ddgs などを含む
     "ui": (0.04, 0.05),
 }
 DISK_MARGIN_GB = 3.0
@@ -578,7 +578,7 @@ class Installer:
         tag = PINNED["llama_tag"]
         say(f"\n[llama.cpp] {tag}（CUDA 12 ビルド）を入れます。")
         req = urllib.request.Request(f"https://api.github.com/repos/ggml-org/llama.cpp/releases/tags/{tag}",
-                                     headers={"User-Agent": "aiavatar-portable"})
+                                     headers={"User-Agent": "koemado"})
         assets = json.load(urllib.request.urlopen(req, timeout=60))["assets"]
         dl = self.root / ".downloads"
         for pattern in PINNED["llama_asset_patterns"]:
@@ -885,7 +885,7 @@ def ask_llm_kind(args, offer_strata: bool, hw: dict, install: Path, profile: str
 def main():
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
-    ap = argparse.ArgumentParser(description="AIAvatar Portable セットアップ")
+    ap = argparse.ArgumentParser(description="koemado セットアップ")
     ap.add_argument("--profile", choices=PROFILE_ORDER, help="プロファイルを指定（既定: PC のスペックから自動）")
     ap.add_argument("--yes", "-y", action="store_true", help="確認せずに進める")
     ap.add_argument("--dry-run", action="store_true", help="検出と計画の表示だけ行い、何も入れない")
@@ -902,7 +902,7 @@ def main():
     install = Path(args.install_dir).resolve()
     args.install_dir = str(install)
     sim = parse_simulate(args.simulate)
-    say("AIAvatar Portable セットアップ\n")
+    say("koemado セットアップ\n")
     hw = detect_hardware(install, sim)
     print_hardware(hw)
     args.llm_explicit = bool(args.llm)

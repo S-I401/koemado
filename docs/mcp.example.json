@@ -1,0 +1,15 @@
+{
+  "mcpServers": {
+    "demo": {
+      "command": "python",
+      "args": ["tools/mcp_test_server.py"],
+      "enabled": false,
+      "allowed_tools": ["roll_dice", "current_time"]
+    },
+    "demo-http": {
+      "url": "http://127.0.0.1:8765/mcp",
+      "headers": {},
+      "enabled": false
+    }
+  }
+}

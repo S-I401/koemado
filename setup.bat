@@ -1,5 +1,5 @@
 @echo off
-rem AIAvatar Portable setup. ASCII only on purpose (Japanese here breaks cmd parsing).
+rem koemado setup. ASCII only on purpose (Japanese here breaks cmd parsing).
 rem Installs uv into tools\ if missing, then runs setup.py (all messages are printed by Python).
 setlocal
 chcp 65001 >nul

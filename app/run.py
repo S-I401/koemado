@@ -5,6 +5,9 @@
   声・キャラクター・temperature は、次の発話から反映される
 """
 
+import asyncio
+import contextlib
+import logging
 import os
 import sqlite3
 import sys
@@ -30,9 +33,12 @@ load_dotenv(BASE_DIR / ".env")
 
 import ctl  # noqa: E402
 import settings_store as ss  # noqa: E402
+import tools_store as ts  # noqa: E402
 from avatar_memory import SCHEMA, AvatarMemory  # noqa: E402
-from settings_api import LocalOnlyMiddleware, make_router  # noqa: E402
+from settings_api import RUNTIME, LocalOnlyMiddleware, make_router  # noqa: E402
 from weather_tool import WeatherTool  # noqa: E402
+
+logger = logging.getLogger("avatar")
 
 
 def flag(name: str, default: str = "0") -> bool:
@@ -149,20 +155,60 @@ class CharacterMemory(AvatarMemory):
 
 avatar_memory = CharacterMemory(BASE_DIR / "data")
 
-if R["tools"]:
+# ---- ツール: 起動時に固定する（会話の途中で定義が変わると、LLM の会話キャッシュが効かなくなる）。
+#      設定画面の「ツール」タブの変更は、「保存して再起動」で反映する ----
+TOOLS = settings()["tools"]
+USE_TOOLS = bool(R["tools"])        # LLM が tool calling を使えるか（外部サーバーで「使わない」にしたときは全部オフ）
+USE_WEATHER = USE_TOOLS and TOOLS["weather"]
+USE_MEMORY = USE_TOOLS and TOOLS["memory"]
+USE_WEB = USE_TOOLS and TOOLS["web_search"]
+USE_AGENT = USE_TOOLS and TOOLS["agent"]["enabled"]
+skill_index = ts.skill_index(ROOT, TOOLS["skills_disabled"]) if (USE_TOOLS and TOOLS["skills"]) else []
+tool_prompt_sections: list[str] = []
+
+if USE_WEATHER:
     llm.add_tool(WeatherTool(default_location=settings().get("weather_location", "東京")).create_tool())
+if USE_MEMORY:
     for tool in avatar_memory.create_tools():
         llm.add_tool(tool)
+if USE_WEB:
+    import web_tools
+    for tool in web_tools.create_tools():
+        llm.add_tool(tool)
+    tool_prompt_sections.append(
+        "# Web 検索\n"
+        "- 最新の情報や、自分の知識では分からないことを聞かれたときだけ web_search を使う。雑談や、知っていることには使わない。\n"
+        "- 結果の本文が必要なときだけ web_fetch でページを読む。\n"
+        "- 調べた結果は、話し言葉で短く要約して伝える。URL は読み上げない。出典はサイト名で言う。"
+    )
+if skill_index:
+    import skills_tool
+    llm.add_tool(skills_tool.create_tool(ROOT, skill_index))
+    tool_prompt_sections.append(skills_tool.prompt_section(skill_index))
+if USE_AGENT:
+    import agent_tool
+    for tool in agent_tool.create_tools(TOOLS["agent"], lambda: aiavatar_app, debug=flag("AVATAR_DEBUG", "0")):
+        llm.add_tool(tool)
+    tool_prompt_sections.append(
+        "# 作業エージェント\n"
+        "- 天気と簡単な検索は、自分のツール（get_weather, web_search）で済ませる。\n"
+        "- ファイル操作やコード実行、長い調査など、時間のかかる作業だけを ask_agent で頼む。頼んだら「頼みました」と一言伝え、結果は通知で届く。\n"
+        "- 作業の進み具合を聞かれたら check_agent_tasks で確認する。"
+    )
+TOOL_PROMPT = "\n\n".join(tool_prompt_sections)    # 起動中は変わらない文字列
 
 
 # キャラクターの設定と記憶は会話（context_id）の最初に固定されるので、会話中は LLM の会話キャッシュが効く
 @llm.get_system_prompt
 async def get_system_prompt(context_id, user_id, system_prompt_params):
     char = current_character()
-    base = ss.compose_system_prompt(char, ROOT)
-    if not R["tools"]:
-        return base
-    return base + "\n\n# 記憶\n" + avatar_memory.prompt_section(user_id, context_id)
+    base = ss.compose_system_prompt(char, ROOT, tools={"weather": USE_WEATHER, "memory": USE_MEMORY})
+    parts = [base]
+    if TOOL_PROMPT:
+        parts.append(TOOL_PROMPT)
+    if USE_MEMORY:
+        parts.append("# 記憶\n" + avatar_memory.prompt_section(user_id, context_id))
+    return "\n\n".join(parts)
 
 
 # ---- TTS: Irodori-TTS-Server。声と num_steps は毎回設定を読むので、再起動なしで切り替わる ----
@@ -195,6 +241,7 @@ aiavatar_app = AIAvatarWebSocketServer(
     tts=tts,
     stt=stt,
     voice_recorder_enabled=flag("VOICE_RECORDER", "0"),   # 既定ではマイク音声を保存しない
+    use_invoke_queue=USE_AGENT,    # 外部エージェントの完了報告を、発話の後ろに並べるため（連携がオンのときだけ）
     debug=flag("AVATAR_DEBUG", "0"),
 )
 
@@ -215,17 +262,55 @@ aiavatar_app.sts.performance_recorder.record = _record_without_images
 # 応答ごとに表情を感情ログへ記録する（LLM は呼ばない）
 @aiavatar_app.sts.on_finish
 async def log_emotion(request, response):
-    if request.text and not request.text.startswith("$") and R["tools"]:
+    if request.text and not request.text.startswith("$") and USE_MEMORY:
         avatar_memory.log_turn(request.user_id, request.context_id, request.text, response.text)
 
 
-app = FastAPI()
+@contextlib.asynccontextmanager
+async def lifespan(_app):
+    """MCP サーバーへの接続（起動時に一度だけ）。失敗したサーバーは飛ばす"""
+    mcp = None
+    if USE_TOOLS and TOOLS["mcp"]:
+        from mcp_manager import McpManager
+        try:
+            servers = ts.load_mcp(ROOT)["mcpServers"]
+        except ValueError as e:
+            logger.warning("MCP の設定を読めませんでした（MCP は使いません）: %s", e)
+            RUNTIME["mcp_config_error"] = str(e)
+            servers = {}
+        mcp = McpManager(ROOT)
+        RUNTIME["mcp_status"] = mcp.status
+        try:
+            await mcp.start(llm, servers, set(llm.tools))
+        except Exception:  # noqa: BLE001  何があってもアプリは起動する
+            logger.exception("MCP の初期化に失敗しました（MCP は使いません）")
+    extra = [n for st in RUNTIME["mcp_status"].values() for n in st.get("tools", [])]
+    if extra:    # MCP のツールが 1 つでもあれば、使い方の一文を足す（起動時に一度だけ。以後は変わらない）
+        global TOOL_PROMPT
+        TOOL_PROMPT = (TOOL_PROMPT + "\n\n" if TOOL_PROMPT else "") + (
+            "# 追加のツール\n- 依頼に合うツールがあるときは、推測や作り話で答えず、必ずそのツールを呼ぶ。ツール名を文章に書かない。")
+    RUNTIME["tools"] = sorted(llm.tools)
+    RUNTIME["skills"] = [s["name"] for s in skill_index]
+    yield
+    if mcp:
+        await mcp.close()
+
+
+app = FastAPI(lifespan=lifespan)
 app.include_router(aiavatar_app.get_websocket_router())  # 既定パスは /ws
 app.include_router(make_router(BASE_DIR / "settings_ui" / "index.html"))   # /settings と /character-image/
 
 # 付属のブラウザ UI（setup.py が html/ に配置する）
 if not (BASE_DIR / "html").exists():
     raise SystemExit("html/ がありません。setup.bat を再実行してください。")
+# 付属 UI のタイトルを koemado にそろえる（取得元のサンプルの題名を置き換える。何度実行しても同じ）
+_index = BASE_DIR / "html" / "index.html"
+try:
+    _t = _index.read_text(encoding="utf-8")
+    if "AIAvatarKit WebSocket Example" in _t:
+        _index.write_text(_t.replace("AIAvatarKit WebSocket Example", "koemado"), encoding="utf-8")
+except OSError:
+    pass
 app.mount("/static", StaticFiles(directory="html"), name="static")
 
 # 管理画面（/admin）：計測・ログ・設定変更

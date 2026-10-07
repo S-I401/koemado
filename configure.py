@@ -12,6 +12,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 import profiles  # noqa: E402
 import settings_store as ss  # noqa: E402
+import tools_store as ts  # noqa: E402
 
 
 def ask(prompt: str, default: str = "") -> str:
@@ -40,6 +41,9 @@ def show():
     except Exception as e:
         print(f"  キャラクター: 読み込めません（{e}）")
     print(f"  num_steps: {s['tts']['num_steps']}  seed: {s['tts']['seed']}")
+    t = s["tools"]
+    onoff = lambda v: "オン" if v else "オフ"  # noqa: E731
+    print(f"  ツール: Web検索 {onoff(t['web_search'])} / 天気 {onoff(t['weather'])} / 記憶 {onoff(t['memory'])} / スキル {onoff(t['skills'])} / 外部エージェント {onoff(t['agent']['enabled'])}")
     if llm["mode"] == "bundled":
         print(f"  LLM: 同梱 / プロファイル {llm['profile'] or '(導入時のもの)'} / temperature {llm['temperature']}")
     else:
@@ -160,6 +164,77 @@ def menu_strata_extras():
         _apply({"llm": {"vision": {"enabled": ans in ("y", "yes"), "store_images": store}}})
 
 
+def yesno(prompt: str, cur: bool) -> bool | None:
+    """y / n / 空（変更しない）"""
+    ans = input(f"{prompt}（いまは{'オン' if cur else 'オフ'}）y=オン / n=オフ / 空=変更しない: ").strip().lower()
+    if ans in ("y", "yes"):
+        return True
+    if ans in ("n", "no"):
+        return False
+    return None
+
+
+def menu_tools():
+    s = ss.load_settings(ROOT)
+    t = s["tools"]
+    print("\nツールの変更は、アプリの再起動（start.bat の再実行）で反映されます。")
+    patch = {}
+    print("\nWeb 検索（web_search / web_fetch）: 検索語は外部（DuckDuckGo）に送られます。API キーは不要です。")
+    for key, label in (("web_search", "Web 検索"), ("weather", "天気（Open-Meteo に地名を送ります）"), ("memory", "記憶（この PC の中だけ）"), ("skills", "スキル")):
+        v = yesno(label, t[key])
+        if v is not None:
+            patch[key] = v
+    # MCP
+    print("\nMCP サーバー（config/mcp.json。JSON の編集は設定画面の「ツール」タブで行ってください）")
+    print("  ・MCP のツールは、この PC で動くプログラムです。ファイル操作やコマンド実行ができるものもあり、音声の聞き間違いがそのまま実行される可能性があります。信頼できるものだけを有効にしてください。")
+    print("  ・ツールが多いと、小さい LLM では呼び出しが不安定になります（目安: low は合計 8 個、mid は 15 個、大きいモデルでも 30 個まで）。")
+    try:
+        servers = ts.load_mcp(ROOT)["mcpServers"]
+    except ValueError as e:
+        servers = {}
+        print("  config/mcp.json を読めません:", e)
+    if not servers:
+        print("  （サーバーはありません）")
+    changed = False
+    for name, c in servers.items():
+        print(f"  - {name}: {'有効' if c['enabled'] else '無効'}  {'stdio ' + c['command'] if c.get('command') else 'HTTP ' + c['url']}"
+              + (f"  使うツール: {', '.join(c['allowed_tools'])}" if c.get("allowed_tools") is not None else ""))
+        v = yesno(f"    「{name}」を有効にする？", c["enabled"])
+        if v is not None and v != c["enabled"]:
+            c["enabled"] = v
+            changed = True
+    if changed:
+        ts.save_mcp({"mcpServers": servers}, ROOT)
+        print("  config/mcp.json を保存しました。")
+    # 外部エージェント
+    ag = t["agent"]
+    print("\n外部エージェント（時間のかかる作業だけを別のエージェントに頼む。既定はオフ）")
+    print("  ・Hermes の API は、ターミナルの実行を含む全ツールへのアクセスを与えます。127.0.0.1 で使い、API キーを必ず設定してください。Hermes 側の承認設定は緩めないでください。")
+    print("  ・Hermes 本体のインストールはこのアプリの対象外です（https://hermes-agent.nousresearch.com/docs/ ）。")
+    v = yesno("外部エージェントを使う", ag["enabled"])
+    agp = {}
+    if v is not None:
+        agp["enabled"] = v
+    if v or (v is None and ag["enabled"]):
+        kind = pick("種類", list(ss.AGENT_KINDS.items()))
+        if kind:
+            agp["kind"] = kind
+        agp["base_url"] = ask("base_url（/v1 まで）", ag["base_url"])
+        key = ask("API キー（空なら変更なし。入力は画面に表示されます）", "")
+        if key:
+            agp["api_key"] = key
+        agp["timeout"] = int(ask("タイムアウト（秒）", str(ag["timeout"])) or 600)
+        if not ss.is_local_url(agp["base_url"]):
+            print("※ 127.0.0.1 以外の宛先です。通信が暗号化されない相手に会話の内容を送ることになります。")
+        if not (key or ag.get("api_key")):
+            print("※ API キーが未設定です。キーなしで使うのはおすすめしません。")
+    if agp:
+        patch["agent"] = agp
+    if patch:
+        _apply({"tools": patch})
+        print("※ 反映するには、start.bat を再実行（または stop.bat のあと start.bat）してください。")
+
+
 def menu_character():
     chars = [c for c in ss.list_characters(ROOT) if not c.get("error")]
     s = ss.load_settings(ROOT)
@@ -193,13 +268,15 @@ def main():
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     while True:
         show()
-        choice = pick("設定する項目", [("voice", "声"), ("llm", "LLM"), ("char", "キャラクター")])
+        choice = pick("設定する項目", [("voice", "声"), ("llm", "LLM"), ("char", "キャラクター"), ("tools", "ツール（Web検索・MCP・外部エージェント）")])
         if choice == "voice":
             menu_voice()
         elif choice == "llm":
             menu_llm()
         elif choice == "char":
             menu_character()
+        elif choice == "tools":
+            menu_tools()
         else:
             return
 

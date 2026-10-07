@@ -28,6 +28,10 @@ sys.path.insert(0, str(ROOT))
 import ctl  # noqa: E402
 import profiles  # noqa: E402
 import settings_store as ss  # noqa: E402
+import tools_store as ts  # noqa: E402
+
+# run.py が起動時に埋める: 実際に登録されたツール・MCP の接続状態（設定画面の表示用。起動中は変わらない）
+RUNTIME = {"mcp_status": {}, "mcp_config_error": "", "tools": [], "skills": []}
 
 LOOPBACK = {"127.0.0.1", "::1", "localhost"}
 EXPRESSIONS = ["neutral", "joy", "angry", "sorrow", "fun", "surprised", "eyes_closed"]
@@ -132,7 +136,7 @@ def model_warnings(size_bytes: int | None, existing_bytes: int = 0) -> list[dict
 
 def remote_size(repo: str, file: str) -> int | None:
     url = f"https://huggingface.co/{repo}/resolve/main/{file}"
-    req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "aiavatar-portable"})
+    req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "koemado"})
     try:
         with urllib.request.urlopen(req, timeout=20) as r:
             n = r.headers.get("Content-Length")
@@ -614,6 +618,155 @@ def make_router(page_path: Path) -> APIRouter:
         if not ss.valid_char_id(cid) or (state and state not in EXPRESSIONS):
             raise HTTPException(400, "不正です。")
         (ss.characters_dir(ROOT) / cid / (f"image_{state}.png" if state else "image.png")).unlink(missing_ok=True)
+        return {"ok": True}
+
+    # ---- ツール（Web 検索・MCP・スキル・外部エージェント） ----
+    def _mcp_view() -> dict:
+        try:
+            cfgs = ts.load_mcp(ROOT)["mcpServers"]
+            err = ""
+        except ValueError as e:
+            cfgs, err = {}, str(e)
+        status = RUNTIME["mcp_status"]
+        servers = []
+        for name, c in cfgs.items():
+            st = status.get(name)
+            if st is None:
+                st = {"state": "disabled" if not c.get("enabled", True) else "pending", "tools": [], "error": ""}
+            servers.append({"name": name, "kind": "stdio" if c.get("command") else "http", "enabled": c.get("enabled", True),
+                            "allowed_tools": c.get("allowed_tools"), "summary": (c.get("command") or c.get("url")), **st})
+        return {"servers": servers, "config_error": err or RUNTIME.get("mcp_config_error", ""),
+                "json": json.dumps(ts.mask_secrets({"mcpServers": cfgs}), ensure_ascii=False, indent=2)}
+
+    @r.get("/settings/api/tools")
+    async def tools_state():
+        s = ss.load_settings(ROOT)
+        return {
+            "settings": ss.masked(s)["tools"],
+            "llm_tools": ss.resolve_llm(cfg(), s, ROOT)["tools"],
+            "agent_kinds": ss.AGENT_KINDS,
+            "mcp": _mcp_view(),
+            "skills": ts.list_skills(ROOT, s["tools"]["skills_disabled"]),
+            "running": {"tools": RUNTIME["tools"], "skills": RUNTIME["skills"]},
+            "node": bool(shutil.which("node") and shutil.which("npx")),
+        }
+
+    @r.put("/settings/api/mcp")
+    async def put_mcp(request: Request):
+        """JSON 全体を保存する。伏せ字（●●●●）の値は、保存済みの値に戻す"""
+        guard_write(request)
+        body = await request.json()
+        raw = body.get("json")
+        try:
+            data = json.loads(raw) if isinstance(raw, str) else raw
+            data = ts.unmask_secrets(data, ROOT)
+            ts.save_mcp(data, ROOT)
+        except json.JSONDecodeError as e:
+            raise HTTPException(400, f"JSON として読めません: {e}")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return _mcp_view()
+
+    def _server_cfg(name: str) -> dict:
+        try:
+            return ts.load_mcp(ROOT)["mcpServers"][name]
+        except (KeyError, ValueError):
+            raise HTTPException(404, f"サーバー「{name}」が見つかりません。先に保存してください。")
+
+    @r.put("/settings/api/mcp/servers/{name}")
+    async def put_mcp_server(name: str, request: Request):
+        """サーバー 1 件の追加・更新（enabled / allowed_tools の変更にも使う）"""
+        guard_write(request)
+        body = await request.json()
+        try:
+            data = ts.load_mcp(ROOT)
+            data["mcpServers"][name] = ts.unmask_secrets({"mcpServers": {name: body}}, ROOT)["mcpServers"][name]
+            ts.save_mcp(data, ROOT)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return _mcp_view()
+
+    @r.delete("/settings/api/mcp/servers/{name}")
+    async def delete_mcp_server(name: str, request: Request):
+        guard_write(request)
+        try:
+            data = ts.load_mcp(ROOT)
+            data["mcpServers"].pop(name, None)
+            ts.save_mcp(data, ROOT)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return _mcp_view()
+
+    @r.post("/settings/api/mcp/test/{name}")
+    async def test_mcp(name: str, request: Request):
+        """保存済みの設定でサーバーに接続し、ツール一覧を返す（一時的な接続。終わったら閉じる）"""
+        guard_write(request)
+        from mcp_manager import test_server
+        c = _server_cfg(name)
+        res = await test_server(name, c, ROOT)
+        if res["ok"]:
+            allowed = c.get("allowed_tools")
+            for t in res["tools"]:
+                t["allowed"] = allowed is None or t["name"] in allowed
+        return res
+
+    @r.post("/settings/api/agent/test")
+    async def test_agent(request: Request):
+        """外部エージェントの接続テスト: /health、/v1/models の順に確かめる（キーは画面に出さない）"""
+        guard_write(request)
+        b = await request.json()
+        ag = ss.load_settings(ROOT)["tools"]["agent"]
+        base = (b.get("base_url") or ag["base_url"]).rstrip("/")
+        key = b.get("api_key") or ag.get("api_key") or ""
+        if not base.startswith(("http://", "https://")):
+            raise HTTPException(400, "base_url が不正です。")
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        steps = []
+        async with httpx.AsyncClient(timeout=10, trust_env=False) as client:
+            root_url = base[:-3] if base.endswith("/v1") else base
+            for name, url, hdr in (("/health", root_url + "/health", {}), ("/v1/models", base + "/models", headers)):
+                try:
+                    resp = await client.get(url, headers=hdr)
+                    ok = resp.status_code == 200
+                    detail = f"HTTP {resp.status_code}"
+                    if ok and name == "/v1/models":
+                        try:
+                            detail = "モデル: " + ", ".join(m.get("id", "") for m in resp.json().get("data", [])[:5])
+                        except Exception:
+                            pass
+                    if resp.status_code in (401, 403):
+                        detail += "（API キーが違う、または未設定です）"
+                    steps.append({"name": name, "ok": ok, "detail": detail})
+                except Exception as e:  # noqa: BLE001
+                    steps.append({"name": name, "ok": False, "detail": f"{type(e).__name__}（起動しているか、URL を確認してください）"})
+        return {"ok": all(x["ok"] for x in steps), "steps": steps, "local": ss.is_local_url(base), "has_key": bool(key)}
+
+    @r.get("/settings/api/skills/{name}")
+    async def get_skill(name: str):
+        try:
+            return ts.read_skill(name, ROOT)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        except FileNotFoundError:
+            raise HTTPException(404, "スキルが見つかりません。")
+
+    @r.put("/settings/api/skills/{name}")
+    async def put_skill(name: str, request: Request):
+        guard_write(request)
+        b = await request.json()
+        try:
+            ts.save_skill(name, b.get("description", ""), b.get("body", ""), ROOT)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+        return {"ok": True}
+
+    @r.delete("/settings/api/skills/{name}")
+    async def delete_skill(name: str, request: Request):
+        guard_write(request)
+        try:
+            ts.delete_skill(name, ROOT)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
         return {"ok": True}
 
     # ---- 再起動 ----

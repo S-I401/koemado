@@ -575,7 +575,7 @@ def download(url: str, dest: Path, label: str = None, headers: dict = None, prog
     part = dest.with_suffix(dest.suffix + ".part")
     label = label or dest.name
     done = part.stat().st_size if part.exists() else 0
-    hdrs = {"User-Agent": "aiavatar-portable"}
+    hdrs = {"User-Agent": "koemado"}
     hdrs.update(headers or {})
     if done:
         hdrs["Range"] = f"bytes={done}-"
