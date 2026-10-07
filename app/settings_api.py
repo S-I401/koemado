@@ -30,6 +30,7 @@ import hf_dl  # noqa: E402
 import hf_hub  # noqa: E402
 import model_picker  # noqa: E402
 import profiles  # noqa: E402
+import display_env
 import settings_store as ss  # noqa: E402
 import tools_store as ts  # noqa: E402
 
@@ -420,6 +421,7 @@ def make_router(page_path: Path) -> APIRouter:
             "strata": strata_state(s),
             "services": await services_status(c),
             "ports": c["ports"],
+            "display": dict(zip(("effective", "reason"), display_env.effective_mode(s, ROOT))),
         }
 
     @r.put("/settings/api/settings")
