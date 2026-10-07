@@ -312,9 +312,18 @@ try:
         _t2 = _t2.replace("</body>", '    <script src="console-link.js"></script>\n</body>', 1)
     if _t2 != _t:
         (_html / "index.html").write_text(_t2, encoding="utf-8")
-    _src = ROOT / "html-overrides" / "console-link.js"
-    if _src.exists():
-        (_html / "console-link.js").write_bytes(_src.read_bytes())
+    # キャラクターごとの素材（口の差分・表情）と、軽いアニメーション: ImageAvatar を拡張した KoemadoImageAvatar に差し替える
+    _t = (_html / "index.html").read_text(encoding="utf-8")
+    _t3 = _t
+    if "koemado-avatar.js" not in _t3:
+        _t3 = _t3.replace('<script src="image-avatar.js"></script>', '<script src="image-avatar.js"></script>\n    <script src="koemado-avatar.js"></script>', 1)
+    _t3 = _t3.replace("new ImageAvatar(", "new KoemadoImageAvatar(")
+    if _t3 != _t:
+        (_html / "index.html").write_text(_t3, encoding="utf-8")
+    for _name in ("console-link.js", "koemado-avatar.js"):
+        _src = ROOT / "html-overrides" / _name
+        if _src.exists():
+            (_html / _name).write_bytes(_src.read_bytes())
 except OSError:
     pass
 app.mount("/static", StaticFiles(directory="html"), name="static")

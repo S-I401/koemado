@@ -174,6 +174,59 @@ def spawn_detached(args: list[str]):
     subprocess.run(["powershell", "-NoProfile", "-Command", cmd], check=False, creationflags=0x08000000)
 
 
+# ------------------------------------------------------------------ アバターの素材（口の差分） ----
+
+def png_info(data: bytes) -> dict | None:
+    """PNG の幅・高さ・透過の有無（IHDR と tRNS だけ見る）。PNG でなければ None"""
+    import struct
+    if not data.startswith(bytes([137, 80, 78, 71, 13, 10, 26, 10])) or len(data) < 33 or data[12:16] != b"IHDR":
+        return None
+    w, h = struct.unpack(">II", data[16:24])
+    color_type = data[25]
+    alpha = color_type in (4, 6)
+    pos = 33
+    while not alpha and pos + 8 <= len(data):
+        ln, = struct.unpack(">I", data[pos:pos + 4])
+        kind = data[pos + 4:pos + 8]
+        if kind == b"tRNS":
+            alpha = True
+        if kind in (b"IDAT", b"IEND"):
+            break
+        pos += 12 + ln
+    return {"w": w, "h": h, "alpha": alpha}
+
+
+def mouth_status(cid: str) -> dict:
+    """キャラクターの口の差分の状況と、顔画像との整合（キャンバスサイズ・透過）の警告"""
+    folder = ss.characters_dir(ROOT) / cid
+    face = None
+    f = folder / "image.png"
+    if f.exists():
+        face = png_info(f.read_bytes()[:4096 + 1024 * 64])
+    shapes = {}
+    for sh in ss.MOUTH_SHAPES:
+        mf = folder / "mouth" / f"{sh}.png"
+        if mf.exists():
+            info = png_info(mf.read_bytes()[:4096 + 1024 * 64])
+            shapes[sh] = info or {"w": 0, "h": 0, "alpha": False}
+    warnings = []
+    ref = face
+    ref_name = "顔画像（image.png）"
+    if ref is None and shapes:
+        first = next(iter(shapes))
+        ref, ref_name = shapes[first], f"口の差分（{first}.png）"
+        warnings.append({"level": "info", "text": "顔画像（image.png）が無いので、口の差分どうしのサイズだけ比べます。"})
+    for sh, info in shapes.items():
+        if ref and (info["w"], info["h"]) != (ref["w"], ref["h"]):
+            warnings.append({"level": "warn", "shape": sh, "text": f"{sh}.png は {info['w']}×{info['h']} です。{ref_name} の {ref['w']}×{ref['h']} と違うので、口の位置がずれます（同じキャンバスサイズで書き出してください）。"})
+        if not info["alpha"]:
+            warnings.append({"level": "warn", "shape": sh, "text": f"{sh}.png に透過がありません。口以外の部分が顔を覆い隠します（透過 PNG にしてください）。"})
+    missing = [sh for sh in ss.MOUTH_SHAPES if sh not in shapes]
+    if shapes and missing:
+        warnings.append({"level": "info", "text": "無い口の形（" + "・".join(missing) + "）は、近い形で代用します（e・u は half、half は open）。closed が無いときは、閉じた口の画像は重ねません。"})
+    return {"shapes": shapes, "face": face, "warnings": warnings}
+
+
 # ------------------------------------------------------------------ LLM ダウンロード ----
 
 DOWNLOAD = {"status": "idle"}
@@ -940,6 +993,7 @@ def make_router(page_path: Path) -> APIRouter:
             raise HTTPException(404, "キャラクターが見つかりません。")
         folder = ss.characters_dir(ROOT) / cid
         data["images"] = sorted(f.stem for f in folder.glob("image*.png"))
+        data["mouth"] = mouth_status(cid)
         return data
 
     @r.put("/settings/api/characters/{cid}")
@@ -1146,6 +1200,80 @@ def make_router(page_path: Path) -> APIRouter:
         py = str(ROOT / "app" / ".venv" / "Scripts" / "python.exe")
         spawn_detached([py, str(ROOT / "ctl.py"), "restart", target])
         return {"ok": True, "message": "再起動しています。完了まで数十秒〜数分かかります。"}
+
+    # ---- 会話画面用（アバターの素材と動き） ----
+    def _active_cid() -> str | None:
+        try:
+            return ss.active_character(ss.load_settings(ROOT), ROOT)["id"]
+        except Exception:
+            return None
+
+    @r.get("/settings/api/avatar")
+    async def avatar_info():
+        """会話画面が、口の差分・表情画像・動きの量を知るため（有効なキャラクターのもの）"""
+        s = ss.load_settings(ROOT)
+        cid = _active_cid()
+        folder = ss.characters_dir(ROOT) / cid if cid else None
+        mouth = [sh for sh in ss.MOUTH_SHAPES if folder and (folder / "mouth" / f"{sh}.png").exists()]
+        has_image = bool(folder and (folder / "image.png").exists())
+        expr = [e for e in ss.EXPRESSION_NAMES if folder and (folder / f"image_{e}.png").exists()]
+        return JSONResponse({"motion": s["avatar"]["motion"], "mouth": mouth, "has_image": has_image, "expressions": expr,
+                             "eyes_closed": "eyes_closed" in expr, "character": cid}, headers={"Cache-Control": "no-store"})
+
+    @r.get("/character-mouth/{shape}")
+    async def character_mouth(shape: str):
+        cid = _active_cid()
+        if shape not in ss.MOUTH_SHAPES or not cid:
+            raise HTTPException(404)
+        f = ss.characters_dir(ROOT) / cid / "mouth" / f"{shape}.png"
+        if not f.exists():
+            raise HTTPException(404)
+        return FileResponse(f, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+    @r.get("/settings/api/characters/{cid}/asset")
+    async def character_asset(cid: str, kind: str = "face", name: str = ""):
+        """設定画面のプレビュー用: キャラクターを問わず、顔画像（name = 空 / 表情名）と口の差分（name = 口の形）を返す"""
+        if not ss.valid_char_id(cid):
+            raise HTTPException(400, "ID が不正です。")
+        folder = ss.characters_dir(ROOT) / cid
+        if kind == "mouth" and name in ss.MOUTH_SHAPES:
+            f = folder / "mouth" / f"{name}.png"
+        elif kind == "face" and (name == "" or name in ss.EXPRESSION_NAMES):
+            f = folder / (f"image_{name}.png" if name else "image.png")
+        else:
+            raise HTTPException(400, "指定が不正です。")
+        if not f.exists():
+            raise HTTPException(404)
+        return FileResponse(f, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+    @r.post("/settings/api/characters/{cid}/mouth")
+    async def upload_mouth(cid: str, request: Request, file: UploadFile = File(...), shape: str = Form(...)):
+        guard_write(request)
+        if not ss.valid_char_id(cid) or not (ss.characters_dir(ROOT) / cid).exists():
+            raise HTTPException(404, "キャラクターが見つかりません。")
+        if shape not in ss.MOUTH_SHAPES:
+            raise HTTPException(400, "口の形は " + " / ".join(ss.MOUTH_SHAPES) + " のどれかです。")
+        data = await file.read()
+        if len(data) > MAX_IMAGE:
+            raise HTTPException(400, "画像が大きすぎます（10MB まで）。")
+        info = png_info(data)
+        if info is None:
+            raise HTTPException(400, "PNG 画像だけアップロードできます（口の部分だけを描いた透過 PNG）。")
+        if info["w"] > 4096 or info["h"] > 4096:
+            raise HTTPException(400, "画像が大きすぎます（4096px まで）。")
+        d = ss.characters_dir(ROOT) / cid / "mouth"
+        d.mkdir(parents=True, exist_ok=True)
+        (d / f"{shape}.png").write_bytes(data)
+        return {"ok": True, **mouth_status(cid)}
+
+    @r.delete("/settings/api/characters/{cid}/mouth")
+    async def delete_mouth(cid: str, request: Request, shape: str = ""):
+        guard_write(request)
+        if not ss.valid_char_id(cid) or (shape != "all" and shape not in ss.MOUTH_SHAPES):
+            raise HTTPException(400, "不正です。")
+        for sh in (ss.MOUTH_SHAPES if shape == "all" else [shape]):
+            (ss.characters_dir(ROOT) / cid / "mouth" / f"{sh}.png").unlink(missing_ok=True)
+        return {"ok": True, **mouth_status(cid)}
 
     # ---- 立ち絵 ----
     @r.get("/character-image/{state}")

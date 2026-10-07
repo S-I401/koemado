@@ -212,6 +212,61 @@ For example, on a PC with 8 GB VRAM and 32 GB RAM the hardware limit is about 24
 
 Settings are stored in `config/settings.json` (voice, LLM) and `characters/` (characters). `.env` (`app/.env`) holds only low-level values such as ports and is rebuilt by `start.bat`.
 
+## Expression and lip-sync assets
+
+The avatar on the conversation screen moves according to the files in `characters/<id>/`.
+Everything is optional, and anything missing falls back to a simpler motion.
+You can also upload them from the Character tab of the settings screen (mouth shapes come with a preview, deletion and a canvas-size warning).
+
+### File names
+
+```
+characters/<id>/
+  image.png            the base face picture (standing picture)
+  image_neutral.png    per-expression face pictures (neutral / joy / angry / sorrow / fun / surprised); a missing expression stays on image.png
+  image_eyes_closed.png  a face with closed eyes; used for blinking when present
+  mouth/closed.png     mouth shapes: transparent PNGs with the same canvas size as the face picture, drawing only the mouth
+  mouth/half.png
+  mouth/open.png
+  mouth/e.png
+  mouth/u.png
+```
+
+- Recommended: square transparent PNGs of 512 to 1024 px (the conversation screen shows them inside a round frame). The limit is 10 MB and 4096 px per file.
+- **Mouth shapes must have the same canvas size as the face picture.** They are simply stacked on top of the face, so no alignment settings are needed. The settings screen warns you if the sizes differ.
+- The five shapes are `closed` (closed mouth), `half` (half open), `open` (a, o), `e` (i, e; wide), and `u` (u; pursed). You do not need all of them. A missing shape is replaced by a close one (`e` and `u` use `half`, `half` uses `open`). If there is no `closed`, nothing is drawn for a closed mouth.
+- Expressions switch with tags such as `[face:joy]` at the start of a reply. Blinking happens only when `eyes_closed` exists.
+
+### How it moves
+
+| Assets | Motion on the conversation screen |
+|---|---|
+| With mouth shapes | The mouth image switches in time with the audio (an MFCC lip-sync that estimates vowels; when it cannot, the volume picks closed / half / open). Expression changes and blinking work too |
+| A single image, or expressions only (no mouth shapes) | A light animation that follows the volume: a small bob and slight scaling while speaking, and a slow breathing motion while idle. When the expression changes, the picture fades briefly |
+| No image (silhouette) | The same light animation as for a single image |
+
+- The amount of motion can be set in "Avatar motion" on the settings screen: none / subtle (default) / large.
+- When the browser's "reduce motion" setting (prefers-reduced-motion) is on, the motion stops (mouth images keep switching).
+
+### How to make mouth shapes
+
+1. Starting from the face picture (`image.png`), prepare five versions in which only the mouth is redrawn.
+2. Export each with the **same canvas size as the face picture and everything except the mouth transparent** (in a paint program, hide the face layer and export only the mouth layer).
+3. Put them in `mouth/` as `closed.png`, `half.png`, `open.png`, `e.png` and `u.png`, or upload them in the settings screen.
+
+Tips for making them with image generation (inpainting):
+
+- Use the face picture as the source and mask only the area around the mouth. Nothing outside the mask changes, so position and art style stay consistent.
+- Use the same seed and the same prompt for all five shapes, changing only the mouth description, to keep the outlines close.
+- Cut out only the generated mouth (using the difference from the source, or by hand), place it on a transparent background and export.
+
+### Please note
+
+- Characters must be **adults only**. Use assets of adult characters.
+- If you use pictures drawn by someone else, check the creator's terms of use (secondary use, modification, streaming).
+- The bundled sample character, Mio, has no picture yet (the silhouette is animated lightly).
+- For testing there is a script, `tools/make_test_avatar.py`, that makes a plain geometric face and mouth shapes (not a sample artwork).
+
 ## Troubleshooting
 
 | Symptom | What to do |

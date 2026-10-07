@@ -93,6 +93,8 @@ DEFAULT_SETTINGS = {
     # Hugging Face のトークン（任意。config/settings.json にだけ保存。画面・ログ・報告には出さない）
     "hf": {"token": ""},
     "character": "mio",
+    # 会話画面のアバターの動き。none / subtle（控えめ。既定）/ large（大きめ）。画像 1 枚・シルエットのキャラ向けの軽いアニメーション
+    "avatar": {"motion": "subtle"},
     "weather_location": "東京",
     # ツール。変更は「保存して再起動」で反映する（ツールの定義は起動時に固定し、LLM の会話キャッシュを守る）
     "tools": {
@@ -106,6 +108,10 @@ DEFAULT_SETTINGS = {
         "agent": {"enabled": False, "kind": "hermes", "base_url": "http://127.0.0.1:8642/v1", "api_key": "", "timeout": 600},
     },
 }
+
+MOTION_LEVELS = {"none": "なし", "subtle": "控えめ", "large": "大きめ"}
+MOUTH_SHAPES = ["closed", "half", "open", "e", "u"]
+EXPRESSION_NAMES = ["neutral", "joy", "angry", "sorrow", "fun", "surprised", "eyes_closed"]
 
 AGENT_KINDS = {"hermes": "Hermes Agent", "openclaw": "OpenClaw"}
 
@@ -208,6 +214,8 @@ def validate_settings(s: dict):
     c["moe_layers"] = int(c.get("moe_layers") or 0)
     if not isinstance(c.get("files"), list) or not all(isinstance(f, str) and hf_hub.GGUF_FILE_RE.match(f) and ".." not in f for f in c["files"]):
         raise ValueError("ファイル名が不正です。")
+    if s["avatar"].get("motion") not in MOTION_LEVELS:
+        raise ValueError("アバターの動きは none / subtle / large のどれかです。")
     tl = s["tools"]
     for k in ("web_search", "weather", "memory", "mcp", "skills"):
         tl[k] = bool(tl.get(k))

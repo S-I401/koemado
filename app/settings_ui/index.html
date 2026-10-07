@@ -304,6 +304,34 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
   <h2>キャラクター画像（立ち絵）</h2>
   <p class="note">PNG（透過がおすすめ）。会話画面に表示されます。<code>image_joy.png</code> のような表情別の画像があれば、表情に応じて切り替わり、無い表情は基本の 1 枚のままです。画像が無いときはシルエットが出ます。</p>
   <div class="imgs" id="imgBox"></div>
+
+  <h2>表情とリップシンクの素材（口の差分）</h2>
+  <p class="note">会話画面のアバターを動かすための素材です。どれも任意で、無いものは代わりの動きになります。
+    <strong>口の差分</strong>は、顔画像（image.png）と<strong>同じキャンバスサイズ</strong>で、口の部分だけを描いた透過 PNG です（重ねて表示するので位置合わせは要りません）。
+    音声に合わせて closed / half / open / e / u を切り替えます。口の差分が無いキャラクター（画像 1 枚・シルエット）は、音量に合わせた軽い揺れだけになります。
+    <code>eyes_closed</code> の画像があれば、まばたきに使います。作り方は <a href="https://github.com/S-I401/koemado#表情とリップシンクの素材" target="_blank" rel="noopener noreferrer">README の「表情とリップシンクの素材」</a>を見てください。
+    <strong>成人キャラクターのみ</strong>です。他の人の絵を使うときは、作者の利用条件を確認してください。</p>
+  <div id="mouthMsg"></div>
+  <div class="row" style="align-items:flex-start">
+    <div style="flex:0 0 270px">
+      <div class="note">プレビュー（顔画像に口の差分を重ねます）</div>
+      <div id="mouthStage" style="position:relative;width:256px;height:256px;border:1px solid var(--line);border-radius:8px;background:repeating-conic-gradient(var(--chip) 0% 25%, var(--bg) 0% 50%) 0 0/20px 20px;overflow:hidden">
+        <img id="mvFace" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain" hidden>
+        <img id="mvMouth" alt="" style="position:absolute;inset:0;width:100%;height:100%;object-fit:contain" hidden>
+      </div>
+      <div id="mouthShapeBtns" style="margin-top:6px"></div>
+      <div id="mvInfo" class="note"></div>
+    </div>
+    <div style="flex:1 1 380px" id="mouthSlots"></div>
+  </div>
+  <p><button class="btn danger" id="mouthClear" type="button" style="font-size:12px">口の差分をすべて消す</button></p>
+
+  <h2>アバターの動き</h2>
+  <div class="row" style="align-items:end">
+    <div><label>動きの量（画像が 1 枚・シルエットのキャラクターの、音量に合わせた軽い揺れと、待機中の呼吸）</label>
+      <select id="avMotion"><option value="none">なし</option><option value="subtle">控えめ（既定）</option><option value="large">大きめ</option></select></div>
+  </div>
+  <div class="note">ブラウザの「視覚効果を減らす」設定がオンのときは、この設定にかかわらず動きません。会話画面を再読み込みすると反映されます。</div>
 </section>
 
 <!-- ============================== ツール ============================== -->
@@ -430,7 +458,7 @@ document.querySelectorAll("#tabs button").forEach((b) => b.onclick = () => {
 
 async function refresh(keepForms = false) {
   S = await api("/state");
-  renderChips(); renderVoices(); renderSys();
+  renderChips(); renderVoices(); renderSys(); $("avMotion").value = (S.settings.avatar || {}).motion || "subtle";
   if (!keepForms) { renderLlm(); renderChars(); }
 }
 
@@ -882,6 +910,50 @@ async function revertModel() {
   msg($("bTest"), "ok", "元のモデルに戻しました。");
 }
 
+/* ---------------- 口の差分 ---------------- */
+const MOUTHS = ["closed", "half", "open", "e", "u"];
+const MOUTH_HINT = { closed: "閉じた口", half: "半開き", open: "開いた口（あ・お）", e: "横に開く（い・え）", u: "すぼめた口（う）" };
+let mouthDemo = null;
+function renderMouth(cid, m) {
+  const t = Date.now();
+  const have = m.shapes || {};
+  const faceUrl = (m.face) ? `/settings/api/characters/${cid}/asset?kind=face&name=&t=${t}` : "";
+  $("mvFace").hidden = !faceUrl; if (faceUrl) $("mvFace").src = faceUrl;
+  $("mvMouth").hidden = true; $("mvMouth").removeAttribute("src");
+  $("mvInfo").textContent = m.face ? `顔画像 ${m.face.w}×${m.face.h}` : "顔画像（image.png）がありません。";
+  $("mouthSlots").innerHTML = MOUTHS.map((sh) => {
+    const h = have[sh];
+    return `<div class="card" style="padding:6px 10px;display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <div style="width:56px;height:56px;border:1px solid var(--line);border-radius:6px;background:repeating-conic-gradient(var(--chip) 0% 25%, var(--bg) 0% 50%) 0 0/12px 12px;display:grid;place-items:center">
+        ${h ? `<img src="/settings/api/characters/${cid}/asset?kind=mouth&name=${sh}&t=${t}" alt="" style="max-width:100%;max-height:100%">` : '<span class="note">なし</span>'}</div>
+      <div style="flex:1 1 150px"><strong>${sh}</strong><div class="note">${esc(MOUTH_HINT[sh])}${h ? `<br>${h.w}×${h.h}${h.alpha ? "" : "（透過なし）"}` : ""}</div></div>
+      <input type="file" accept="image/png" data-mup="${sh}" style="width:170px;font-size:11px">
+      ${h ? `<button class="btn danger" data-mrm="${sh}" type="button" style="font-size:12px">消す</button>` : ""}</div>`;
+  }).join("");
+  $("mouthShapeBtns").innerHTML = '<button class="btn" data-mv="" type="button" style="font-size:12px">口なし</button> ' + MOUTHS.filter((s) => have[s]).map((s) => `<button class="btn" data-mv="${s}" type="button" style="font-size:12px">${s}</button>`).join(" ")
+    + (Object.keys(have).length ? ' <button class="btn primary" id="mvDemo" type="button" style="font-size:12px">▶ 口パクを試す</button>' : "");
+  const show = (s) => { if (!s) { $("mvMouth").hidden = true; return; } $("mvMouth").src = `/settings/api/characters/${cid}/asset?kind=mouth&name=${s}&t=${t}`; $("mvMouth").hidden = false; };
+  document.querySelectorAll("[data-mv]").forEach((b) => b.onclick = () => { clearInterval(mouthDemo); show(b.dataset.mv); });
+  if ($("mvDemo")) $("mvDemo").onclick = () => {
+    clearInterval(mouthDemo); const seq = ["closed", "half", "open", "half", "e", "half", "u", "half", "open", "closed"].filter((s) => have[s]); let i = 0;
+    mouthDemo = setInterval(() => { show(seq[i++ % seq.length]); if (i > seq.length * 3) { clearInterval(mouthDemo); show(""); } }, 180);
+  };
+  $("mouthMsg").innerHTML = "";
+  const ws = (m.warnings || []);
+  if (ws.length) $("mouthMsg").innerHTML = ws.map((w) => `<div class="msg ${w.level === "warn" ? "warn" : "info"}">${esc(w.text)}</div>`).join("");
+  else if (!Object.keys(have).length) $("mouthMsg").innerHTML = '<div class="msg info">口の差分は未設定です。会話画面では、音量に合わせた軽い揺れだけで動きます。</div>';
+  document.querySelectorAll("[data-mup]").forEach((i) => i.onchange = async () => {
+    const f = i.files[0]; if (!f) return;
+    const fd = new FormData(); fd.append("file", f); fd.append("shape", i.dataset.mup);
+    try { const r = await api(`/characters/${cid}/mouth`, "POST", fd, true); renderMouth(cid, r); toast("口の差分を保存しました。会話画面を再読み込みすると反映されます。"); } catch (e) { alert(e.message); }
+  });
+  document.querySelectorAll("[data-mrm]").forEach((b) => b.onclick = async () => { const r = await api(`/characters/${cid}/mouth?shape=${b.dataset.mrm}`, "DELETE"); renderMouth(cid, r); });
+  $("mouthClear").onclick = async () => { if (!confirm("口の差分をすべて消します。よろしいですか？")) return; const r = await api(`/characters/${cid}/mouth?shape=all`, "DELETE"); renderMouth(cid, r); };
+}
+$("avMotion").onchange = async () => {
+  try { await api("/settings", "PUT", { avatar: { motion: $("avMotion").value } }); toast("アバターの動きを保存しました。会話画面を再読み込みすると反映されます。"); } catch (e) { alert(e.message); }
+};
+
 /* ---------------- キャラクター ---------------- */
 function renderChars() {
   $("charSelect").innerHTML = S.characters.map((c) => `<option value="${esc(c.id)}">${esc(c.name)}（${esc(c.id)}、${c.age ?? "?"}歳）${c.id === S.active_character ? " ★使用中" : ""}</option>`).join("");
@@ -895,7 +967,7 @@ $("charActivate").onclick = async () => {
 $("charNew").onclick = () => {
   newChar = true; msg($("charMsg"), "info", "新しいキャラクターを入力してください（成人のみ）。");
   for (const id of ["cId", "cName", "cAge", "cFirst", "cSecond", "cStyle", "cPersonality", "cLikes", "cDislikes", "cBackground", "cRelationship", "cExamples"]) $(id).value = "";
-  $("cId").disabled = false; fillVoiceSelect(""); $("imgBox").innerHTML = '<div class="note">画像は、保存したあとにアップロードできます。</div>';
+  $("cId").disabled = false; fillVoiceSelect(""); $("imgBox").innerHTML = '<div class="note">画像と口の差分は、保存したあとにアップロードできます。</div>'; $("mouthSlots").innerHTML = ""; $("mouthShapeBtns").innerHTML = ""; $("mouthMsg").innerHTML = "";
 };
 function fillVoiceSelect(v) {
   $("cVoice").innerHTML = '<option value="">（設定画面の既定の声）</option>' + S.voices.map((x) => `<option value="${esc(x.id)}">${esc(x.id)}</option>`).join("");
@@ -911,13 +983,14 @@ async function loadChar(cid) {
   $("cBackground").value = c.background || ""; $("cRelationship").value = c.relationship || ""; $("cExamples").value = (c.examples || []).join("\n");
   fillVoiceSelect(c.voice);
   renderImages(c.id, c.images || []);
+  renderMouth(c.id, c.mouth || { shapes: {}, face: null, warnings: [] });
 }
 function renderImages(cid, have) {
   const slots = [["", "基本の画像（image.png）"], ...["neutral", "joy", "angry", "sorrow", "fun", "surprised", "eyes_closed"].map((s) => [s, s])];
   const t = Date.now();
   $("imgBox").innerHTML = slots.map(([state, label]) => {
     const name = state ? "image_" + state : "image"; const exists = have.includes(name);
-    const preview = state === "" || exists ? `<img class="preview" src="/character-image/${state || "neutral"}?t=${t}" alt="">` : '<div class="preview note" style="display:grid;place-items:center">未設定</div>';
+    const preview = state === "" || exists ? `<img class="preview" src="/settings/api/characters/${cid}/asset?kind=face&name=${state}&t=${t}" alt="">` : '<div class="preview note" style="display:grid;place-items:center">未設定</div>';
     return `<div><div class="note">${esc(label)}</div>${preview}<br>
       <input type="file" accept="image/png" data-up="${state}" style="width:160px;font-size:11px">
       ${exists ? `<button class="btn danger" data-rm="${state}" style="font-size:12px">消す</button>` : ""}</div>`;
