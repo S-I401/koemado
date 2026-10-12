@@ -186,7 +186,7 @@ The GGUF files were converted by speech.cpp's author (sakasegawa); the repositor
 ### Comparison
 
 We measured it in this repository.
-12 Japanese sentences were synthesized with Irodori (short conversational sentences with Sendai, Mio, Hugging Face, Python and numbers; voices `mio_bright` / `mio_a` / `mio_b` / `mio_c` / `mio_d`), converted to 16 kHz mono, and recognized by each setup (`tools/stt_bench.py`).
+12 Japanese sentences were synthesized with Irodori (short conversational sentences with Sendai, Mio, Hugging Face, Python and numbers; voices `mio_bright` and `mio_a` to `mio_d`, which were bundled at the time; only `mio_bright` is bundled now), converted to 16 kHz mono, and recognized by each setup (`tools/stt_bench.py`).
 The PC is a Ryzen 7 7800X3D (8 threads) with an RTX 4090 (Vulkan).
 
 | Setup | CER | CER\* | Reading CER | Exact | Time per utterance (mean, about 4.5 s of speech) |
@@ -799,7 +799,7 @@ Irodori-TTS (MIT license) has the following usage restrictions in addition to th
 3. A voice made from a caption alone (without a reference voice) may happen to resemble a real person. This is a probabilistic effect and there is no intent to reproduce any specific person.
 4. The developers take no responsibility for misuse. Using the output in compliance with the laws of your region is the user's responsibility.
 
-The bundled voices (`voices/mio_bright` and `mio_a` to `mio_d`) were made with Voice Design using text captions and fixed seeds, and are not the voice of any real person (captions, seeds and stability are in `voices/voices_meta.json`). The sample character Mio uses `mio_bright` (a high, light and bright voice) by default. The default Python Irodori embeds a watermark (SilentCipher) in the audio it generates. **speech.cpp's Irodori-TTS (the option) does not support the watermark, so none is embedded.** Follow the restrictions whether or not there is a watermark.
+The bundled voice (`voices/mio_bright`) was made with Voice Design using a text caption and a fixed seed, and is not the voice of any real person (captions, seeds and stability are in `voices/voices_meta.json`). The sample character Mio uses `mio_bright` (a high, light and bright voice) by default. The voices `mio_a` to `mio_d` of earlier versions were removed. On a PC that already has them, rerunning setup does not delete them, so they keep working. When the voice that the settings or a character points to has no file, koemado speaks with `mio_bright`. The default Python Irodori embeds a watermark (SilentCipher) in the audio it generates. **speech.cpp's Irodori-TTS (the option) does not support the watermark, so none is embedded.** Follow the restrictions whether or not there is a watermark.
 
 ## Licenses of the software this depends on
 

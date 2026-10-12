@@ -224,7 +224,7 @@ CER は speech.cpp が公表している Common Voice 8.0 日本語 test（4,483
 ### 比べてみた結果
 
 このリポジトリで、実際に比べました。\
-Irodori で合成した日本語 12 文（会話らしい短い文に、仙台・ミオ・Hugging Face・Python・数字を含む。声は `mio_bright` / `mio_a` / `mio_b` / `mio_c` / `mio_d`）を、16kHz・モノラルにして、各構成で認識しています（`tools/stt_bench.py`）。\
+Irodori で合成した日本語 12 文（会話らしい短い文に、仙台・ミオ・Hugging Face・Python・数字を含む。声は `mio_bright` と、当時同梱していた `mio_a`〜`mio_d`。いまは `mio_bright` のみ同梱）を、16kHz・モノラルにして、各構成で認識しています（`tools/stt_bench.py`）。\
 PC は Ryzen 7 7800X3D（8 スレッド）+ RTX 4090（Vulkan）です。
 
 | 構成 | CER | CER\* | 読み CER | 完全一致 | 1 発話あたり（平均、約 4.5 秒の発話） |
@@ -958,8 +958,11 @@ Irodori-TTS（MIT ライセンス）には、ライセンスに加えて次の�
 4. 開発者は誤用について責任を負わない。\
    生成物の利用が、お住まいの地域の法令に従うことは利用者の責任。
 
-同梱の声（`voices/mio_bright` と `mio_a`〜`mio_d`）は、キャプションと固定 seed の Voice Design で作ったもので、実在の人物の声ではありません（キャプション・seed・安定度は `voices/voices_meta.json`）。\
+同梱の声（`voices/mio_bright`）は、キャプションと固定 seed の Voice Design で作ったもので、実在の人物の声ではありません（キャプション・seed・安定度は `voices/voices_meta.json`）。\
 サンプルキャラ「ミオ」の既定の声は `mio_bright`（高めで軽やかな、明るく可愛らしい声）です。\
+以前の版で同梱していた `mio_a`〜`mio_d` は削除しました。\
+導入済みの PC では、setup を再実行しても古い声のファイルは消えないので、そのまま使えます。\
+設定やキャラクターが指している声のファイルが見つからないときは、`mio_bright` で話します。\
 既定の Python 版の Irodori は、生成した音声に透かし（SilentCipher）を入れます。\
 **speech.cpp の Irodori-TTS（選択肢）は、透かしに対応していないので、入りません。**\
 制限は、透かしの有無にかかわらず守ってください。

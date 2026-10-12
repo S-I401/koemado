@@ -680,8 +680,25 @@ def active_character(settings: dict, root: Path = ROOT) -> dict:
         return load_character(ok[0]["id"], root)
 
 
-def effective_voice(settings: dict, char: dict | None) -> str:
-    return (char or {}).get("voice") or settings["tts"]["voice"]
+FALLBACK_VOICE = "mio_bright"
+
+
+def _voice_exists(voice: str, root: Path = ROOT) -> bool:
+    d = voices_dir(root)
+    if not d.exists():
+        return True  # 声のフォルダが無い（TTS 未導入など）ときは判定しない
+    if any((d / f"{voice}{ext}").exists() for ext in AUDIO_EXTS):
+        return True
+    try:  # voices.json で複数クリップをまとめた声
+        return voice in json.loads((d / "voices.json").read_text(encoding="utf-8"))
+    except Exception:
+        return False
+
+
+def effective_voice(settings: dict, char: dict | None, root: Path = ROOT) -> str:
+    """使う声。キャラ、設定の順に選ぶ。声のファイルが無い（削除された旧版の mio_a など）ときは mio_bright にする"""
+    voice = (char or {}).get("voice") or settings["tts"]["voice"]
+    return voice if _voice_exists(voice, root) else FALLBACK_VOICE
 
 
 def now() -> str:
