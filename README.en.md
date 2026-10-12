@@ -10,7 +10,7 @@ Nothing is sent to the cloud, unless you choose an external inference server you
 Browser / desktop character (mic) ─ AIAvatarKit ─ STT: speech.cpp (Vulkan; GPU or CPU)
                     │
                     ├─ LLM: llama.cpp llama-server (GGUF)   * can be replaced with an external inference server
-                    └─ TTS: Irodori-TTS v4.1 Small (speech.cpp, Vulkan; GGUF Q8_0; the Python version is a fallback)
+                    └─ TTS: Irodori-TTS v4.1 Small (Python version, int8, CUDA; the speech.cpp version can be chosen)
 ```
 
 > **A rule shared by every character.**
@@ -39,9 +39,9 @@ Browser / desktop character (mic) ─ AIAvatarKit ─ STT: speech.cpp (Vulkan; G
 | OS | Windows 10 / 11 (64-bit) |
 | GPU | **An NVIDIA GPU is required** (RTX 20 series or newer, 6 GB VRAM or more). Driver **570 or newer** (needed by PyTorch CUDA 12.8) |
 | RAM | 16 GB or more (32 GB or more for the standard profile) |
-| Vulkan | `vulkan-1.dll`, installed by the GPU driver (used by speech.cpp for STT and TTS). Without it, STT uses faster-whisper (CPU) and TTS uses the Python Irodori-TTS-Server (PyTorch; about 5 GB more) (see "Speech recognition (STT)" and "Speech synthesis (TTS)") |
-| Free disk space | About 14 to 29 GB depending on the profile (see the table below; a PC without Vulkan needs about 6 GB more for the Python TTS), on the drive you install to |
-| Network | Setup downloads from GitHub / Hugging Face / PyPI (about 8 to 24 GB in total) |
+| Vulkan | `vulkan-1.dll`, installed by the GPU driver (used by speech.cpp for STT, and for TTS when you choose the speech.cpp version). Without it, STT uses faster-whisper (CPU) (the default Python TTS does not use Vulkan) |
+| Free disk space | About 20 to 36 GB depending on the profile (see the table below; choosing the speech.cpp TTS saves about 6 GB), on the drive you install to |
+| Network | Setup downloads from GitHub / Hugging Face / PyPI (about 11 to 27 GB in total) |
 
 On a PC without an NVIDIA GPU, TTS takes more than ten seconds per sentence and a conversation is not practical, so setup aborts.
 
@@ -147,12 +147,12 @@ If there is not enough free disk space, it drops one level.
 | low | 6 GB+ / 16 GB+ | Gemma 4 E4B (QAT q4_0) | 4.8 GiB | about 19 GB |
 
 - **mid** keeps most of the MoE experts' weights on the CPU side so that VRAM holds about 3.6 GB for the LLM plus about 2.7 GB (peak) for TTS (on an 8 GB GPU, leaving room for the Windows desktop).
-- Disk breakdown: llama.cpp about 1.2 GB, the TTS runtime (PyTorch CUDA) about 5.2 GB, the TTS model (Irodori GGUF) about 1.2 GB, STT (speech.cpp about 0.1 GB plus parakeet about 0.7 GB), other environments about 1 GB (on a PC without Vulkan, STT is the faster-whisper environment and model, about 0.8 GB) (the download cache is removed at the end of setup).
+- Disk breakdown: llama.cpp about 1.2 GB, the TTS runtime (PyTorch CUDA) about 5.2 GB, the TTS models (Irodori int8 and codec) about 1.4 GB, STT (speech.cpp about 0.1 GB plus parakeet about 0.7 GB), other environments about 1 GB (with the speech.cpp TTS, the runtime and models, about 6.6 GB, become a GGUF of about 1.2 GB; on a PC without Vulkan STT is faster-whisper, about 0.8 GB; the download cache is removed at the end of setup).
 - To swap a model, edit the table in `profiles.py`. If you register a Hugging Face token, you can also pick any GGUF from a list in the settings screen, within the range of your profile (see "Model browser" below).
 
 ### Pinned versions
 
-llama.cpp `b11443` (CUDA 12 build) / Irodori-TTS v4.1 Small GGUF Q8_0 (`sakasegawa/Irodori-TTS-v4.1-Small-GGUF` `a8d7c01`; the MF one is `...-MF-GGUF` `205ab07`) / Python version (fallback): Irodori-TTS-Server `61012c7` (follows `uv.lock`) and Irodori-TTS v4.1 Small int8 (`Aratako/Irodori-TTS-v4.1-Small-Quantized`) / aiavatar 0.9.1 / fastmcp 4.0.11 / ddgs 9.16.0 / speech.cpp v0.8.4 (`speech-0.8.4-windows-x64-vulkan.zip`, SHA-256 `c35e75e6...`) / parakeet-tdt_ctc-0.6B-ja Q8_0 (`sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF` `f7cb538`) / Qwen3-ASR 0.6B and 1.7B Q8_0 (`sakasegawa/Qwen3-ASR-*-GGUF`) / faster-whisper 1.2.1 (small, CPU int8; fallback for PCs without Vulkan) / pystray 0.19.5 / pillow 12.3.0 / PySide6 6.11.2 (Essentials / Addons; Qt WebEngine) / shiboken6 6.11.2. Dependency versions are pinned in `app/requirements.txt` and `stt/requirements.txt`.
+llama.cpp `b11443` (CUDA 12 build) / Irodori-TTS-Server `61012c7` (follows `uv.lock`; default) and Irodori-TTS v4.1 Small int8 (`Aratako/Irodori-TTS-v4.1-Small-Quantized`) / speech.cpp version (optional): Irodori-TTS v4.1 Small GGUF Q8_0 (`sakasegawa/Irodori-TTS-v4.1-Small-GGUF` `a8d7c01`; the MF one is `...-MF-GGUF` `205ab07`) / aiavatar 0.9.1 / fastmcp 4.0.11 / ddgs 9.16.0 / speech.cpp v0.8.4 (`speech-0.8.4-windows-x64-vulkan.zip`, SHA-256 `c35e75e6...`) / parakeet-tdt_ctc-0.6B-ja Q8_0 (`sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF` `f7cb538`) / Qwen3-ASR 0.6B and 1.7B Q8_0 (`sakasegawa/Qwen3-ASR-*-GGUF`) / faster-whisper 1.2.1 (small, CPU int8; fallback for PCs without Vulkan) / pystray 0.19.5 / pillow 12.3.0 / PySide6 6.11.2 (Essentials / Addons; Qt WebEngine) / shiboken6 6.11.2. Dependency versions are pinned in `app/requirements.txt` and `stt/requirements.txt`.
 
 ## Speech recognition (STT)
 
@@ -237,7 +237,7 @@ With the device set to "auto" the defaults are:
 | Profile | parakeet-ja | qwen3-asr-0.6b | qwen3-asr-1.7b | Reason |
 |---|---|---|---|---|
 | high | GPU | GPU | GPU | 20 GB or more of VRAM. The margin that the LLM leaves with `--fit-target` is enlarged by the STT's share |
-| mid | GPU | GPU | **CPU** | The measurements above. 1.7B does not fit in 8 GB (on CPU it takes about 1.8 s per utterance) |
+| mid | GPU | CPU | **CPU** | With the default Python TTS, 0.6B on the GPU reaches 7,057 MiB with little margin, so auto uses the CPU (only parakeet on the GPU). 1.7B does not fit in 8 GB (about 1.8 s per utterance on CPU) |
 | low | CPU | CPU | CPU | A 6 GB card is expected to be nearly full with the LLM and TTS (not measured on real hardware). parakeet takes 0.3 s on CPU |
 | External LLM | GPU | GPU | GPU | The LLM runs elsewhere, so there is VRAM to spare |
 | Strata | GPU | CPU | CPU | Only parakeet fits in the margin (about 1 GB) that Strata leaves for TTS |
@@ -279,26 +279,29 @@ If Vulkan becomes available later, `setup.bat --stt both` adds speech.cpp.
 
 ## Speech synthesis (TTS)
 
-Speech synthesis uses **Irodori-TTS v4.1 Small** (GGUF) running on `speech serve` from speech.cpp (MIT) by default.
-Like STT, it needs no Python and no PyTorch: it uses your GPU through **Vulkan**.
-The old Python version (Irodori-TTS-Server with PyTorch, int8) stays as a fallback for PCs where Vulkan is not available.
+Speech synthesis uses the **Python Irodori-TTS-Server** (Irodori-TTS v4.1 Small, int8, PyTorch CUDA) by default.
+In listening tests, **the Python version sounded most like Mio (the cutest) and kept its pitch most steadily**, so it is the default.
+As an option you can use **Irodori-TTS v4.1 Small** (GGUF) on `speech serve` from speech.cpp (MIT).
+The speech.cpp version needs no Python and no PyTorch and uses your GPU through **Vulkan**.
+It is faster (about 4 times with the same model, about 12 times with MeanFlow) and uses about 0.8 to 1 GB less VRAM.
 
-- Install: `setup.bat` installs only speech.cpp (shared with STT, in `stt\speechcpp\`) and the Irodori GGUF (by default `irodori-tts` Q8_0, about 1.2 GB).
-  **The Python environment (Irodori-TTS-Server, PyTorch, Python 3.10, about 5 GB) is not installed by default.**
+- Install: the default of `setup.bat` is the Python version (Irodori-TTS-Server, PyTorch, Python 3.10, about 5 GB).
+  **`setup.bat --tts speechcpp`** installs only speech.cpp (shared with STT, in `stt\speechcpp\`) and the Irodori GGUF (by default `irodori-tts` Q8_0, about 1.2 GB), without the Python environment.
+  **`setup.bat --tts both`** installs both so that the settings screen can switch.
   The GGUF is fetched with `hf download` at a pinned commit into `models\tts\` and its SHA-256 is verified.
-- Start: the supervisor runs `speech serve <GGUF> --host 127.0.0.1 --port <TTS port> --device <GPU> --add-voice <name>=<WAV> ...` without a console window (every WAV in `tts\voices\` is passed with `--add-voice`).
+- Starting the speech.cpp version: the supervisor runs `speech serve <GGUF> --host 127.0.0.1 --port <TTS port> --device <GPU> --add-voice <name>=<WAV> ...` without a console window (every WAV in `tts\voices\` is passed with `--add-voice`).
   It is a **separate process** from STT (see "Why TTS and STT are not one process" below).
-- Conversation: `app/run.py` sends `voice`, `steps` and `seed` to `POST /v1/audio/speech` (no `model`).
+- Conversation with the speech.cpp version: `app/run.py` sends `voice`, `steps` and `seed` to `POST /v1/audio/speech` (no `model`).
   The reply is a 48 kHz, 16-bit, mono WAV that AIAvatarKit's `create_instant_synthesizer` plays as it is (expressions and lip-sync work as before).
-- Switching voices: it takes effect **from the next utterance with no restart** (the voice is chosen per request among those passed at start).
-  When you add or remove a reference voice (upload, saving a Voice Design, delete), speech.cpp reads voices at start, so **the settings screen restarts only the TTS automatically** (about 4 to 5 seconds).
+- Switching voices: with either version it takes effect **from the next utterance with no restart**.
+  The speech.cpp version reads voices at start, so when you add or remove a reference voice (upload, saving a Voice Design, delete) **the settings screen restarts only the TTS automatically** (about 4 to 5 seconds).
   A broken WAV would stop the TTS from starting, so the WAV is checked before it is added, and the addition is rolled back if the TTS fails to start.
 
 ### Models (Irodori-TTS v4.1 Small)
 
 | Setting name | Method | File (Q8_0) | Notes |
 |---|---|---|---|
-| `irodori-tts` (default) | Rectified Flow. `num_steps` trades quality for speed | `Irodori-TTS-859M-v4.1-Q8_0.gguf` (1.20 GB) | The **same model** as the old Python version |
+| `irodori-tts` | Rectified Flow. `num_steps` trades quality for speed | `Irodori-TTS-859M-v4.1-Q8_0.gguf` (1.20 GB) | The **same model** as the old Python version |
 | `irodori-tts-mf` | MeanFlow. 4 steps is standard | `Irodori-TTS-866M-MF-v4.1-Q8_0.gguf` (1.21 GB) | Fast. A little more read-back errors |
 
 Both are [sakasegawa's GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF) ([MF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF)) of Aratako's [Irodori-TTS-v4.1-Small](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small) ([MF](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small-MF)).
@@ -314,7 +317,7 @@ Weights come in F16, Q8_0, Q6_K, Q5_K and Q4_K; this app uses Q8_0 (F16 uses abo
   Saving a candidate WAV as a reference voice works as before (saving restarts the TTS and the voice joins the list).
 - **No watermark (SilentCipher) is embedded.**
   speech.cpp's Irodori-TTS does **not support** the watermark (its docs say "Not supported: the watermark").
-  The old Python Irodori-TTS-Server embeds a watermark in the audio it generates.
+  The default Python Irodori-TTS-Server embeds a watermark in the audio it generates.
   Audio made with speech.cpp carries none, so there is nothing to tell afterwards that it was made with Irodori.
   Please follow "Ethical restrictions of Irodori-TTS" below whether or not there is a watermark.
 - The same seed gives different audio from the official implementation and from the Python version (per speech.cpp's docs).
@@ -347,9 +350,11 @@ Listening page: `I:\koemado-tmp\tts_compare\listen.html` (a path on the developm
   The Python version and `irodori-tts` (rf, 16 steps) are both 5.7%, MeanFlow is 7.5% (with 8 sentences, one sentence moves it).
 - Speed: speech.cpp is about 4 times faster than the Python version with the same model (rf, 24 steps), and MeanFlow about 12 times.
   On the first synthesis after start, it sometimes took 1 to 2 seconds once while the GPU driver compiled shaders.
-- **The provisional default is `irodori-tts` (rf), Q8_0, num_steps 24** (the same model as the Python version, to keep the voice difference smallest).
-  For speed you can switch to `irodori-tts-mf` in the settings screen.
-  Which sounds better is for you to decide by listening.
+- **The default is the Python version (int8).**
+  In the owner's listening test the Python version sounded the cutest (most like Mio).
+  The numbers agree: the Python version is closer to the reference voice and its pitch is steadier.
+  The speech.cpp version is an option for when speed and VRAM matter (the "Voice" tab, or `setup.bat --tts speechcpp`).
+  Its default model is `irodori-tts` (rf, Q8_0, num_steps 24; the same model as the Python version), and for speed you can switch to `irodori-tts-mf`.
 
 ### Why TTS and STT are not one process
 
@@ -367,36 +372,111 @@ This app still runs **TTS and STT as separate processes**.
 ### VRAM (mid, simulating 8 GB; peak with the LLM, TTS and STT all running)
 
 Peak per-process dedicated memory.
-With the Python TTS (int8) the previous figure was 5,929 MiB with STT on the CPU.
 
-| STT | LLM | TTS (speech.cpp, Q8_0) | STT | Peak of the sum | Within 7 GB (7,168 MiB) |
-|---|---|---|---|---|---|
-| CPU (parakeet) | 3,518 MiB | 1,596 MiB | 0 | 5,114 MiB | yes |
-| parakeet-ja (GPU) | 3,518 MiB | 1,600 MiB | 705 MiB | 5,823 MiB | yes |
-| qwen3-asr-0.6b (GPU) | 3,518 MiB | 1,609 MiB | 1,041 MiB | 6,169 MiB | yes |
-| qwen3-asr-1.7b (GPU) | 3,518 MiB | 1,600 MiB | 2,321 MiB | 7,439 MiB | **no (slightly over)** |
+| TTS | STT | LLM | TTS | STT | Peak of the sum | Within 7 GB (7,168 MiB) |
+|---|---|---|---|---|---|---|
+| **Python version (default)** | CPU (parakeet) | 3,518 MiB | 2,410 MiB | 0 | 5,929 MiB | yes |
+| Python version | parakeet-ja (GPU), the default | 3,518 MiB | 2,448 MiB | 705 MiB | **6,671 MiB** | yes |
+| Python version | qwen3-asr-0.6b (GPU) | 3,518 MiB | 2,498 MiB | 1,041 MiB | 7,057 MiB | yes (margin about 110 MiB) |
+| Python version | qwen3-asr-1.7b (GPU) | 3,518 MiB | 2,442 MiB | 2,321 MiB | 8,281 MiB | **no** |
+| speech.cpp version (Q8_0) | CPU (parakeet) | 3,518 MiB | 1,596 MiB | 0 | 5,114 MiB | yes |
+| speech.cpp version | parakeet-ja (GPU) | 3,518 MiB | 1,600 MiB | 705 MiB | 5,823 MiB | yes |
+| speech.cpp version | qwen3-asr-0.6b (GPU) | 3,518 MiB | 1,609 MiB | 1,041 MiB | 6,169 MiB | yes |
+| speech.cpp version | qwen3-asr-1.7b (GPU) | 3,518 MiB | 1,600 MiB | 2,321 MiB | 7,439 MiB | **no (slightly over)** |
 
-- The default combination (TTS on speech.cpp, STT parakeet-ja on GPU) is 5,823 MiB, within 7 GB.
-- With qwen3-asr-1.7b on the GPU it exceeds 7 GB, so with the device on "auto" mid keeps it on the CPU (as in the STT table).
-  You can still choose the GPU in the settings screen, with a warning.
-- The TTS now uses about 0.8 GB less VRAM, so the mid LLM could take about 2 more expert layers (about 0.8 GB); this change leaves the LLM settings alone.
+- The default combination (Python TTS, STT parakeet-ja on GPU) is 6,671 MiB, within 7 GB.
+- With the Python TTS, qwen3-asr-0.6b on the GPU is 7,057 MiB, right at 7 GB.
+  So on mid the "auto" device puts only parakeet on the GPU and qwen3-asr on the CPU (you can still choose the GPU in the settings screen, with a warning).
+- The speech.cpp version uses about 0.8 GB less VRAM, so the mid LLM could take about 2 more expert layers (about 0.8 GB); this change leaves the LLM settings alone.
 
 ### How to switch
 
-- In the "Speech synthesis engine" block at the top of the settings screen's **"Voice" tab**, choose the engine (auto / speech.cpp / Python version) and the model (`irodori-tts-mf` / `irodori-tts`), then press "Save and apply".
+- In the "Speech synthesis engine" block at the top of the settings screen's **"Voice" tab**, choose the engine (auto / Python version / speech.cpp) and, for the speech.cpp version, the model (`irodori-tts-mf` / `irodori-tts`), then press "Save and apply".
   A model that is not downloaded is fetched after you confirm its size (with progress, cancel and SHA-256 verification).
   Changing them restarts only the TTS.
-- `setup.bat --tts auto|speechcpp|python|both`: the default `auto` uses speech.cpp when Vulkan works and the Python version otherwise.
-  `both` installs both so that the settings screen can switch.
+- `setup.bat --tts auto|python|speechcpp|both`: the default `auto` is the Python version.
+  `speechcpp` installs only the speech.cpp version (when Vulkan works), and `both` installs both.
 - Settings are in `config/settings.json` under `tts` (`engine` / `model` / `mf_steps` / `num_steps` / `seed` / `voice`).
 
 ![Voice (speech.cpp)](docs/screenshots/settings_voice_speechcpp.png)
 
 ### PCs without Vulkan
 
-On a PC where `vulkan-1.dll` is missing or `speech devices` fails, `setup.bat` installs the Python Irodori-TTS-Server (PyTorch, about 5 GB) and says so (STT uses faster-whisper).
-At run time too, if speech.cpp cannot be used, the Python version runs instead and the admin log shows the reason.
+The default Python version does not use Vulkan, so it works as it is on a PC without Vulkan (STT becomes faster-whisper).
+If you chose the speech.cpp version and it cannot be used (`vulkan-1.dll` missing, `speech devices` failing, or the GGUF not downloaded), the Python version runs instead when it is installed, and the admin log shows the reason.
+On a PC without the Python version (`setup.bat --tts speechcpp`), `auto` runs the speech.cpp version.
 For testing, `KOEMADO_SIMULATE_NO_VULKAN=1` (run time) or `setup.bat --simulate "vulkan=0"` (setup time) reproduces it.
+
+## Putting emotion into the voice (Irodori emoji)
+
+Irodori v4.1 changes its speaking style and emotion when emoji are put in the input text ([EMOJI_ANNOTATIONS](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small/blob/main/EMOJI_ANNOTATIONS.md); repeating an emoji strengthens the effect).
+koemado puts the LLM's expression tag (such as `[face:joy]`) and the emoji the LLM writes inside a sentence into the **TTS input only**.
+**Emoji never appear in the conversation page's subtitles, the desktop character's speech bubble, the conversation log (SQLite) or memory** (they are removed after the TTS input is built).
+It works with both the Python and the speech.cpp TTS (we confirmed that speech.cpp's tokenizer accepts emoji).
+
+### Method A: expression tag to emoji (on by default)
+
+AIAvatarKit hands each sentence to the TTS with its tags (`styled_text`).
+`make_tts_request` in `app/run.py` turns the tag into an emoji with a table and puts it at the start of the TTS input.
+
+| Expression | Emoji (initial) |
+|---|---|
+| joy | 😊 |
+| fun | 😆 |
+| angry | 😠 |
+| sorrow | 🥺 (candidates `🥺 😭`; both with strength "strong") |
+| surprised | 😲 |
+| neutral | none |
+
+- The table can be edited in the settings screen ("Voice", then "Put emotion into the voice"; `voice_emotion.face_emoji.map` in `config/settings.json`).
+  A value is a list of emoji, so one expression can have several candidates.
+  Strength "weak" uses the first one, "strong" the first two (a single candidate is repeated).
+- Only sentences that carry a `[face:...]` tag get one.
+
+### Method B: the LLM writes speaking-style emoji inside sentences (on by default)
+
+When on, the system prompt gets a "speaking-style emoji" section (the allowed emoji with short meanings).
+The "no emoji" line of `characters/_common.md` now allows only that list (the "rules to keep" section of the shared rules is unchanged).
+
+- Allowed emoji (speaking style, emotion and pauses only): 🤭 😏 🥺 🫶 😭 😪 ⏸️ 😰 😆 😠 😲 😟 🫣 🙄 😊 😎 👌 🙏 😌 🤔 😮‍💨
+- Disallowed emoji: 🥵 👅 💋 🌬️ 🥤 😴 📢 📞 🤐 👃 🥴 🎵 📖 👂 😱 💥 ⏩ 🐢 🤧 😒 🥱 😖 😮 💪
+  Even if the LLM writes them, **they are removed before the TTS** (every emoji not in the allowed list is removed).
+- A sentence in which the LLM wrote an (allowed) emoji gets no method A emoji.
+- An emoji-only sentence (such as "😊") is put at the start of the next sentence instead of being sent alone (dropped if it is the last one).
+
+### Settings
+
+- Settings screen, "Voice", then "Put emotion into the voice": method A on/off, strength (weak / strong), the table, and method B on/off.
+  Changes apply from the next utterance (the method B prompt from the next conversation).
+- Per-character override (optional): write `voice_emotion: {face: false, inline: true}` in `characters/<id>/character.yaml` (`face` is method A, `inline` is method B).
+
+### How much it changes (Python version, `mio_bright`, 24 steps)
+
+The same 6 sentences (one each of joy, fun, angry, sorrow, surprised and neutral) were synthesized as "no emotion", "method A", "method A, strong (2 emoji)" and "method A + B" (`tools/emotion_bench.py`; the mean of seeds 1 to 5).
+Listening page: `I:\koemado-tmp\emotion_compare\listen.html` (a path on the development PC; not in the repository).
+**Whether it sounds better is for you to decide by listening.**
+
+| Method | F0 median | F0 variation (std, semitones) | Speech rate (chars/s) | Loudness variation (dB) | Read-back CER |
+|---|---|---|---|---|---|
+| No emotion | 332 Hz | 2.75 | 5.12 | 10.01 | 4.4% |
+| Method A | 329 Hz | 2.69 | 5.03 | 9.92 | 4.8% |
+| Method A, strong | 330 Hz | 2.79 | 4.78 | 10.06 | 4.5% |
+| Method A + B | 329 Hz | 2.81 | 4.70 | 9.97 | 4.8% |
+
+- **The change visible in numbers is small.**
+  F0 level and variation and loudness variation barely move (within the seed-to-seed spread).
+  What changes is mainly the **speech rate**: with emoji it is a little slower (about 7 to 8% for "strong" and "A + B").
+  Changes in the tone of voice (cheerful, trembling, sighing) hardly show in these numbers, so please check by listening.
+- Misreadings (read-back CER) did not increase with emoji (4.4 to 4.8%; with 6 sentences one sentence moves it).
+- With speech.cpp (`irodori-tts`, Q8_0) the trend was the same (speech rate 5.33 to 4.88 chars/s).
+
+### End-to-end check (e2e)
+
+With `tools/e2e_emotion.py` (when started with `KOEMADO_LOG_TTS_INPUT=1`) we confirmed:
+- For a reply with an expression tag (`[face:joy]`), the TTS input is a sentence with the emoji at the start, such as `😊わあ、本当ですか！`.
+- The WS messages (subtitles and bubble) and the conversation log (`performance_records`) contain no emoji.
+- Emoji the LLM wrote inside a sentence (😊 🫶 🤔 and so on) reach the TTS and do not appear on screen. Such sentences get no method A emoji.
+- Even when the LLM is made to say a sentence with disallowed emoji (🥵 😱 ⏩ 💋 👅 and so on), they are removed from the TTS input.
 
 ## Starting and the admin console
 
@@ -651,7 +731,7 @@ Tips for making them with image generation (inpainting):
 | Symptom | What to do |
 |---|---|
 | Stops with "the driver is too old" | Update to the latest NVIDIA driver (570 or newer). The script does not update drivers |
-| Installation takes a long time | The first run downloads 8 to 24 GB in total (a PC without Vulkan also unpacks PyTorch (CUDA)). On an HDD, or with real-time antivirus scanning, unpacking can take tens of minutes (a few minutes on an SSD). You can stop and rerun to resume |
+| Installation takes a long time | The first run downloads 11 to 27 GB in total and unpacks PyTorch (CUDA). On an HDD, or with real-time antivirus scanning, unpacking can take tens of minutes (a few minutes on an SSD). You can stop and rerun to resume |
 | "Not enough free space" | Pass `--install-dir` with a drive that has room, or free up space. If space is short it drops one profile automatically |
 | It does not react when I speak in the browser | Check the browser's microphone permission (the lock icon left of the address bar). `http://127.0.0.1` is treated as allowed for the microphone. You also need to allow the browser under Windows "Privacy, then Microphone" |
 | Out of VRAM (`CUDA out of memory`, or the LLM or TTS does not start) | Close other apps (games, 3D software, browser hardware acceleration). In the LLM tab choose a lighter profile (low), or increase `--n-cpu-moe` (`profiles.py`) to use less VRAM |
@@ -718,7 +798,7 @@ Irodori-TTS (MIT license) has the following usage restrictions in addition to th
 3. A voice made from a caption alone (without a reference voice) may happen to resemble a real person. This is a probabilistic effect and there is no intent to reproduce any specific person.
 4. The developers take no responsibility for misuse. Using the output in compliance with the laws of your region is the user's responsibility.
 
-The bundled voices (`voices/mio_bright` and `mio_a` to `mio_d`) were made with Voice Design using text captions and fixed seeds, and are not the voice of any real person (captions, seeds and stability are in `voices/voices_meta.json`). The sample character Mio uses `mio_bright` (a high, light and bright voice) by default. The old Python Irodori embeds a watermark (SilentCipher) in the audio it generates. **speech.cpp's Irodori-TTS (the default) does not support the watermark, so none is embedded.** Follow the restrictions whether or not there is a watermark.
+The bundled voices (`voices/mio_bright` and `mio_a` to `mio_d`) were made with Voice Design using text captions and fixed seeds, and are not the voice of any real person (captions, seeds and stability are in `voices/voices_meta.json`). The sample character Mio uses `mio_bright` (a high, light and bright voice) by default. The default Python Irodori embeds a watermark (SilentCipher) in the audio it generates. **speech.cpp's Irodori-TTS (the option) does not support the watermark, so none is embedded.** Follow the restrictions whether or not there is a watermark.
 
 ## Licenses of the software this depends on
 
@@ -727,8 +807,8 @@ The bundled voices (`voices/mio_bright` and `mio_a` to `mio_d`) were made with V
 | This repository | | MIT |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | LLM inference | MIT |
 | [AIAvatarKit](https://github.com/uezo/aiavatarkit) | Voice conversation base, browser UI | Apache-2.0 |
-| [Irodori-TTS](https://github.com/Aratako/Irodori-TTS) / [Irodori-TTS-Server](https://github.com/Aratako/Irodori-TTS-Server) | Speech synthesis (the Python version is a fallback) | MIT |
-| [Irodori-TTS v4.1 Small (GGUF, sakasegawa)](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF) / [MF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF) | TTS model (default; for speech.cpp) | MIT (with ethical restrictions; the codec (DACVAE) is MIT / Apache-2.0) |
+| [Irodori-TTS](https://github.com/Aratako/Irodori-TTS) / [Irodori-TTS-Server](https://github.com/Aratako/Irodori-TTS-Server) | Speech synthesis (the Python version is the default; the speech.cpp version is an option) | MIT |
+| [Irodori-TTS v4.1 Small (GGUF, sakasegawa)](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF) / [MF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF) | TTS model (optional; for speech.cpp) | MIT (with ethical restrictions; the codec (DACVAE) is MIT / Apache-2.0) |
 | [Irodori-TTS-v4.1-Small (quantized)](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small-Quantized) | TTS model | MIT (with ethical restrictions) |
 | [Semantic-DACVAE-Japanese-32dim](https://huggingface.co/Aratako/Semantic-DACVAE-Japanese-32dim) / [DACVAE](https://github.com/facebookresearch/dacvae) | TTS codec | MIT / Apache-2.0 |
 | [SilentCipher](https://github.com/sony/silentcipher) | Watermark for generated audio (Python version only) | MIT |
@@ -762,6 +842,7 @@ configure.bat / .py    interactive CLI for settings (a fallback for the settings
 ctl.py                 shared code for start, stop, restart, download and shortcuts (the console start lives here too)
 profiles.py            LLM profile table, the size range for choosable models, llama-server arguments
 stt_engine.py          STT engine and model tables, Vulkan detection, the speech.cpp command line, automatic device choice
+voice_emotion.py       emotion emoji (methods A / B): the table, removal and the system-prompt section
 tts_engine.py          TTS engine and model tables, the speech.cpp (Irodori-TTS) command line, the list of voices (--add-voice)
 hf_dl.py               Hugging Face downloads (running hf download, progress, cancel; the parallel Range fallback with SHA256 verification)
 model_picker.py        model selection (grouping GGUFs, comparing with the range; shared by the settings screen and setup.bat's interactive mode)
@@ -773,7 +854,7 @@ app/                   AIAvatarKit itself (run.py), settings screen (settings_ap
 stt/                   faster-whisper STT server (fallback) and speechcpp/ (speech.cpp, unpacked at setup)
 voices/                bundled reference voices (adult female voices made with Voice Design)
 characters/            characters (_common.md = shared rules, mio/ = sample)
-tools/                 e2e_test.py (WebSocket test), stt_bench.py (STT comparison benchmark), tts_bench.py (TTS comparison benchmark) and gpu_sampler.ps1 (VRAM measurement), make_voices.py (make voices with Voice Design), mcp_test_server.py (for checking MCP)
+tools/                 e2e_test.py (WebSocket test), stt_bench.py (STT comparison benchmark), tts_bench.py (TTS comparison benchmark) and gpu_sampler.ps1 (VRAM measurement), emotion_bench.py and e2e_emotion.py (emotion emoji comparison and end-to-end check), make_voices.py (make voices with Voice Design), mcp_test_server.py (for checking MCP)
 ```
 
 Things created by installation (not in Git): `strata/` and `strata-data/` (when you choose Strata), `config.json`, `config/`, `llama.cpp/`, `models/`, `tts/`, `hf-home/`, `torch-home/`, `app/.venv`, `stt/.venv`, `app/html/`, `app/data/`, `logs/` and so on.

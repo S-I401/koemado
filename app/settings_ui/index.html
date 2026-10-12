@@ -91,9 +91,9 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
   <div class="row">
     <div><label>エンジン</label>
       <select id="ttsEngine">
-        <option value="auto">自動（speech.cpp が使えれば speech.cpp、使えなければ Python 版）</option>
-        <option value="speechcpp">speech.cpp（Vulkan。既定）</option>
-        <option value="python">Python 版 Irodori-TTS-Server（従来。PyTorch）</option>
+        <option value="auto">自動（Python 版を優先。未導入なら speech.cpp）</option>
+        <option value="python">Python 版 Irodori-TTS-Server（既定。PyTorch）</option>
+        <option value="speechcpp">speech.cpp（Vulkan。速く、VRAM が少ない。声の高さの安定は Python 版が上）</option>
       </select></div>
     <div><label>MeanFlow の steps（irodori-tts-mf のとき。標準は 4）</label><input type="number" id="ttsMfSteps" min="1" max="16" step="1"></div>
   </div>
@@ -116,6 +116,21 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
     <div><label>seed（空なら毎回ランダム）</label><input type="number" id="ttsSeed"></div>
   </div>
   <p><button class="btn primary" id="saveTts">速度・seed を保存</button></p>
+
+  <h2>感情を声に乗せる</h2>
+  <p class="note">Irodori は、文に絵文字を入れると、声の調子（楽しげ・怒り・驚き・泣き声・ため息など）が変わります。絵文字は<strong>声にだけ</strong>入れて、画面の字幕・吹き出し・会話の記録・記憶には出しません。変えると次の発話から反映されます（再起動は不要）。</p>
+  <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" id="veA">
+    <strong>方式 A</strong>: 表情（[face:joy] など）に合わせて、文の先頭に絵文字を付ける</label>
+  <div class="row" style="align-items:end">
+    <div><label>強さ（Irodori は同じ絵文字を重ねると効果が強まる）</label>
+      <select id="veStrength"><option value="1">弱（絵文字 1 個）</option><option value="2">強（絵文字 2 個。候補が 2 つあれば 2 つ、1 つなら重ねる）</option></select></div>
+  </div>
+  <table id="veMap"></table>
+  <p class="note">対応表: 表情ごとに、候補の絵文字を空白で区切って書きます（例: 悲しみ「🥺 😭」。強のときは先頭の 2 つ）。空にすると、その表情では付けません。使える絵文字は Irodori の EMOJI_ANNOTATIONS（<a href="https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small/blob/main/EMOJI_ANNOTATIONS.md" target="_blank" rel="noopener noreferrer">一覧</a>）です。</p>
+  <label style="display:flex;gap:8px;align-items:center;color:var(--text);margin-top:12px"><input type="checkbox" id="veB">
+    <strong>方式 B</strong>: LLM が、話し方の絵文字（🤭 😏 🥺 🫶 😭 😪 ⏸️ 😰 😆 😠 😲 😟 🫣 🙄 😊 😎 👌 🙏 😌 🤔 😮‍💨）を文中に入れる</label>
+  <p class="note">オンのときは、システムプロンプトに使ってよい一覧を入れます（次の会話から）。一覧にない絵文字（🥵 👅 💋 😱 など）は、LLM が出しても TTS に渡す前に取り除きます。LLM が文中に絵文字を入れた文には、方式 A の絵文字は付けません。キャラごとの上書きは、<code>characters/&lt;id&gt;/character.yaml</code> に <code>voice_emotion: {face: false, inline: true}</code> のように書きます。</p>
+  <p><button class="btn primary" id="veSave" type="button">保存</button> <span id="veMsg"></span></p>
 
   <h2>参照音声を追加</h2>
   <div class="adult"><strong>注意:</strong> 本人の同意がない実在人物（声優・有名人など）の声は使わないでください。なりすまし・偽情報への利用は禁止です（Irodori-TTS の利用条件）。</div>
@@ -562,7 +577,7 @@ document.querySelectorAll("#tabs button").forEach((b) => b.onclick = () => {
 
 async function refresh(keepForms = false) {
   S = await api("/state");
-  renderChips(); renderVoices(); renderSys(); renderDisplay(); $("avMotion").value = (S.settings.avatar || {}).motion || "subtle";
+  renderChips(); renderVoices(); renderVe(); renderSys(); renderDisplay(); $("avMotion").value = (S.settings.avatar || {}).motion || "subtle";
   if (!keepForms) { renderLlm(); renderChars(); }
 }
 
@@ -1330,6 +1345,23 @@ async function restart(target) {
 }
 $("rsLlm").onclick = () => restart("llm"); $("rsStt").onclick = () => restart("stt"); $("rsAll").onclick = () => restart("all");
 
+/* ---------------- 感情を声に乗せる ---------------- */
+const VE_FACES = [["joy", "喜び"], ["fun", "楽しい"], ["angry", "怒り"], ["sorrow", "悲しみ"], ["surprised", "驚き"], ["neutral", "ふつう"]];
+function renderVe() {
+  const v = (S.settings.voice_emotion) || { face_emoji: { enabled: true, strength: 1, map: {} }, inline_emoji: { enabled: true } };
+  $("veA").checked = !!v.face_emoji.enabled; $("veStrength").value = String(v.face_emoji.strength || 1); $("veB").checked = !!v.inline_emoji.enabled;
+  const map = v.face_emoji.map || {};
+  $("veMap").innerHTML = "<tr><th>表情</th><th>絵文字（候補。空白区切り）</th></tr>" + VE_FACES.map(([k, label]) => `<tr><td>${k}（${label}）</td><td><input type="text" data-vef="${k}" value="${esc((map[k] || []).join(" "))}" placeholder="なし"></td></tr>`).join("");
+}
+$("veSave").onclick = async () => {
+  const map = {};
+  document.querySelectorAll("[data-vef]").forEach((i) => { map[i.dataset.vef] = i.value.split(/[\s,、]+/).filter(Boolean); });
+  try {
+    await api("/settings", "PUT", { voice_emotion: { face_emoji: { enabled: $("veA").checked, strength: +$("veStrength").value, map }, inline_emoji: { enabled: $("veB").checked } } });
+    msg($("veMsg"), "ok", "保存しました（次の発話から。方式 B のプロンプトは次の会話から）。"); await refresh(true);
+  } catch (e) { msg($("veMsg"), "error", e.message); }
+};
+
 /* ---------------- 音声合成エンジン ---------------- */
 let TT = null;
 async function loadTts() {
@@ -1340,9 +1372,10 @@ async function loadTts() {
   const w = [];
   if (e.fallback) w.push(`<div class="msg warn">${esc(e.fallback)}</div>`);
   if (!TT.vulkan.ok) w.push(`<div class="msg warn">${esc(TT.vulkan.why)}</div>`);
-  if (!TT.python_installed) w.push('<div class="msg info">Python 版は導入されていません（選べるようにするには、setup.bat --tts both を実行します）。</div>');
+  if (!TT.python_installed) w.push('<div class="msg info">Python 版は導入されていません（setup.bat --tts both で追加できます）。</div>');
   $("ttsWarn").innerHTML = w.join("");
   $("ttsEngine").querySelector('option[value="python"]').disabled = !TT.python_installed;
+  $("ttsEngine").querySelector('option[value="speechcpp"]').disabled = !(TT.vulkan.ok && TT.speechcpp_installed);
   $("ttsModels").innerHTML = TT.models.map((m) => `
     <label class="card ${m.key === s.model ? "sel" : ""}" style="display:block;color:var(--text);margin:6px 0;cursor:pointer">
       <input type="radio" name="ttsModel" value="${m.key}" ${m.key === s.model ? "checked" : ""}> <span class="title">${esc(m.label)}</span>
