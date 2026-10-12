@@ -7,6 +7,7 @@
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import sqlite3
@@ -35,6 +36,7 @@ import ctl  # noqa: E402
 import settings_store as ss  # noqa: E402
 import stt_engine  # noqa: E402
 import tts_engine  # noqa: E402
+import voice_emotion  # noqa: E402
 import tools_store as ts  # noqa: E402
 from avatar_memory import SCHEMA, AvatarMemory  # noqa: E402
 from settings_api import RUNTIME, LocalOnlyMiddleware, make_router  # noqa: E402
@@ -81,6 +83,10 @@ class BufferedChatGPTService(ChatGPTService):
 
     async def update_context(self, context_id, user_id, messages, response_text):
         """会話の記録（SQLite）に画像を残さない（既定）。残すかどうかは設定画面の「画像を会話の記録に残す」"""
+        for m in messages:       # 会話の記録（と、次の発話の LLM への履歴）に、声用の絵文字を残さない
+            if m.get("role") == "assistant" and isinstance(m.get("content"), str):
+                m["content"] = voice_emotion.strip_all(m["content"])
+        response_text = voice_emotion.strip_all(response_text)
         if not ss.resolve_llm(CFG, settings(), ROOT).get("store_images"):
             for m in messages:
                 if isinstance(m.get("content"), list):
@@ -88,13 +94,32 @@ class BufferedChatGPTService(ChatGPTService):
                                     for part in m["content"]]
         await super().update_context(context_id, user_id, messages, response_text)
 
+    @staticmethod
+    async def _carry_emoji(stream):
+        """絵文字だけの文（「😊」など）は、単独で TTS に送らず、次の文の先頭に付ける（最後の文なら捨てる）"""
+        pending = ""
+        async for chunk in stream:
+            vt = getattr(chunk, "voice_text", None)
+            if getattr(chunk, "tool_call", None) or not vt:
+                yield chunk
+                continue
+            if voice_emotion.EMOJI_RE.search(vt) and not (voice_emotion.strip_all(vt) or "").strip():
+                pending += vt.strip()
+                chunk.voice_text = ""
+                yield chunk
+                continue
+            if pending:
+                chunk.voice_text = pending + vt
+                pending = ""
+            yield chunk
+
     async def chat_stream(self, *args, **kwargs):
         self.apply_runtime()
         if not self.serialize:
-            async for chunk in super().chat_stream(*args, **kwargs):
+            async for chunk in self._carry_emoji(super().chat_stream(*args, **kwargs)):
                 yield chunk
             return
-        chunks = [chunk async for chunk in super().chat_stream(*args, **kwargs)]
+        chunks = [chunk async for chunk in self._carry_emoji(super().chat_stream(*args, **kwargs))]
         spoken = False
         mute = False
         for chunk in chunks:
@@ -204,7 +229,8 @@ TOOL_PROMPT = "\n\n".join(tool_prompt_sections)    # 起動中は変わらない
 @llm.get_system_prompt
 async def get_system_prompt(context_id, user_id, system_prompt_params):
     char = current_character()
-    base = ss.compose_system_prompt(char, ROOT, tools={"weather": USE_WEATHER, "memory": USE_MEMORY})
+    inline_emoji = voice_emotion.merged_config(settings(), char)["inline_emoji"]["enabled"]     # 方式 B: 話し方の絵文字
+    base = ss.compose_system_prompt(char, ROOT, tools={"weather": USE_WEATHER, "memory": USE_MEMORY}, inline_emoji=inline_emoji)
     parts = [base]
     if TOOL_PROMPT:
         parts.append(TOOL_PROMPT)
@@ -223,6 +249,15 @@ def make_tts_request(text: str, style_info: dict = None, language: str = None) -
     except Exception:
         voice = s["tts"]["voice"]
     url = os.environ["TTS_BASE_URL"].rstrip("/") + "/audio/speech"
+    # 感情の絵文字（方式 A: 表情タグ → 絵文字、方式 B: LLM が入れた話し方の絵文字。使ってよいもの以外は取り除く）は、TTS への入力にだけ入れる
+    try:
+        char = current_character()
+    except Exception:
+        char = None
+    raw_text = text
+    text = voice_emotion.tts_text(text, style_info, voice_emotion.merged_config(s, char))
+    if os.getenv("KOEMADO_LOG_TTS_INPUT") == "1":      # 試験用: TTS への入力（絵文字つき）をログに出す
+        logger.warning("TTS_INPUT %s", json.dumps({"raw": raw_text, "styled": (style_info or {}).get("styled_text"), "tts": text}, ensure_ascii=False))
     r = tts_engine.resolve(CFG, s, ROOT)
     if r["engine"] == "speechcpp":
         # model は送らない（speech.cpp は、起動中のモデルと同じ id か、省略を受け付ける）
@@ -306,6 +341,8 @@ _record = aiavatar_app.sts.performance_recorder.record
 
 
 def _record_without_images(performance):
+    performance.response_text = voice_emotion.strip_all(performance.response_text)
+    performance.response_voice_text = voice_emotion.strip_all(performance.response_voice_text)
     if not ss.resolve_llm(CFG, settings(), ROOT).get("store_images") and performance.request_files:
         performance.request_files = "[画像は保存しません]" if "image" in performance.request_files or "data:" in performance.request_files else performance.request_files
     return _record(performance)
@@ -313,12 +350,25 @@ def _record_without_images(performance):
 
 aiavatar_app.sts.performance_recorder.record = _record_without_images
 
+# 会話画面の字幕・デスクトップのキャラの吹き出しには、声用の絵文字を出さない（TTS はこの前に、絵文字つきの文で合成済み）
+_send_response = aiavatar_app.send_response
+
+
+async def _send_response_without_emoji(aiavatar_response):
+    if aiavatar_response.type in ("chunk", "final"):
+        aiavatar_response.text = voice_emotion.strip_all(aiavatar_response.text)
+        aiavatar_response.voice_text = voice_emotion.strip_all(aiavatar_response.voice_text)
+    return await _send_response(aiavatar_response)
+
+
+aiavatar_app.send_response = _send_response_without_emoji
+
 
 # 応答ごとに表情を感情ログへ記録する（LLM は呼ばない）
 @aiavatar_app.sts.on_finish
 async def log_emotion(request, response):
     if request.text and not request.text.startswith("$") and USE_MEMORY:
-        avatar_memory.log_turn(request.user_id, request.context_id, request.text, response.text)
+        avatar_memory.log_turn(request.user_id, request.context_id, request.text, voice_emotion.strip_all(response.text))
 
 
 @contextlib.asynccontextmanager

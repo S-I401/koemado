@@ -357,8 +357,8 @@ def sample_images_done(install: Path) -> bool:
 
 # 音声認識の導入方針。auto = Vulkan が使えれば speech.cpp、使えなければ faster-whisper。both = 両方（設定画面で切り替えて試せる）
 STT_PLAN = {"mode": "speechcpp"}
-# 音声合成の導入方針。auto = Vulkan が使えれば speech.cpp の Irodori-TTS、使えなければ Python 版。both = 両方（設定画面で切り替えられる）
-TTS_PLAN = {"mode": "speechcpp"}
+# 音声合成の導入方針。auto = python（既定）。speechcpp = speech.cpp の Irodori-TTS（Vulkan が使えるとき）。both = 両方（設定画面で切り替えられる）
+TTS_PLAN = {"mode": "python"}
 STT_KEYS = {"speechcpp": ("speechcpp", "stt_asr"), "faster-whisper": ("stt_env", "stt_model"),
             "both": ("speechcpp", "stt_asr", "stt_env", "stt_model")}
 TTS_KEYS = {"speechcpp": ("speechcpp", "tts_gguf"), "python": ("tts_env", "tts_models"),
@@ -389,21 +389,18 @@ def decide_stt(requested: str, hw: dict) -> tuple[str, str]:
 
 
 def decide_tts(requested: str, hw: dict) -> tuple[str, str]:
-    """(導入方針, 案内)。requested: auto / speechcpp / python / both"""
+    """(導入方針, 案内)。requested: auto / python / speechcpp / both。auto は Python 版（既定）"""
     ok, why = hw["vulkan_ok"], hw["vulkan_why"]
     if requested == "auto":
-        if ok:
-            return "speechcpp", ""
-        return "python", (why + " 従来の Python 版 Irodori-TTS-Server（PyTorch、約 5GB）を入れて使います。"
-                          "Vulkan が使えるようになったら、`setup.bat --tts both` で speech.cpp の TTS も追加できます。")
+        return "python", ""
     if requested in ("speechcpp", "both") and not ok:
-        return "python", why + " speech.cpp は動かせないので、Python 版の Irodori-TTS-Server だけを入れます。"
+        return "python", why + " speech.cpp の TTS は動かせないので、Python 版の Irodori-TTS-Server だけを入れます。"
     return requested, ""
 
 
 def tts_summary() -> str:
-    m = {"speechcpp": "Irodori-TTS v4.1 Small（speech.cpp、GGUF Q8_0。Python・PyTorch 不要）", "python": "Irodori-TTS v4.1 Small（Python 版、int8、PyTorch CUDA）",
-         "both": "speech.cpp + Python 版（切り替え可）"}
+    m = {"python": "Irodori-TTS v4.1 Small（Python 版、int8、PyTorch CUDA）", "speechcpp": "Irodori-TTS v4.1 Small（speech.cpp、GGUF Q8_0。Python・PyTorch 不要）",
+         "both": "Python 版 + speech.cpp（設定画面で切り替え）"}
     return m[TTS_PLAN["mode"]]
 
 
@@ -1435,7 +1432,7 @@ def main():
     ap.add_argument("--stt", choices=["auto", "speechcpp", "faster-whisper", "both"], default="auto",
                     help="音声認識: auto=speech.cpp（Vulkan が使えない PC では faster-whisper）/ speechcpp / faster-whisper（従来。CPU）/ both=両方（設定画面で切り替えられる）")
     ap.add_argument("--tts", choices=["auto", "speechcpp", "python", "both"], default="auto",
-                    help="音声合成: auto=speech.cpp の Irodori-TTS（Vulkan が使えない PC では Python 版）/ speechcpp / python（従来。PyTorch、約 5GB）/ both=両方（設定画面で切り替えられる）")
+                    help="音声合成: auto=python（既定。Python 版 Irodori-TTS-Server、PyTorch、約 5GB）/ speechcpp（speech.cpp の Irodori-TTS。Vulkan。速く VRAM が少ない）/ both=両方（設定画面で切り替えられる）")
     ap.add_argument("--display", choices=["mascot", "browser", "both", "ask"], default=None,
                     help="表示方法: mascot=デスクトップのキャラ（既定）/ browser=ブラウザのタブ / both=両方 / ask=最後に聞く（--yes のときは mascot）")
     args = ap.parse_args()

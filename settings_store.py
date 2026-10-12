@@ -17,6 +17,7 @@ import hf_hub
 import profiles
 import stt_engine
 import tts_engine
+import voice_emotion
 
 ROOT = Path(__file__).resolve().parent
 
@@ -92,10 +93,15 @@ DEFAULT_SETTINGS = {
         # 画像認識。enabled = アプリが画像を受け付けて LLM に渡す。store_images = 会話の記録に画像を残す（既定は残さない）
         "vision": {"enabled": False, "store_images": False},
     },
-    # 音声合成。engine: auto（speech.cpp が使えれば speech.cpp、使えなければ Python 版）/ speechcpp / python。
+    # 音声合成。engine: auto（Python 版を優先。未導入なら speech.cpp）/ python（既定）/ speechcpp。
     # model: irodori-tts-mf（MeanFlow。mf_steps = 4 が標準で速い）/ irodori-tts（Rectified Flow。num_steps で品質と速さを選ぶ。Python 版と同じモデル）。
     # num_steps は Python 版と irodori-tts（rf）の steps。モデル・エンジンの変更は TTS の再起動で反映、声と steps と seed は次の発話から
     "tts": {"voice": "mio_bright", "num_steps": 24, "seed": 42, "engine": "auto", "model": tts_engine.DEFAULT_MODEL, "mf_steps": 4},
+    # 感情を声に乗せる（Irodori の絵文字。絵文字は TTS への入力にだけ入れ、画面・記録・記憶には出さない）。
+    # face_emoji（方式 A）: 表情タグ → 絵文字の対応表（値は候補のリスト）。strength: 1 = 先頭の 1 つ、2 = 先頭の 2 つ（1 つなら重ねる）。
+    # inline_emoji（方式 B）: LLM が話し方の絵文字を文中に入れる（システムプロンプトに使ってよい一覧を入れる。それ以外は TTS に渡す前に取り除く）。
+    # キャラごとの上書きは character.yaml の voice_emotion: {face: true/false, inline: true/false}
+    "voice_emotion": {"face_emoji": {"enabled": True, "strength": 1, "map": voice_emotion.DEFAULT_FACE_MAP}, "inline_emoji": {"enabled": True}},
     # 音声認識。engine: auto（speech.cpp が使えれば speech.cpp、使えなければ faster-whisper）/ speechcpp / faster-whisper。
     # model: parakeet-ja / qwen3-asr-0.6b / qwen3-asr-1.7b（speech.cpp のとき）。device: auto（プロファイルの既定）/ gpu / cpu。
     # hints: よく使う言葉（固有名詞など。qwen3-asr のときだけ prompt として渡す）。モデル・デバイス・エンジンの変更は STT の再起動で反映、hints は次の発話から
@@ -235,6 +241,13 @@ def validate_settings(s: dict):
     stt["hints"] = str(stt.get("hints") or "").strip()
     if len(stt["hints"]) > stt_engine.HINT_MAX_CHARS:
         raise ValueError(f"よく使う言葉は {stt_engine.HINT_MAX_CHARS} 文字以内にしてください。")
+    ve = s["voice_emotion"]
+    ve["face_emoji"]["enabled"] = bool(ve["face_emoji"].get("enabled"))
+    ve["face_emoji"]["strength"] = int(ve["face_emoji"].get("strength") or 1)
+    if ve["face_emoji"]["strength"] not in (1, 2):
+        raise ValueError("感情の絵文字の強さは 1 か 2 です。")
+    ve["face_emoji"]["map"] = voice_emotion.normalize_map(ve["face_emoji"].get("map"))
+    ve["inline_emoji"]["enabled"] = bool(ve["inline_emoji"].get("enabled"))
     if t.get("engine") not in tts_engine.ENGINES:
         raise ValueError("音声合成のエンジンは auto / speechcpp / python のどれかです。")
     if t.get("model") not in tts_engine.TTS_MODELS:
@@ -471,7 +484,7 @@ def valid_voice_id(name: str) -> bool:
 # ------------------------------------------------------------------ キャラクター ----
 
 CHAR_FIELDS = ["name", "age", "first_person", "second_person", "speech_style", "personality",
-               "likes", "dislikes", "background", "relationship", "examples", "voice"]
+               "likes", "dislikes", "background", "relationship", "examples", "voice", "voice_emotion"]
 
 
 _KANJI_NUM = {"〇": 0, "一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
@@ -627,7 +640,7 @@ def _drop_sections(text: str, titles: set[str]) -> str:
     return "".join(keep).rstrip() + "\n"
 
 
-def compose_system_prompt(char: dict, root: Path = ROOT, tools: dict | None = None) -> str:
+def compose_system_prompt(char: dict, root: Path = ROOT, tools: dict | None = None, inline_emoji: bool = False) -> str:
     """character.yaml から system_prompt を作る。内容は設定を変えない限り同じ文字列になる（プロンプトキャッシュ向け）。
     tools: 使えるツールの on/off（{"weather": bool, "memory": bool}）。オフのツールの節は入れない。"""
     common = (characters_dir(root) / "_common.md").read_text(encoding="utf-8")
@@ -649,7 +662,10 @@ def compose_system_prompt(char: dict, root: Path = ROOT, tools: dict | None = No
         lines += ["", "# 生い立ち・経歴", str(char["background"]).strip()]
     if char.get("examples"):
         lines += ["", "# 話し方の例"] + [f"- {e}" for e in char["examples"]]
-    return "\n".join(lines) + "\n\n" + common
+    prompt = "\n".join(lines) + "\n\n" + common
+    if inline_emoji:       # 方式 B: 話し方の絵文字（共通ルールの「絵文字は使わない」は、この節の一覧に限って許可する）
+        prompt = prompt.rstrip("\n") + "\n\n" + voice_emotion.prompt_section() + "\n"
+    return prompt
 
 
 def active_character(settings: dict, root: Path = ROOT) -> dict:

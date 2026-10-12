@@ -2,11 +2,11 @@
 setup.py / ctl.py / supervisor.py / 設定画面 / app/run.py が共有する。speech.cpp の入れ方や Vulkan の判定は stt_engine.py と共通）。
 
 エンジン:
-  speechcpp  speech.cpp（MIT）の `speech serve` で動く Irodori-TTS（GGUF）。Vulkan の GPU で動く。Python も PyTorch も不要。既定
-  python     従来の Irodori-TTS-Server（Python 3.10 + PyTorch CUDA。int8）。Vulkan が使えない PC のための予備
+  python     Irodori-TTS-Server（Python 3.10 + PyTorch CUDA。int8）。既定（声がいちばんミオらしいと、試聴で決めた）
+  speechcpp  speech.cpp（MIT）の `speech serve` で動く Irodori-TTS（GGUF）。Vulkan の GPU で動く。速く、VRAM が少なく、Python も PyTorch も不要。選べる
 
-設定（config/settings.json の "tts"）の engine は "auto" が既定: speech.cpp が使えれば speech.cpp、使えない（vulkan-1.dll が無い・
-speech.exe や Irodori の GGUF が未導入）ときは Python 版（導入済みなら）。
+設定（config/settings.json の "tts"）の engine は "auto" が既定: Python 版が導入済みなら Python 版、未導入なら speech.cpp（使えるとき）。
+speechcpp を選んだときに使えない（vulkan-1.dll が無い・speech.exe や GGUF が未導入）なら Python 版（導入済みなら）。
 speech.cpp の参照音声は、起動時に --add-voice で渡す（tts/voices/ の wav と *.voice.gguf）。起動後に増やした声は、TTS の再起動で使えるようになる。
 """
 import time
@@ -38,7 +38,7 @@ TTS_MODELS = {
 }
 DEFAULT_MODEL = "irodori-tts"
 DEFAULT_TYPE = "q8_0"
-ENGINES = {"auto": "自動（speech.cpp が使えれば speech.cpp、使えなければ Python 版）", "speechcpp": "speech.cpp", "python": "Python 版 Irodori-TTS-Server（従来。PyTorch）"}
+ENGINES = {"auto": "自動（Python 版を優先。未導入なら speech.cpp）", "speechcpp": "speech.cpp（Vulkan。速く VRAM が少ない）", "python": "Python 版 Irodori-TTS-Server（既定。PyTorch）"}
 VOICE_EXTS = (".wav",)
 CAPTION_MAX_CHARS = 200
 
@@ -95,10 +95,15 @@ def resolve(cfg: dict, settings: dict, root) -> dict:
     key = t["model"] if t["model"] in TTS_MODELS else DEFAULT_MODEL
     want = t["engine"] if t["engine"] in ENGINES else "auto"
     fallback = ""
-    engine = "speechcpp"
-    if want == "python":
+    if want in ("python", "auto"):
+        # 既定は Python 版（int8）。未導入のときだけ speech.cpp を使う
         engine = "python"
+        if not python_installed(root):
+            ok, why = stt_engine.speechcpp_usable(root)
+            if ok and model_present(root, key):
+                engine, fallback = "speechcpp", "Python 版の Irodori-TTS-Server が導入されていないので、speech.cpp で動かします。"
     else:
+        engine = "speechcpp"
         ok, why = stt_engine.speechcpp_usable(root)
         if ok and not model_present(root, key):
             ok, why = False, f"Irodori の GGUF（{model_file(key)['file']}）が未取得です。"

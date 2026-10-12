@@ -84,7 +84,8 @@ STT_VRAM_MIB = {"parakeet-ja": 710, "qwen3-asr-0.6b": 1050, "qwen3-asr-1.7b": 23
 #   high は VRAM が 20GB 以上あり、LLM が --fit-target の余白（STT の分を足す）を残すので、どれも GPU でよい。
 #   low は VRAM 6GB 級で、LLM + TTS でほぼ埋まるので、CPU（parakeet は CPU でも 0.3〜1 秒）。
 #   external / strata（LLM を別に動かす）は、Strata の余白（TTS 用）に収まる parakeet だけ GPU。
-AUTO_GPU = {"high": set(STT_VRAM_MIB), "mid": {"parakeet-ja", "qwen3-asr-0.6b"}, "low": set(), "external": set(STT_VRAM_MIB), "strata": {"parakeet-ja"}}
+# mid: TTS が既定の Python 版のとき、0.6B を GPU にすると合計 7,057MiB で 7GB すれすれなので、自動では parakeet だけ GPU（設定画面で選べるが警告が出る）
+AUTO_GPU = {"high": set(STT_VRAM_MIB), "mid": {"parakeet-ja"}, "low": set(), "external": set(STT_VRAM_MIB), "strata": {"parakeet-ja"}}
 AUTO_GPU_OTHER = {"parakeet-ja"}
 
 
