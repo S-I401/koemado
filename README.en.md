@@ -57,6 +57,7 @@ On a PC without an NVIDIA GPU, TTS takes more than ten seconds per sentence and 
    - If it stops halfway, run `setup.bat` again and it resumes (finished downloads are not fetched again).
 3. When setup is done, double-click `start.bat` (or the desktop shortcut).
    **No black console window appears.**
+   `start.bat`, the shortcuts, `start-mascot.bat` and the others all start the same way, through `koemado.vbs`. Existing shortcuts can be recreated with `app\.venv\Scripts\python.exe ctl.py shortcuts`.
    By default a character appears on your desktop and a "starting..." bubble shows progress (see "Desktop character").
    The services start in the order LLM, TTS, STT, AIAvatarKit, and when everything is ready the character can talk.
    If the display mode is "Browser", your browser opens the "starting..." page (the admin console) as before and switches to the conversation screen automatically.

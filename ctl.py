@@ -521,7 +521,7 @@ def create_shortcuts(root: Path = ROOT, folders: list[Path] | None = None) -> li
         lnk = d / "koemado.lnk"
         ps = ("$s=(New-Object -ComObject WScript.Shell).CreateShortcut('%s');"
               "$s.TargetPath='%s';$s.Arguments='//nologo \"%s\"';$s.WorkingDirectory='%s';"
-              "$s.Description='koemado（声の窓）';%s$s.Save()") % (
+              "$s.Description='koemado を起動します（start.bat と同じ。黒いウィンドウを出さないため koemado.vbs から起動します）';%s$s.Save()") % (
             str(lnk).replace("'", "''"), str(Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "wscript.exe").replace("'", "''"), str(vbs).replace("'", "''"),
             str(root).replace("'", "''"), ("$s.IconLocation='%s';" % str(icon).replace("'", "''")) if icon.exists() else "")
         subprocess.run(["powershell", "-NoProfile", "-Command", ps], capture_output=True, stdin=subprocess.DEVNULL, creationflags=0x08000000, check=False)
