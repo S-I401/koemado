@@ -386,6 +386,11 @@ class Supervisor:
             bat = ctl.strata_launch_bat(info, esp=esp_on)
             return ["cmd", "/c", str(bat)], info["dir"], ctl.base_env(cfg), "Strata"
         cmd, cwd, env = ctl.service_command(cfg, key)
+        if key == "tts":
+            r = ctl.tts_resolved(cfg)
+            if r["fallback"]:
+                log("音声合成: " + r["fallback"], "WARNING")
+            log(f"音声合成: {r['label']}")
         if key == "stt":
             r = ctl.stt_resolved(cfg)
             if r["fallback"]:

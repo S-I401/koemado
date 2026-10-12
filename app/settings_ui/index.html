@@ -85,11 +85,33 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
 
 <!-- ============================== 声 ============================== -->
 <section class="tab active" id="tab-voice">
+  <h2>音声合成エンジン</h2>
+  <div id="ttsNow"></div>
+  <div id="ttsWarn"></div>
+  <div class="row">
+    <div><label>エンジン</label>
+      <select id="ttsEngine">
+        <option value="auto">自動（speech.cpp が使えれば speech.cpp、使えなければ Python 版）</option>
+        <option value="speechcpp">speech.cpp（Vulkan。既定）</option>
+        <option value="python">Python 版 Irodori-TTS-Server（従来。PyTorch）</option>
+      </select></div>
+    <div><label>MeanFlow の steps（irodori-tts-mf のとき。標準は 4）</label><input type="number" id="ttsMfSteps" min="1" max="16" step="1"></div>
+  </div>
+  <div id="ttsModelBox"><label>speech.cpp のモデル（Irodori-TTS v4.1 Small。Q8_0）</label><div id="ttsModels"></div></div>
+  <p><button class="btn primary" id="ttsSave" type="button">保存して適用</button> <span class="note">エンジン・モデルを変えると、TTS だけが再起動します。声・steps・seed は次の発話から反映されます。参照音声を追加・削除したときも、speech.cpp は声を起動時に読むので、TTS が自動で再起動します（数秒）。</span></p>
+  <div id="ttsMsg"></div>
+  <div id="ttsDlBox" hidden>
+    <div class="bar"><div id="ttsDlBar"></div></div>
+    <div class="note" id="ttsDlText"></div>
+    <button class="btn" id="ttsDlCancel" type="button" hidden>キャンセル</button>
+  </div>
+  <p class="note" id="ttsNote"></p>
+
   <h2>使う声</h2>
   <p class="note">声はいま選んでいるキャラクターに紐づきます。変えると、次の発話から切り替わります（再起動は不要）。</p>
   <div id="voiceList"></div>
   <div class="row">
-    <div><label>num_steps（小さいほど速く、大きいほど安定。既定 24）</label>
+    <div><label>num_steps（小さいほど速く、大きいほど安定。既定 24。Python 版と irodori-tts（rf）の steps。MeanFlow は上の steps）</label>
       <input type="number" id="numSteps" min="4" max="64" step="1"></div>
     <div><label>seed（空なら毎回ランダム）</label><input type="number" id="ttsSeed"></div>
   </div>
@@ -98,7 +120,7 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
   <h2>参照音声を追加</h2>
   <div class="adult"><strong>注意:</strong> 本人の同意がない実在人物（声優・有名人など）の声は使わないでください。なりすまし・偽情報への利用は禁止です（Irodori-TTS の利用条件）。</div>
   <div class="row">
-    <div><label>音声ファイル（wav / flac / mp3 / ogg / opus。m4a / aac / webm は読み込めません。10〜30 秒の静かな音声がおすすめ）</label>
+    <div><label>音声ファイル（speech.cpp は wav（PCM、120 秒以内）のみ。Python 版は wav / flac / mp3 / ogg / opus。m4a / aac / webm は読み込めません。10〜30 秒の静かな音声がおすすめ）</label>
       <input type="file" id="upFile" accept=".wav,.flac,.mp3,.ogg,.opus"></div>
     <div><label>声の ID（半角英数字・_・-）</label><input type="text" id="upName" placeholder="my_voice"></div>
   </div>
@@ -1308,6 +1330,84 @@ async function restart(target) {
 }
 $("rsLlm").onclick = () => restart("llm"); $("rsStt").onclick = () => restart("stt"); $("rsAll").onclick = () => restart("all");
 
+/* ---------------- 音声合成エンジン ---------------- */
+let TT = null;
+async function loadTts() {
+  TT = await api("/tts");
+  const e = TT.effective, s = TT.settings;
+  $("ttsEngine").value = s.engine; $("ttsMfSteps").value = s.mf_steps;
+  $("ttsNow").innerHTML = `<div class="msg ${TT.healthy ? "ok" : "warn"}">いまの音声合成: <strong>${e.engine === "speechcpp" ? "speech.cpp（" + esc(TT.models.find((m) => m.key === e.model).short) + "）" : "Python 版 Irodori-TTS-Server"}</strong> ・ ${TT.healthy ? "起動中" : "停止中（または再起動中）"}</div>`;
+  const w = [];
+  if (e.fallback) w.push(`<div class="msg warn">${esc(e.fallback)}</div>`);
+  if (!TT.vulkan.ok) w.push(`<div class="msg warn">${esc(TT.vulkan.why)}</div>`);
+  if (!TT.python_installed) w.push('<div class="msg info">Python 版は導入されていません（選べるようにするには、setup.bat --tts both を実行します）。</div>');
+  $("ttsWarn").innerHTML = w.join("");
+  $("ttsEngine").querySelector('option[value="python"]').disabled = !TT.python_installed;
+  $("ttsModels").innerHTML = TT.models.map((m) => `
+    <label class="card ${m.key === s.model ? "sel" : ""}" style="display:block;color:var(--text);margin:6px 0;cursor:pointer">
+      <input type="radio" name="ttsModel" value="${m.key}" ${m.key === s.model ? "checked" : ""}> <span class="title">${esc(m.label)}</span>
+      <span class="note"> ・ ${fmtMB(m.size_bytes)} ・ ${m.present ? "取得済み" : "未取得（選ぶと取得を確認します）"} ・ ${m.key === "irodori-tts-mf" ? "速い（steps 4）" : "steps で品質と速さを選ぶ（下の num_steps。Python 版と同じモデル）"}</span>
+    </label>`).join("");
+  document.querySelectorAll("input[name=ttsModel]").forEach((r) => r.onchange = updateTtsForm);
+  $("ttsEngine").onchange = updateTtsForm;
+  $("ttsNote").textContent = e.engine === "speechcpp"
+    ? "この方式の参照音声は WAV（PCM、120 秒以内）だけです。生成した音声に、透かし（SilentCipher）は入りません（Python 版には入ります）。"
+    : "この方式の生成音声には、透かし（SilentCipher）が入ります。";
+  $("upFile").accept = TT.voice_formats.map((x) => "." + x).join(",");
+  updateTtsForm();
+}
+function selectedTtsModel() { return (document.querySelector("input[name=ttsModel]:checked") || {}).value || "irodori-tts"; }
+function updateTtsForm() {
+  if (!TT) return;
+  const py = $("ttsEngine").value === "python";
+  $("ttsModelBox").hidden = py;
+  document.querySelectorAll("#ttsModels .card").forEach((c) => c.classList.toggle("sel", c.querySelector("input").checked));
+  $("ttsMfSteps").disabled = py || selectedTtsModel() !== "irodori-tts-mf";
+}
+let ttsDlTimer = null;
+function pollTtsDownload(after) {
+  $("ttsDlBox").hidden = false; $("ttsDlCancel").hidden = false; clearInterval(ttsDlTimer);
+  ttsDlTimer = setInterval(async () => {
+    let d; try { d = await api("/tts/download/status"); } catch (e) { return; }
+    if (d.status === "running") {
+      const pct = d.total ? d.done / d.total * 100 : 0;
+      $("ttsDlBar").style.width = pct + "%";
+      $("ttsDlText").textContent = d.message || `${d.file}: ${(d.done / 1e6).toFixed(0)} / ${(d.total / 1e6).toFixed(0)} MB（${pct.toFixed(1)}%）` + (d.speed ? ` ・ ${(d.speed / 1e6).toFixed(1)} MB/s` : "");
+    } else {
+      clearInterval(ttsDlTimer); $("ttsDlCancel").hidden = true;
+      if (d.status === "done") { $("ttsDlBar").style.width = "100%"; $("ttsDlText").textContent = d.file + " を取得しました（SHA-256 を検証済み）。"; if (after) after(); }
+      else if (d.status === "cancelled") $("ttsDlText").textContent = "キャンセルしました。もう一度始めると、途中から再開します。";
+      else $("ttsDlText").textContent = "失敗: " + (d.error || d.status);
+    }
+  }, 1000);
+}
+$("ttsDlCancel").onclick = async () => { try { await api("/tts/download/cancel", "POST", {}); } catch (e) { alert(e.message); } };
+async function saveTts() {
+  const body = { engine: $("ttsEngine").value, model: selectedTtsModel(), mf_steps: +$("ttsMfSteps").value || 4 };
+  msg($("ttsMsg"), "info", "保存しています…");
+  let r;
+  try { r = await api("/tts/apply", "POST", body); } catch (e) { msg($("ttsMsg"), "error", e.message); return; }
+  if (r.need_download) {
+    const n = r.need_download; msg($("ttsMsg"), "", "");
+    if (!confirm(`${n.label} のモデルファイル（${n.file}、${fmtMB(n.size_bytes)}、ライセンス ${n.license}）を Hugging Face から取得します。
+ディスクの空き: ${n.free_gib.toFixed(1)} GiB。取得しますか？`)) return;
+    try { await api("/tts/download", "POST", { model: n.model, confirmed: true }); } catch (e) { msg($("ttsMsg"), "error", e.message); return; }
+    pollTtsDownload(() => saveTts());
+    return;
+  }
+  if (r.restarting) {
+    msg($("ttsMsg"), "info", "音声合成を再起動しています…");
+    await new Promise((res) => setTimeout(res, 5000));
+    for (let i = 0; i < 300; i++) {
+      await new Promise((res) => setTimeout(res, 2000));
+      try { const x = await api("/tts"); if (x.healthy) break; } catch (e) {}
+    }
+    msg($("ttsMsg"), "ok", "音声合成を切り替えました。");
+  } else msg($("ttsMsg"), "ok", "保存しました。");
+  await loadTts();
+}
+$("ttsSave").onclick = () => saveTts();
+
 /* ---------------- 音声認識 ---------------- */
 let ST = null;
 const ENGINE_NAMES = { speechcpp: "speech.cpp", "faster-whisper": "faster-whisper" };
@@ -1400,7 +1500,7 @@ $("sttSave").onclick = () => saveStt();
 function toast(t) { const d = document.createElement("div"); d.className = "msg ok"; d.textContent = t; $("toast").appendChild(d); setTimeout(() => d.remove(), 4000); }
 const initialTab = location.hash.slice(1).split("-")[0];
 const openEspDialog = location.hash.endsWith("-espdialog");
-refresh().then(() => { loadDownloaded(); resumeDownloadPoll(); const b = document.querySelector(`#tabs button[data-tab="${initialTab}"]`); if (b) b.click(); if (openEspDialog) { $("espBox").scrollIntoView(); $("espDialog").showModal(); } }).catch((e) => { document.body.insertAdjacentHTML("afterbegin", '<div class="msg error">設定を読み込めませんでした: ' + esc(e.message) + "</div>"); });
+refresh().then(() => { loadTts().catch(() => {}); loadDownloaded(); resumeDownloadPoll(); const b = document.querySelector(`#tabs button[data-tab="${initialTab}"]`); if (b) b.click(); if (openEspDialog) { $("espBox").scrollIntoView(); $("espDialog").showModal(); } }).catch((e) => { document.body.insertAdjacentHTML("afterbegin", '<div class="msg error">設定を読み込めませんでした: ' + esc(e.message) + "</div>"); });
 </script>
 </body>
 </html>
