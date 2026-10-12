@@ -146,7 +146,7 @@ REDACT = Redactor()
 
 # ------------------------------------------------------------------ ログ ----
 
-_POLL_NOISE = re.compile(r'"GET (/health|/static/index\.html) HTTP/1\.1" 200')
+_POLL_NOISE = re.compile(r'"GET (/health|/static/index\.html) HTTP/1\.1" 200|^\d+\.\d+\.\d+\.\d+ GET /v1/models 200')
 _LVL_LLAMA = re.compile(r"^\d+\.\d+\.\d+\.\d+ ([WEID]) ")
 _LVL_ERR = re.compile(r"\b(ERROR|CRITICAL|FATAL|Traceback|Exception|Error:)\b|\[エラー\]|異常終了")
 _LVL_WARN = re.compile(r"\b(WARN|WARNING)\b|警告")
@@ -386,13 +386,18 @@ class Supervisor:
             bat = ctl.strata_launch_bat(info, esp=esp_on)
             return ["cmd", "/c", str(bat)], info["dir"], ctl.base_env(cfg), "Strata"
         cmd, cwd, env = ctl.service_command(cfg, key)
+        if key == "stt":
+            r = ctl.stt_resolved(cfg)
+            if r["fallback"]:
+                log("音声認識: " + r["fallback"], "WARNING")
+            log(f"音声認識: {r['label']}" + (f"（デバイス {r['device_name']}）" if r["engine"] == "speechcpp" else ""))
         if not Path(cmd[0]).exists():
             raise RuntimeError(f"{cmd[0]} が見つかりません。setup.bat を実行してください。")
         if key == "llm":
             mp = Path(cmd[cmd.index("-m") + 1])
             if not mp.exists():
                 raise RuntimeError(f"LLM のモデルファイルがありません: {mp}（設定画面の LLM でダウンロードするか、setup.bat を実行してください）")
-        return cmd, cwd, env, LABEL[key]
+        return cmd, cwd, env, ctl.svc_label(cfg, key)
 
     def spawn(self, s: Service, label: str, cmd, cwd, env):
         s.label = label
@@ -490,7 +495,7 @@ class Supervisor:
                     return
                 cmd, cwd, env, label = spec
                 self.spawn(s, label, cmd, cwd, env)
-                timeout = self.cfg.get("strata_wait_sec", ctl.STRATA_WAIT_SEC) if label == "Strata" else self.cfg.get("start_timeout_sec", {}).get(key, 600)
+                timeout = self.cfg.get("strata_wait_sec", ctl.STRATA_WAIT_SEC) if label == "Strata" else ctl.start_timeout(self.cfg, key)
                 if not self.wait_ready(s, gen, timeout):
                     if gen == self.generation and not self.shutdown_event.is_set():
                         self._boot_failed(s)
@@ -588,7 +593,7 @@ class Supervisor:
                 time.sleep(1)
             cmd, cwd, env, label = spec
             self.spawn(s, label, cmd, cwd, env)
-            if not self.wait_ready(s, gen, self.cfg.get("start_timeout_sec", {}).get(s.key, 600)) and s.state == "failed":
+            if not self.wait_ready(s, gen, ctl.start_timeout(self.cfg, s.key)) and s.state == "failed":
                 self.phase, self.phase_msg = "failed", f"{s.label} が起動できません。ログを確認してください。"
         except Exception as e:  # noqa: BLE001
             s.state, s.message = "failed", f"{s.label} を再起動できませんでした: {e}"
@@ -668,7 +673,7 @@ class Supervisor:
                     return
                 cmd, cwd, env, label = spec
                 self.spawn(s, label, cmd, cwd, env)
-                self.wait_ready(s, gen, self.cfg.get("start_timeout_sec", {}).get(key, 600))
+                self.wait_ready(s, gen, ctl.start_timeout(self.cfg, key))
                 if all(x.state in ("ready", "external") for x in self.services.values()):
                     self.phase = "ready"
             except Exception as e:  # noqa: BLE001

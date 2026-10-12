@@ -3,7 +3,7 @@
 標準ライブラリだけで動く。設定の正本は config.json（setup.py が生成）。
   python ctl.py start [--no-browser]   従来どおり、各サービスをコンソールのウィンドウで起動する（start.bat --console）
   python ctl.py stop
-  python ctl.py restart [llm|all]   設定変更のあとの再起動
+  python ctl.py restart [llm|stt|all]   設定変更のあとの再起動
   python ctl.py status
   python ctl.py shortcuts            デスクトップとスタートメニューに、ウィンドウを出さずに起動する koemado のショートカットを作る
   python ctl.py _run NAME LOGFILE -- CMD ARGS...   （別ウィンドウ内の中継。内部用）
@@ -25,6 +25,7 @@ ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 import hf_hub  # noqa: E402
 import settings_store  # noqa: E402
+import stt_engine  # noqa: E402
 CONFIG_PATH = ROOT / "config.json"
 RUN_DIR = ROOT / "run"
 LOG_DIR = ROOT / "logs"
@@ -32,7 +33,7 @@ LOG_DIR = ROOT / "logs"
 DEFAULT_PORTS = {"llm": 8081, "tts": 8088, "stt": 8002, "app": 8100}
 RESERVED_PORTS = {8000, 8080}   # UE5 の MCP など、他のツールが使いがちなポートは避ける
 SERVICES = ["llm", "tts", "stt", "app"]    # 起動順
-LABEL = {"llm": "LLM (llama-server)", "tts": "TTS (Irodori)", "stt": "STT (faster-whisper)", "app": "AIAvatarKit"}
+LABEL = {"llm": "LLM (llama-server)", "tts": "TTS (Irodori)", "stt": "STT (speech.cpp)", "app": "AIAvatarKit"}
 
 
 # ---------------------------------------------------------------- 共通 ----
@@ -96,6 +97,29 @@ def llm_resolved(cfg: dict, root: Path = ROOT) -> dict:
     return settings_store.resolve_llm(cfg, settings_store.load_settings(root), root)
 
 
+def stt_resolved(cfg: dict, root: Path = ROOT, probe: bool = True) -> dict:
+    return stt_engine.resolve(cfg, settings_store.load_settings(root), root, probe=probe)
+
+
+def svc_label(cfg: dict, name: str, root: Path = ROOT) -> str:
+    return stt_label(cfg, root) if name == "stt" else LABEL[name]
+
+
+def stt_label(cfg: dict, root: Path = ROOT) -> str:
+    try:
+        return stt_resolved(cfg, root, probe=False)["label"]
+    except Exception:
+        return LABEL["stt"]
+
+
+def start_timeout(cfg: dict, name: str) -> int:
+    """起動の待ち時間の上限（秒）。speech.cpp の初回は、GPU のドライバがシェーダーをコンパイルするので長めに待つ"""
+    t = cfg.get("start_timeout_sec", {}).get(name, 600)
+    if name == "stt" and stt_resolved(cfg, probe=False)["engine"] == "speechcpp":
+        t = max(t, 600)
+    return t
+
+
 def health_url(cfg: dict, name: str) -> tuple[str, str | None]:
     p = cfg["ports"]
     if name == "llm":
@@ -103,9 +127,10 @@ def health_url(cfg: dict, name: str) -> tuple[str, str | None]:
         if r["mode"] == "external":
             return r["base_url"] + "/models", None
         return f"http://127.0.0.1:{p['llm']}/health", None
+    if name == "stt":
+        return stt_engine.health(cfg, settings_store.load_settings(ROOT), ROOT)
     return {
         "tts": (f"http://127.0.0.1:{p['tts']}/health", '"loaded":true'),
-        "stt": (f"http://127.0.0.1:{p['stt']}/health", None),
         "app": (f"http://127.0.0.1:{p['app']}/static/index.html", None),
     }[name]
 
@@ -138,7 +163,6 @@ def render_env(cfg: dict) -> str:
         f"TTS_BASE_URL=http://127.0.0.1:{p['tts']}/v1",
         f"STT_BASE_URL=http://127.0.0.1:{p['stt']}/v1",
         f"LLM_BASE_URL_BUNDLED=http://127.0.0.1:{p['llm']}/v1",
-        f"STT_MODEL={cfg['stt']['model']}",
         "AVATAR_DEBUG=0",
         "",
     ])
@@ -180,7 +204,14 @@ def llama_command(cfg: dict, root: Path = ROOT) -> list[str]:
     cmd += list(l.get("extra_args", []))
     # fit モード: VRAM に収まる分だけ GPU に載せ、TTS 用の余白（MiB）を残す
     if l.get("fit_target_mib"):
-        cmd += ["--fit", "on", "--fit-target", str(int(l["fit_target_mib"]))]
+        margin = int(l["fit_target_mib"])
+        try:       # STT を GPU に載せるときは、その分の余白も残す（TTS の分だけだと、STT が VRAM を取り合って溢れる）
+            r = stt_resolved(cfg, root, probe=False)
+            if r["engine"] == "speechcpp" and r["device"] == "gpu":
+                margin += stt_engine.STT_VRAM_MIB[r["model_key"]]
+        except Exception:
+            pass
+        cmd += ["--fit", "on", "--fit-target", str(margin)]
     return cmd
 
 
@@ -210,6 +241,10 @@ def service_command(cfg: dict, name: str, root: Path = ROOT) -> tuple[list[str],
         py = root / "tts" / ".venv" / "Scripts" / "python.exe"
         return [str(py), "-m", "irodori_openai_tts", "--host", "127.0.0.1", "--port", str(p["tts"])], root / "tts", env
     if name == "stt":
+        r = stt_resolved(cfg, root)
+        if r["engine"] == "speechcpp":
+            # speech.cpp: Python も CUDA も使わない。Vulkan のシェーダーのキャッシュは GPU のドライバが持つ
+            return stt_engine.speechcpp_command(cfg, r, root), stt_engine.speech_dir(root), env
         env.update({
             "STT_MODEL": cfg["stt"]["model"],
             "STT_DEVICE": "cpu",
@@ -553,7 +588,7 @@ def start(cfg: dict, open_browser: bool = True, only: list[str] = None) -> int:
     names = [n for n in active_services(cfg) if (only is None or n in only)]
     running = [n for n in names if check_health(cfg, n)]
     if running:
-        print("すでに起動しているサービスがあります:", ", ".join(LABEL[n] for n in running))
+        print("すでに起動しているサービスがあります:", ", ".join(svc_label(cfg, n) for n in running))
         print("一度 stop.bat で止めてから、もう一度 start.bat を実行してください。")
         return 1
 
@@ -589,25 +624,25 @@ def start(cfg: dict, open_browser: bool = True, only: list[str] = None) -> int:
                 print("  設定画面（/settings）の LLM でダウンロードするか、setup.bat を実行してください。")
                 return 1
         log = LOG_DIR / f"{name}.log"
-        runner = [sys.executable, str(ROOT / "ctl.py"), "_run", LABEL[name], str(log), "--"] + cmd
-        print(f"{LABEL[name]} を起動します（別ウィンドウ）...")
+        runner = [sys.executable, str(ROOT / "ctl.py"), "_run", svc_label(cfg, name), str(log), "--"] + cmd
+        print(f"{svc_label(cfg, name)} を起動します（別ウィンドウ）...")
         proc = subprocess.Popen(runner, cwd=str(cwd), env=env, creationflags=subprocess.CREATE_NEW_CONSOLE)
         pids = read_pids()      # Strata の起動で書いた分を消さないように、毎回読み直す
         pids[name] = proc.pid
         pid_file().write_text(json.dumps(pids))
-        deadline = time.time() + cfg.get("start_timeout_sec", {}).get(name, 600)
+        deadline = time.time() + start_timeout(cfg, name)
         started = time.time()
         while not check_health(cfg, name):
             if proc.poll() is not None:
-                print(f"[エラー] {LABEL[name]} が終了しました。ログ: {log}")
+                print(f"[エラー] {svc_label(cfg, name)} が終了しました。ログ: {log}")
                 stop(cfg, quiet=True, only=names)
                 return 1
             if time.time() > deadline:
-                print(f"[エラー] {LABEL[name]} が時間内に起動しませんでした。ログ: {log}")
+                print(f"[エラー] {svc_label(cfg, name)} が時間内に起動しませんでした。ログ: {log}")
                 stop(cfg, quiet=True, only=names)
                 return 1
             time.sleep(1.5)
-        print(f"  {LABEL[name]}: 準備完了（{time.time() - started:.0f} 秒）")
+        print(f"  {svc_label(cfg, name)}: 準備完了（{time.time() - started:.0f} 秒）")
 
     url = f"http://127.0.0.1:{cfg['ports']['app']}/static/index.html"
     print()
@@ -625,7 +660,10 @@ def restart(cfg: dict, target: str) -> int:
     """設定を変えたあとの再起動。target: llm / all"""
     info = supervisor_info()
     if info:        # 常駐の管理プロセスがあれば、そちらに頼む（LLM だけの再起動も、管理プロセスが判断する）
-        return 0 if supervisor_post(info, "/api/restart/" + ("llm" if target == "llm" else "all")) else 1
+        return 0 if supervisor_post(info, "/api/restart/" + (target if target in ("llm", "stt") else "all")) else 1
+    if target == "stt":
+        stop(cfg, quiet=True, only=["stt"])
+        return start(cfg, open_browser=False, only=["stt"])
     if target == "llm":
         if managed_strata(cfg):                  # Strata は LLM だけ再起動できないので、全体を再起動する
             target = "all"
@@ -709,7 +747,7 @@ def status(cfg: dict):
     gpu = nvidia_gpu(cfg["gpu"]["index"])
     for name in SERVICES:
         ok = check_health(cfg, name)
-        print(f"  {LABEL[name]:<24} port {cfg['ports'][name]}  {'起動中' if ok else '停止'}")
+        print(f"  {svc_label(cfg, name):<24} port {cfg['ports'][name]}  {'起動中' if ok else '停止'}")
     if gpu:
         print(f"  GPU メモリ: {gpu['used_mib']} / {gpu['total_mib']} MiB 使用中")
 

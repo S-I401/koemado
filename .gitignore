@@ -20,6 +20,9 @@
 /tools/mingit/
 /tools/hf-venv/
 /stt/.venv/
+/stt/speechcpp/
+/stt/speechcpp.new/
+/test_stt/
 /app/.venv/
 /app/html/
 /app/data/

@@ -249,8 +249,8 @@ def group_gguf(files: list[dict]) -> tuple[list[dict], list[dict]]:
     return out, aux
 
 
-def file_url(repo: str, path: str) -> str:
-    return f"{API}/{repo}/resolve/main/{urllib.parse.quote(path)}"
+def file_url(repo: str, path: str, revision: str = "main") -> str:
+    return f"{API}/{repo}/resolve/{revision}/{urllib.parse.quote(path)}"
 
 
 def head_size(repo: str, path: str, token: str = "") -> int | None:

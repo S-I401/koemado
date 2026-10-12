@@ -143,7 +143,8 @@ class Job:
     status（dict）に、status / done / total / engine / speed / message / error などを書く。run() は呼び出したスレッドで動く"""
 
     def __init__(self, root, repo: str, files: list[dict], local_dir, token: str = "", status: dict | None = None, log=None,
-                 flags: int = 0, uv: str | None = None, base_env: dict | None = None):
+                 flags: int = 0, uv: str | None = None, base_env: dict | None = None, revision: str = ""):
+        self.revision = revision      # コミットのハッシュ（固定した版を取る。空なら main）
         self.root, self.repo, self.local_dir = Path(root), repo, Path(local_dir)
         self.files = [dict(f) for f in files]
         self.token = token
@@ -206,6 +207,8 @@ class Job:
     def _run_hf(self, exe: Path) -> str:
         paths = [f["path"] for f in self.pending()]
         cmd = [str(exe), "download", self.repo, *paths, "--local-dir", str(self.local_dir), "--max-workers", "8"]
+        if self.revision:
+            cmd += ["--revision", self.revision]
         self._say(f"[hf] hf download {self.repo} ({len(paths)} ファイル) → {self.local_dir}")
         tail: list[str] = []
         self.proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
@@ -281,7 +284,7 @@ class Job:
         lock = threading.Lock()
         got = {"bytes": sum(min(CHUNK, size - i * CHUNK) for i in done_idx)}
         base_other = done_bytes(self.local_dir, [x for x in self.files if x["path"] != path])
-        url = hf_hub.file_url(self.repo, path)
+        url = hf_hub.file_url(self.repo, path, self.revision or "main")
         t0 = time.time()
         last = {"t": t0, "b": got["bytes"]}
 

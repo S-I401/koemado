@@ -11,7 +11,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))
 import hf_hub  # noqa: E402
+import hf_dl  # noqa: E402
 import profiles  # noqa: E402
+import stt_engine  # noqa: E402
 import settings_store as ss  # noqa: E402
 import tools_store as ts  # noqa: E402
 
@@ -43,6 +45,8 @@ def show():
         print(f"  キャラクター: 読み込めません（{e}）")
     print(f"  表示方法: {ss.DISPLAY_MODES[s['display']['mode']]}")
     print(f"  num_steps: {s['tts']['num_steps']}  seed: {s['tts']['seed']}")
+    st = s["stt"]
+    print(f"  音声認識: エンジン {stt_engine.ENGINES[st['engine']].split('（')[0]} / モデル {st['model']} / デバイス {stt_engine.DEVICES[st['device']].split('（')[0]}" + (f" / よく使う言葉: {st['hints']}" if st['hints'] else ""))
     t = s["tools"]
     print(f"  Hugging Face トークン: {'登録済み' if s['hf'].get('token') else '未登録（任意）'}")
     onoff = lambda v: "オン" if v else "オフ"  # noqa: E731
@@ -302,6 +306,49 @@ def menu_display():
     print("※ 反映するには、start.bat を再実行（または stop.bat のあと start.bat）してください。")
 
 
+def menu_stt():
+    """音声認識（speech.cpp / faster-whisper）。モデル・デバイス・エンジンを変えたら STT の再起動で反映される"""
+    import threading
+    import time
+    s = ss.load_settings(ROOT)
+    st = s["stt"]
+    ok, why = stt_engine.speechcpp_usable(ROOT)
+    print(f"\n音声認識: speech.cpp は{'使えます' if ok else '使えません（' + why + '）'} / faster-whisper は{'導入済み' if stt_engine.fw_installed(ROOT) else '未導入'}")
+    patch = {}
+    eng = pick(f"エンジン（いまは「{st['engine']}」）", list(stt_engine.ENGINES.items()))
+    if eng:
+        patch["engine"] = eng
+    if (eng or st["engine"]) != "faster-whisper":
+        key = pick(f"speech.cpp のモデル（いまは「{st['model']}」）", [(k, f"{m['label']} ・ {m['size_bytes'] / 1e6:.0f}MB ・ CER {m['cer']} ・ {'取得済み' if stt_engine.model_present(ROOT, k) else '未取得'} ・ {m['license']}") for k, m in stt_engine.MODELS.items()])
+        if key:
+            patch["model"] = key
+        dev = pick(f"デバイス（いまは「{st['device']}」）", list(stt_engine.DEVICES.items()))
+        if dev:
+            patch["device"] = dev
+        m = stt_engine.MODELS[key or st["model"]]
+        if m["hint"]:
+            h = ask("よく使う言葉（固有名詞のヒント。読点区切り。空欄で変えない）", "")
+            if h:
+                patch["hints"] = h
+        if ok and not stt_engine.model_present(ROOT, key or st["model"]):
+            if input(f"{m['file']}（{m['size_bytes'] / 1e6:.0f}MB）を Hugging Face から取得しますか？ [y/N]: ").strip().lower() in ("y", "yes"):
+                status = {}
+                job = hf_dl.Job(ROOT, m["repo"], [{"path": m["file"], "size": m["size_bytes"], "sha256": m["sha256"]}], stt_engine.models_dir(ROOT),
+                                ss.hf_token(ROOT), status=status, log=lambda line: None, flags=hf_dl.CREATE_NO_WINDOW, revision=m["revision"])
+                t = threading.Thread(target=job.run, daemon=True)
+                t.start()
+                while t.is_alive():
+                    time.sleep(1)
+                    print(f"\r  {status.get('done', 0) / 1e6:.0f} / {m['size_bytes'] / 1e6:.0f} MB", end="", flush=True)
+                print()
+                if status.get("status") != "done":
+                    print("取得できませんでした:", status.get("error"))
+                    return
+    if patch:
+        _apply({"stt": patch})
+        print("※ 反映するには STT の再起動が必要です（起動中なら `python ctl.py restart stt`、または start.bat を再実行）。")
+
+
 def menu_character():
     chars = [c for c in ss.list_characters(ROOT) if not c.get("error")]
     s = ss.load_settings(ROOT)
@@ -345,7 +392,7 @@ def main():
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     while True:
         show()
-        choice = pick("設定する項目", [("voice", "声"), ("llm", "LLM"), ("hf", "Hugging Face のトークン（モデルを一覧から選ぶ）"), ("char", "キャラクター"), ("display", "表示方法（デスクトップのキャラ / ブラウザ）"), ("tools", "ツール（Web検索・MCP・外部エージェント）")])
+        choice = pick("設定する項目", [("voice", "声"), ("llm", "LLM"), ("hf", "Hugging Face のトークン（モデルを一覧から選ぶ）"), ("char", "キャラクター"), ("stt", "音声認識（speech.cpp / faster-whisper）"), ("display", "表示方法（デスクトップのキャラ / ブラウザ）"), ("tools", "ツール（Web検索・MCP・外部エージェント）")])
         if choice == "voice":
             menu_voice()
         elif choice == "llm":
@@ -354,6 +401,8 @@ def main():
             menu_hf()
         elif choice == "char":
             menu_character()
+        elif choice == "stt":
+            menu_stt()
         elif choice == "display":
             menu_display()
         elif choice == "tools":

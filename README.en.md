@@ -7,7 +7,7 @@ You talk to it with a microphone (or type), a local LLM thinks up a reply, and I
 Nothing is sent to the cloud, unless you choose an external inference server yourself.
 
 ```
-Browser / desktop character (mic) ─ AIAvatarKit ─ STT: faster-whisper (CPU)
+Browser / desktop character (mic) ─ AIAvatarKit ─ STT: speech.cpp (Vulkan; GPU or CPU)
                     │
                     ├─ LLM: llama.cpp llama-server (GGUF)   * can be replaced with an external inference server
                     └─ TTS: Irodori-TTS v4.1 Small (int8, CUDA)
@@ -39,6 +39,7 @@ Browser / desktop character (mic) ─ AIAvatarKit ─ STT: faster-whisper (CPU)
 | OS | Windows 10 / 11 (64-bit) |
 | GPU | **An NVIDIA GPU is required** (RTX 20 series or newer, 6 GB VRAM or more). Driver **570 or newer** (needed by PyTorch CUDA 12.8) |
 | RAM | 16 GB or more (32 GB or more for the standard profile) |
+| Vulkan | `vulkan-1.dll`, installed by the GPU driver (used by speech.cpp for STT). Without it, the old faster-whisper (CPU) is used (see "Speech recognition (STT)") |
 | Free disk space | About 19 to 35 GB depending on the profile (see the table below), on the drive you install to |
 | Network | Setup downloads from GitHub / Hugging Face / PyPI (about 15 to 32 GB in total) |
 
@@ -144,12 +145,135 @@ If there is not enough free disk space, it drops one level.
 | low | 6 GB+ / 16 GB+ | Gemma 4 E4B (QAT q4_0) | 4.8 GiB | about 19 GB |
 
 - **mid** keeps most of the MoE experts' weights on the CPU side so that VRAM holds about 3.6 GB for the LLM plus about 2.7 GB (peak) for TTS (on an 8 GB GPU, leaving room for the Windows desktop).
-- Disk breakdown: llama.cpp about 1.2 GB, the TTS runtime (PyTorch CUDA) about 5.2 GB, TTS and STT models about 2 GB, other environments about 1 GB (the download cache is removed at the end of setup).
+- Disk breakdown: llama.cpp about 1.2 GB, the TTS runtime (PyTorch CUDA) about 5.2 GB, the TTS models about 1.4 GB, STT (speech.cpp about 0.1 GB plus parakeet about 0.7 GB), other environments about 1 GB (on a PC without Vulkan, STT is the faster-whisper environment and model, about 0.8 GB) (the download cache is removed at the end of setup).
 - To swap a model, edit the table in `profiles.py`. If you register a Hugging Face token, you can also pick any GGUF from a list in the settings screen, within the range of your profile (see "Model browser" below).
 
 ### Pinned versions
 
-llama.cpp `b11443` (CUDA 12 build) / Irodori-TTS-Server `61012c7` (follows `uv.lock`) / Irodori-TTS v4.1 Small int8 (`Aratako/Irodori-TTS-v4.1-Small-Quantized`) / aiavatar 0.9.1 / fastmcp 4.0.11 / ddgs 9.16.0 / faster-whisper 1.2.1 (small, CPU int8) / pystray 0.19.5 / pillow 12.3.0 / PySide6 6.11.2 (Essentials / Addons; Qt WebEngine) / shiboken6 6.11.2. Dependency versions are pinned in `app/requirements.txt` and `stt/requirements.txt`.
+llama.cpp `b11443` (CUDA 12 build) / Irodori-TTS-Server `61012c7` (follows `uv.lock`) / Irodori-TTS v4.1 Small int8 (`Aratako/Irodori-TTS-v4.1-Small-Quantized`) / aiavatar 0.9.1 / fastmcp 4.0.11 / ddgs 9.16.0 / speech.cpp v0.8.4 (`speech-0.8.4-windows-x64-vulkan.zip`, SHA-256 `c35e75e6...`) / parakeet-tdt_ctc-0.6B-ja Q8_0 (`sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF` `f7cb538`) / Qwen3-ASR 0.6B and 1.7B Q8_0 (`sakasegawa/Qwen3-ASR-*-GGUF`) / faster-whisper 1.2.1 (small, CPU int8; fallback for PCs without Vulkan) / pystray 0.19.5 / pillow 12.3.0 / PySide6 6.11.2 (Essentials / Addons; Qt WebEngine) / shiboken6 6.11.2. Dependency versions are pinned in `app/requirements.txt` and `stt/requirements.txt`.
+
+## Speech recognition (STT)
+
+Speech to text uses `speech serve` from [speech.cpp](https://github.com/nyosegawa/speech.cpp) (MIT) by default.
+It needs no Python and no CUDA: it uses your GPU through **Vulkan** (`vulkan-1.dll`, which the NVIDIA / AMD / Intel GPU driver installs), and it also runs on the CPU.
+The old faster-whisper (Whisper small, CPU) stays as a fallback for PCs where Vulkan is not available.
+
+- Install: `setup.bat` unpacks the official release `speech-0.8.4-windows-x64-vulkan.zip` (about 30 MB) into `stt\speechcpp\`.
+  The official `install.ps1` is not used because it edits PATH.
+  The zip is unpacked only when its SHA-256 matches **both** the release's `SHA256SUMS` and the value pinned in `stt_engine.py`.
+  The recognition model (GGUF) is fetched with `hf download` into `models\stt\` at a pinned commit and its SHA-256 is verified too (on a mismatch the file is deleted).
+- Start: the supervisor runs `speech serve <model> --host 127.0.0.1 --port <STT port> --device <GPU or CPU> --language ja` without a console window.
+  Readiness is checked with `/v1/models`.
+  Its output goes to the log of the admin console (`logs\stt.log`).
+  The first start can be slow while the GPU driver compiles shaders, so the wait limit is 600 seconds (in practice startup took a few seconds, and only the first recognition sometimes took 5 to 10 seconds).
+- Conversation: AIAvatarKit's `OpenAISpeechRecognizer` cannot send `prompt`, so `app/run.py` subclasses it to send one (see "Frequently used words" below).
+
+### Models
+
+| Setting name | Model | Size | CER (published) | Notes | License |
+|---|---|---|---|---|---|
+| `parakeet-ja` (default) | [parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) (`parakeet-tdt_ctc-0.6B-ja-Q8_0.gguf`) | 661 MB | 7.9% | Fast. Tends to write in kana. No `prompt` | CC-BY-4.0 (c) NVIDIA |
+| `qwen3-asr-0.6b` | [Qwen3-ASR 0.6B](https://huggingface.co/sakasegawa/Qwen3-ASR-0.6B-GGUF) (`Qwen3-ASR-0.6B-Q8_0.gguf`) | 842 MB | 11.9% | Light, writes kanji. Accepts hints for proper nouns | Apache-2.0 |
+| `qwen3-asr-1.7b` | [Qwen3-ASR 1.7B](https://huggingface.co/sakasegawa/Qwen3-ASR-1.7B-GGUF) (`Qwen3-ASR-1.7B-Q8_0.gguf`) | 2.18 GB | 9.5% | Most accurate. Accepts hints. Uses 2.3 GB of VRAM | Apache-2.0 |
+| faster-whisper small | [Systran/faster-whisper-small](https://huggingface.co/Systran/faster-whisper-small) | about 0.5 GB | - | The old engine. CPU. Fallback when Vulkan is missing | MIT |
+
+CER is the value speech.cpp publishes for the Common Voice 8.0 Japanese test set (4,483 utterances, Q8_0).
+The GGUF files were converted by speech.cpp's author (sakasegawa); the repositories and file names are linked above and the commits are pinned in `stt_engine.py`.
+
+### Comparison
+
+We measured it in this repository.
+12 Japanese sentences were synthesized with Irodori (short conversational sentences with Sendai, Mio, Hugging Face, Python and numbers; voices `mio_bright` / `mio_a` / `mio_b` / `mio_c` / `mio_d`), converted to 16 kHz mono, and recognized by each setup (`tools/stt_bench.py`).
+The PC is a Ryzen 7 7800X3D (8 threads) with an RTX 4090 (Vulkan).
+
+| Setup | CER | CER\* | Reading CER | Exact | Time per utterance (mean, about 4.5 s of speech) |
+|---|---|---|---|---|---|
+| faster-whisper small (CPU) | 13.5% | 10.2% | 9.8% | 4 / 12 | 1.1 to 1.2 s |
+| speech.cpp parakeet-ja (GPU) | 16.9% | 13.6% | 4.6% | 3 / 12 | 0.03 to 0.05 s |
+| speech.cpp parakeet-ja (CPU) | 16.9% | 13.6% | 4.6% | 3 / 12 | 0.3 s |
+| speech.cpp qwen3-asr-0.6b (GPU) | 6.0% | 6.0% | 4.3% | 8 / 12 | 0.05 to 0.08 s |
+| speech.cpp qwen3-asr-0.6b (CPU) | 6.2% | 6.2% | 5.0% | 8 / 12 | 0.9 s |
+| speech.cpp qwen3-asr-1.7b (GPU) | 5.1% | 4.2% | 3.6% | 8 / 12 | 0.09 to 0.13 s |
+| speech.cpp qwen3-asr-1.7b (CPU) | 4.0% | 3.1% | 2.9% | 9 / 12 | 1.8 s |
+| speech.cpp qwen3-asr-1.7b (GPU, hints "Sendai, Mio, Hugging Face, Python, LLM") | 5.0% | 3.1% | 2.9% | 9 / 12 | 0.14 s |
+
+- **CER**: edit distance of the strings (spaces and punctuation removed, NFKC-normalized) divided by the length of the reference.
+  Kanji versus kana spelling differences count as errors.
+- **CER\***: the same with kanji numerals turned into Arabic numerals (so "七時" equals "7時").
+- **Reading CER**: both texts are converted to hiragana readings first (pykakasi; readings of English words are approximate).
+- Times are the range of the two quiet runs.
+  In a third run another session was using the CPU and the CPU setups were 1.5 to 3 times slower (faster-whisper small 2.2 s, parakeet-ja on CPU 1.0 s).
+  CPU times vary a lot with the load of other applications.
+- GPU and CPU CERs of the same model differ a little because arithmetic differences change a few sentences.
+
+**Honest results**:
+- **parakeet-ja is not clearly better than faster-whisper small.**
+  It is much faster (about 30 times on GPU, about 4 times on CPU) and about twice as accurate by reading (reading CER 4.6% vs 9.8%).
+  But it is weak at choosing kanji (it writes kana, such as "みお", "ほんとう", "あした", "ばんごはん"), so its spelling CER is worse than faster-whisper small (16.9% vs 13.5%).
+  An LLM can often understand kana, so this may not matter much in conversation (not verified here), but proper nouns are harder to tell apart in kana.
+- **Qwen3-ASR was more accurate than both in this test** (CER 4 to 6%).
+  The 1.7B model reaches 4.0% even on the CPU (about 1.8 s per utterance), in about the same time as faster-whisper small but more accurate.
+  With a GPU to spare, the 0.6B model takes under 0.1 s at about 6%.
+- The published Common Voice CERs rank them the other way (parakeet 7.9% < Qwen3-ASR 1.7B 9.5%).
+  This test is only 12 synthesized sentences (no real human voices, no noisy room), and the difference comes mostly from kanji versus kana spelling.
+- **Against the friend's feedback ("recognition is bad"), we recommend qwen3-asr-0.6b or 1.7b rather than the default parakeet-ja.**
+  To change the default, edit `DEFAULT_MODEL` in `stt_engine.py` (one line; it can also be changed in the settings screen).
+
+### VRAM and the default device per profile
+
+On the mid setup (simulating 8 GB of VRAM, with the LLM, TTS and STT all running and conversations and recognitions repeated), we measured the per-process dedicated GPU memory ("GPU Process Memory" in Windows) and took the peak.
+
+| STT | LLM | TTS | STT | Peak of the sum | Within 7 GB (7,168 MiB) |
+|---|---|---|---|---|---|
+| CPU (parakeet) | 3,518 MiB | 2,410 MiB | 0 | 5,929 MiB | yes |
+| parakeet-ja (GPU) | 3,518 MiB | 2,424 MiB | 705 MiB | 6,647 MiB | yes |
+| qwen3-asr-0.6b (GPU) | 3,518 MiB | 2,408 MiB | 1,041 MiB | 6,967 MiB | yes (small margin) |
+| qwen3-asr-1.7b (GPU) | 3,518 MiB | 2,442 MiB | 2,321 MiB | 8,281 MiB | **no (does not fit an 8 GB card)** |
+
+With the device set to "auto" the defaults are:
+
+| Profile | parakeet-ja | qwen3-asr-0.6b | qwen3-asr-1.7b | Reason |
+|---|---|---|---|---|
+| high | GPU | GPU | GPU | 20 GB or more of VRAM. The margin that the LLM leaves with `--fit-target` is enlarged by the STT's share |
+| mid | GPU | GPU | **CPU** | The measurements above. 1.7B does not fit in 8 GB (on CPU it takes about 1.8 s per utterance) |
+| low | CPU | CPU | CPU | A 6 GB card is expected to be nearly full with the LLM and TTS (not measured on real hardware). parakeet takes 0.3 s on CPU |
+| External LLM | GPU | GPU | GPU | The LLM runs elsewhere, so there is VRAM to spare |
+| Strata | GPU | CPU | CPU | Only parakeet fits in the margin (about 1 GB) that Strata leaves for TTS |
+
+### How to switch
+
+- In the **"Speech recognition" tab of the settings screen** (`http://127.0.0.1:8100/settings#stt`) choose the engine (auto / speech.cpp / faster-whisper), the model, the device (auto / GPU / CPU) and frequently used words, then press "Save and apply".
+  - If the chosen model is not downloaded yet, the screen shows its file name, size and license and downloads it from Hugging Face **after you confirm** (with a progress bar, cancel and SHA-256 verification).
+  - When the engine, model or device changes, **only the STT restarts** (the LLM, TTS and the conversation keep running).
+    Frequently used words apply from the next utterance.
+  - You can go back to faster-whisper (when it is installed).
+- If the settings screen does not open, use `configure.bat` and pick "speech recognition".
+  Settings are stored in the `stt` section of `config/settings.json` (`engine` / `model` / `device` / `hints`).
+- `setup.bat --stt auto|speechcpp|faster-whisper|both` chooses what to install (the default `auto` installs speech.cpp when Vulkan works and faster-whisper otherwise).
+  With `both`, the settings screen can switch to faster-whisper as well.
+
+![Speech recognition](docs/screenshots/settings_stt.png)
+
+### Frequently used words (hints for proper nouns)
+
+With qwen3-asr, the **character's name** and the "frequently used words" registered in the settings screen (separated by commas or line breaks, up to 400 characters) are sent as `prompt`.
+The model uses the prompt as background, not as instructions.
+In this test, "ミオさん、おはようございます。" came out as "みよさ、おはようございます。" with the 1.7B model and no hints, and correctly as "ミオさん、…" with hints (also confirmed through a real conversation turn in the app).
+parakeet does not accept `prompt`, so nothing is sent.
+
+### PCs without Vulkan
+
+On a PC where `vulkan-1.dll` cannot be found, or `speech devices` fails, `setup.bat` installs the old faster-whisper (CPU) and says so.
+At run time too, if speech.cpp cannot be used, faster-whisper runs instead and the admin log shows the reason (`start.bat` does not stop).
+For testing, the environment variable `KOEMADO_SIMULATE_NO_VULKAN=1` (at run time) or `setup.bat --simulate "vulkan=0"` (at install time) reproduces a PC without `vulkan-1.dll`.
+If Vulkan becomes available later, `setup.bat --stt both` adds speech.cpp.
+
+### Credits
+
+- parakeet-tdt_ctc-0.6b-ja: **(c) NVIDIA**, [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/) (the GGUF is a conversion of [nvidia/parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja)).
+  This is the attribution the license asks for; it is also shown in the "Speech recognition" tab of the settings screen.
+- Qwen3-ASR: (c) Alibaba Qwen, Apache-2.0 ([Qwen/Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B)).
+- speech.cpp: MIT ([nyosegawa/speech.cpp](https://github.com/nyosegawa/speech.cpp)).
 
 ## Starting and the admin console
 
@@ -343,6 +467,8 @@ For example, on a PC with 8 GB VRAM and 32 GB RAM the hardware limit is about 24
 
 Settings are stored in `config/settings.json` (voice, LLM) and `characters/` (characters). `.env` (`app/.env`) holds only low-level values such as ports and is rebuilt by `start.bat`.
 
+**Speech recognition**: engine (auto / speech.cpp / faster-whisper), model (parakeet-ja / qwen3-asr-0.6b / qwen3-asr-1.7b), device (auto / GPU / CPU) and frequently used words (for qwen3-asr). A model that is not downloaded yet is fetched after you confirm its size, and only the STT restarts. See the "Speech recognition (STT)" section.
+
 ## Expression and lip-sync assets
 
 The avatar on the conversation screen moves according to the files in `characters/<id>/`.
@@ -407,6 +533,8 @@ Tips for making them with image generation (inpainting):
 | It does not react when I speak in the browser | Check the browser's microphone permission (the lock icon left of the address bar). `http://127.0.0.1` is treated as allowed for the microphone. You also need to allow the browser under Windows "Privacy, then Microphone" |
 | Out of VRAM (`CUDA out of memory`, or the LLM or TTS does not start) | Close other apps (games, 3D software, browser hardware acceleration). In the LLM tab choose a lighter profile (low), or increase `--n-cpu-moe` (`profiles.py`) to use less VRAM |
 | Replies are slow | The bundled LLM processes whatever does not fit in VRAM on the CPU. Use low, or an external inference server. TTS gets faster with a smaller num_steps |
+| Recognition is poor (proper nouns, kanji) | In the settings screen's "Speech recognition" tab, switch to qwen3-asr-0.6b or 1.7B. You can also register frequently used words as hints (comparison in the "Speech recognition (STT)" section) |
+| Speech recognition does not work, or faster-whisper is in use | `vulkan-1.dll` may be missing (reinstalling the GPU driver restores it) or `stt\speechcpp\speech.exe` may be absent. The reason is in the admin log (stt). When Vulkan works, run `setup.bat --stt both` |
 | Port already in use | `setup.bat` and `start.bat` switch to a free port automatically (defaults: LLM 8081 / TTS 8088 / STT 8002 / app 8100; 8000 and 8080 are avoided) |
 | Startup fails | Open the admin console (`http://127.0.0.1:8099/`, or the tray's "logs and state") and look at the logs. The files are `logs\llm.log`, `tts.log`, `stt.log`, `app.log` and `supervisor.log`. When reporting, send the zip from "Download a bundle for bug reports" (keys are masked) |
 | The admin console does not open, or the supervisor is not running | Run `start.bat --console` (or `debug-start.bat`) to start every service in a **console window** as before (errors are visible directly). There is no admin console or tray in this mode. Stop with `stop.bat` |
@@ -480,7 +608,10 @@ The bundled voices (`voices/mio_bright` and `mio_a` to `mio_d`) were made with V
 | [Irodori-TTS-v4.1-Small (quantized)](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small-Quantized) | TTS model | MIT (with ethical restrictions) |
 | [Semantic-DACVAE-Japanese-32dim](https://huggingface.co/Aratako/Semantic-DACVAE-Japanese-32dim) / [DACVAE](https://github.com/facebookresearch/dacvae) | TTS codec | MIT / Apache-2.0 |
 | [SilentCipher](https://github.com/sony/silentcipher) | Watermark for generated audio | MIT |
-| [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (Whisper small) | STT | MIT |
+| [speech.cpp](https://github.com/nyosegawa/speech.cpp) | STT (default; Vulkan) | MIT |
+| [parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja) (GGUF: sakasegawa) | STT model (default) | **CC-BY-4.0 (c) NVIDIA; attribution required** |
+| [Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) 0.6B / 1.7B (GGUF: sakasegawa) | STT model (optional) | Apache-2.0 |
+| [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (Whisper small) | STT (fallback for PCs without Vulkan) | MIT |
 | [silero-vad](https://github.com/snakers4/silero-vad) | Voice activity detection | MIT |
 | [PyTorch](https://pytorch.org/) | Running the TTS | BSD-3-Clause |
 | [Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) (GGUF: unsloth) | LLM (high) | Apache-2.0 |
@@ -506,6 +637,7 @@ html-overrides/        additions to the conversation page (koemado-avatar.js = l
 configure.bat / .py    interactive CLI for settings (a fallback for the settings screen)
 ctl.py                 shared code for start, stop, restart, download and shortcuts (the console start lives here too)
 profiles.py            LLM profile table, the size range for choosable models, llama-server arguments
+stt_engine.py          STT engine and model tables, Vulkan detection, the speech.cpp command line, automatic device choice
 hf_dl.py               Hugging Face downloads (running hf download, progress, cancel; the parallel Range fallback with SHA256 verification)
 model_picker.py        model selection (grouping GGUFs, comparing with the range; shared by the settings screen and setup.bat's interactive mode)
 hf_hub.py              Hugging Face API (search, file list, GGUF metadata, token check); sends the token only to huggingface.co
@@ -513,10 +645,10 @@ settings_store.py      reading and writing settings and characters, and the ESP 
 tools_store.py         MCP config (config/mcp.json) and skills (skills/) reading and writing
 skills/                skills (news-topics and research are bundled)
 app/                   AIAvatarKit itself (run.py), settings screen (settings_api.py / settings_ui), weather, memory, web search, MCP, skills, external agent
-stt/                   faster-whisper STT server
+stt/                   faster-whisper STT server (fallback) and speechcpp/ (speech.cpp, unpacked at setup)
 voices/                bundled reference voices (adult female voices made with Voice Design)
 characters/            characters (_common.md = shared rules, mio/ = sample)
-tools/                 e2e_test.py (WebSocket test), make_voices.py (make voices with Voice Design), mcp_test_server.py (for checking MCP)
+tools/                 e2e_test.py (WebSocket test), stt_bench.py (STT comparison benchmark), make_voices.py (make voices with Voice Design), mcp_test_server.py (for checking MCP)
 ```
 
 Things created by installation (not in Git): `strata/` and `strata-data/` (when you choose Strata), `config.json`, `config/`, `llama.cpp/`, `models/`, `tts/`, `hf-home/`, `torch-home/`, `app/.venv`, `stt/.venv`, `app/html/`, `app/data/`, `logs/` and so on.

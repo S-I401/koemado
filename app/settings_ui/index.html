@@ -74,6 +74,7 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
 <nav id="tabs">
   <button data-tab="voice" class="active">声</button>
   <button data-tab="llm">LLM</button>
+  <button data-tab="stt">音声認識</button>
   <button data-tab="char">キャラクター</button>
   <button data-tab="display">表示</button>
   <button data-tab="tools">ツール</button>
@@ -269,6 +270,47 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
   <p class="note">temperature と思考の設定は次のメッセージから反映されます。モデル・方式・接続先・コンテキスト長を変えたときは再起動が必要です（「保存して再起動」、または start.bat の再実行）。</p>
 </section>
 
+<!-- ============================== 音声認識 ============================== -->
+<section class="tab" id="tab-stt">
+  <h2>音声認識（話した言葉を文字にする）</h2>
+  <div id="sttNow"></div>
+  <div id="sttWarn"></div>
+  <div class="row">
+    <div><label>エンジン</label>
+      <select id="sttEngine">
+        <option value="auto">自動（speech.cpp が使えれば speech.cpp、使えなければ faster-whisper）</option>
+        <option value="speechcpp">speech.cpp（Vulkan。既定）</option>
+        <option value="faster-whisper">faster-whisper（従来。CPU）</option>
+      </select></div>
+    <div><label>デバイス（speech.cpp のとき）</label>
+      <select id="sttDevice"><option value="auto">自動（この PC のプロファイルの既定）</option><option value="gpu">GPU（Vulkan）</option><option value="cpu">CPU</option></select></div>
+  </div>
+  <div id="sttDevWarn"></div>
+  <div id="sttModelBox">
+    <label>speech.cpp のモデル</label>
+    <div id="sttModels"></div>
+  </div>
+  <div id="sttHintBox">
+    <label>よく使う言葉（固有名詞のヒント。読点か改行で区切る。キャラクターの名前は自動で加わります）</label>
+    <textarea id="sttHints" maxlength="400" placeholder="例: 仙台、ミオ、Hugging Face"></textarea>
+    <div class="note" id="sttHintNote"></div>
+  </div>
+  <p><button class="btn primary" id="sttSave" type="button">保存して適用</button> <span class="note">モデル・デバイス・エンジンを変えると、STT だけが再起動します（数秒〜。初回の GPU は、ドライバのシェーダーのコンパイルで少し長くかかります）。よく使う言葉は次の発話から反映されます。</span></p>
+  <div id="sttMsg"></div>
+  <div id="sttDlBox" hidden>
+    <div class="bar"><div id="sttDlBar"></div></div>
+    <div class="note" id="sttDlText"></div>
+    <button class="btn" id="sttDlCancel" type="button" hidden>キャンセル</button>
+  </div>
+
+  <h2>モデルの比べ方</h2>
+  <p class="note">CER は Common Voice 8.0 日本語 test（4,483 発話）の文字誤り率で、小さいほど正確です（speech.cpp の公表値、Q8_0）。漢字とかなの書き分けなど、表記の違いも誤りに数えます。parakeet は、かな書きにする傾向があります。このアプリで合成音声を使って比べた結果は、README の「音声認識」にあります。</p>
+  <table id="sttTable"></table>
+
+  <h2>クレジットとライセンス</h2>
+  <p class="note" id="sttCredit"></p>
+</section>
+
 <!-- ============================== キャラクター ============================== -->
 <section class="tab" id="tab-char">
   <div class="adult"><strong>共通ルール:</strong> どのキャラクターも、性的な内容や、未成年が関わる性的な話題には応じません（キャラクターの設定では変えられません）。年齢は任意ですが、拒否の抑制（ESP）は、年齢が 18 歳以上と設定されたキャラクターでだけ使えます。</div>
@@ -452,7 +494,7 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
   <table id="hwTable"></table>
   <h2>再起動</h2>
   <p class="note">設定の反映に再起動が必要なときに使います。ブラウザの会話は一度切れます。</p>
-  <p><button class="btn" id="rsLlm">LLM だけ再起動</button> <button class="btn" id="rsAll">全体を再起動</button></p>
+  <p><button class="btn" id="rsLlm">LLM だけ再起動</button> <button class="btn" id="rsStt">STT だけ再起動</button> <button class="btn" id="rsAll">全体を再起動</button></p>
   <div id="rsMsg"></div>
 </section>
 </main>
@@ -492,6 +534,7 @@ document.querySelectorAll("#tabs button").forEach((b) => b.onclick = () => {
   document.querySelectorAll("#tabs button").forEach((x) => x.classList.toggle("active", x === b));
   document.querySelectorAll("section.tab").forEach((x) => x.classList.toggle("active", x.id === "tab-" + b.dataset.tab));
   if (b.dataset.tab === "sys") refresh();
+  if (b.dataset.tab === "stt") loadStt().catch((e) => msg($("sttMsg"), "error", e.message));
   if (b.dataset.tab === "tools") loadTools().catch((e) => msg($("tlMsg"), "error", e.message));
 });
 
@@ -1263,7 +1306,96 @@ async function restart(target) {
   if (!confirm("再起動します。よろしいですか？")) return;
   try { await api("/restart", "POST", { target }); msg($("rsMsg"), "info", "再起動しています…"); waitServices(); } catch (e) { msg($("rsMsg"), "error", e.message); }
 }
-$("rsLlm").onclick = () => restart("llm"); $("rsAll").onclick = () => restart("all");
+$("rsLlm").onclick = () => restart("llm"); $("rsStt").onclick = () => restart("stt"); $("rsAll").onclick = () => restart("all");
+
+/* ---------------- 音声認識 ---------------- */
+let ST = null;
+const ENGINE_NAMES = { speechcpp: "speech.cpp", "faster-whisper": "faster-whisper" };
+function fmtMB(b) { return (b / 1e6).toFixed(0) + " MB"; }
+async function loadStt() {
+  ST = await api("/stt");
+  const e = ST.effective, s = ST.settings;
+  $("sttEngine").value = s.engine; $("sttDevice").value = s.device; $("sttHints").value = s.hints || "";
+  const dev = e.engine === "speechcpp" ? `デバイス: ${e.device === "gpu" ? "GPU（" + esc((ST.devices || []).find((d) => d.name === e.device_name)?.description?.trim() || e.device_name) + "）" : "CPU"}` : "CPU";
+  $("sttNow").innerHTML = `<div class="msg ${ST.healthy ? "ok" : "warn"}">いまの音声認識: <strong>${esc(ENGINE_NAMES[e.engine])}</strong>${e.engine === "speechcpp" ? "（" + esc(ST.models.find((m) => m.key === e.model).short) + "）" : "（Whisper small）"} ・ ${dev} ・ ${ST.healthy ? "起動中" : "停止中（または再起動中）"}</div>`;
+  const warns = [];
+  if (e.fallback) warns.push(`<div class="msg warn">${esc(e.fallback)}</div>`);
+  if (!ST.vulkan.ok) warns.push(`<div class="msg warn">${esc(ST.vulkan.why)}</div>`);
+  else if (!ST.speechcpp.installed) warns.push('<div class="msg warn">speech.cpp が導入されていません。setup.bat を実行すると入ります。</div>');
+  if (!ST.faster_whisper_installed) warns.push('<div class="msg info">faster-whisper は導入されていません（選べるようにするには、setup.bat --stt both を実行します）。</div>');
+  $("sttWarn").innerHTML = warns.join("");
+  $("sttEngine").querySelector('option[value="faster-whisper"]').disabled = !ST.faster_whisper_installed;
+  $("sttModels").innerHTML = ST.models.map((m) => `
+    <label class="card ${m.key === s.model ? "sel" : ""}" style="display:block;color:var(--text);margin:6px 0;cursor:pointer">
+      <input type="radio" name="sttModel" value="${m.key}" ${m.key === s.model ? "checked" : ""}> <span class="title">${esc(m.label)}</span>
+      <span class="note"> ・ ${fmtMB(m.size_bytes)} ・ CER ${esc(m.cer)} ・ ${m.present ? "取得済み" : "未取得（選ぶと取得を確認します）"}${m.hint ? " ・ 固有名詞のヒントを渡せます" : ""} ・ GPU のとき VRAM 約 ${(m.vram_mib / 1024).toFixed(1)}GB ・ 「自動」では${ST.auto_device[m.key] === "gpu" ? " GPU" : " CPU"}</span>
+    </label>`).join("");
+  document.querySelectorAll("input[name=sttModel]").forEach((r) => r.onchange = updateSttForm);
+  $("sttEngine").onchange = updateSttForm; $("sttDevice").onchange = updateSttForm;
+  $("sttTable").innerHTML = "<tr><th>モデル</th><th>CER</th><th>大きさ</th><th>ライセンス</th><th>特徴</th></tr>" + ST.models.map((m) => `<tr><td>${esc(m.short)}</td><td>${esc(m.cer)}</td><td>${fmtMB(m.size_bytes)}</td><td>${esc(m.license)}</td><td>${m.key === "parakeet-ja" ? "最も速い（既定）。かな書きになりやすい" : m.key === "qwen3-asr-0.6b" ? "軽く、漢字で書ける。ヒント可" : "最も正確。ヒント可。VRAM 8GB 級では CPU 向き"}</td></tr>`).join("")
+    + "<tr><td>faster-whisper small</td><td colspan=\"2\">（従来。CPU）</td><td>MIT</td><td>speech.cpp が使えない PC の予備</td></tr>";
+  $("sttCredit").innerHTML = `音声認識エンジン: <a href="${esc(ST.speechcpp.home)}" target="_blank" rel="noopener noreferrer">speech.cpp</a> v${esc(ST.speechcpp.version)}（${esc(ST.speechcpp.license)}）。<br>` +
+    "parakeet-tdt_ctc-0.6b-ja: <strong>© NVIDIA</strong>、<a href=\"https://creativecommons.org/licenses/by/4.0/\" target=\"_blank\" rel=\"noopener noreferrer\">CC-BY-4.0</a>（<a href=\"https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja\" target=\"_blank\" rel=\"noopener noreferrer\">nvidia/parakeet-tdt_ctc-0.6b-ja</a> を GGUF に変換したもの。sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF）。この表示は、ライセンスが求めるクレジットです。<br>" +
+    "Qwen3-ASR: © Alibaba Qwen、Apache-2.0（<a href=\"https://huggingface.co/Qwen/Qwen3-ASR-1.7B\" target=\"_blank\" rel=\"noopener noreferrer\">Qwen/Qwen3-ASR</a>）。";
+  updateSttForm();
+}
+function selectedSttModel() { return (document.querySelector("input[name=sttModel]:checked") || {}).value || "parakeet-ja"; }
+function updateSttForm() {
+  if (!ST) return;
+  const fw = $("sttEngine").value === "faster-whisper";
+  $("sttModelBox").hidden = fw; $("sttDevice").disabled = fw;
+  const m = ST.models.find((x) => x.key === selectedSttModel());
+  document.querySelectorAll("#sttModels .card").forEach((c) => c.classList.toggle("sel", c.querySelector("input").checked));
+  const dv = $("sttDevice").value, gpuNow = dv === "gpu" || (dv === "auto" && ST.auto_device[m.key] === "gpu");
+  $("sttDevWarn").innerHTML = (!fw && dv === "gpu" && ST.auto_device[m.key] === "cpu")
+    ? `<div class="msg warn">この PC のプロファイル（${esc(ST.profile)}）では、${esc(m.short)} を GPU に載せると、LLM・TTS と合わせて VRAM が足りなくなる見込みです（CPU なら VRAM を使いません）。</div>` : "";
+  $("sttHintBox").hidden = fw || !m.hint;
+  $("sttHintNote").textContent = m.hint ? "いまのヒント: " + (ST.prompt_preview || "（なし）") : "";
+  if (fw) $("sttHintNote").textContent = "";
+}
+let sttDlTimer = null;
+function pollSttDownload(after) {
+  $("sttDlBox").hidden = false; $("sttDlCancel").hidden = false; clearInterval(sttDlTimer);
+  sttDlTimer = setInterval(async () => {
+    let d; try { d = await api("/stt/download/status"); } catch (e) { return; }
+    if (d.status === "running") {
+      const pct = d.total ? d.done / d.total * 100 : 0;
+      $("sttDlBar").style.width = pct + "%";
+      $("sttDlText").textContent = d.message || `${d.file}: ${(d.done / 1e6).toFixed(0)} / ${(d.total / 1e6).toFixed(0)} MB（${pct.toFixed(1)}%）` + (d.speed ? ` ・ ${(d.speed / 1e6).toFixed(1)} MB/s` : "");
+    } else {
+      clearInterval(sttDlTimer); $("sttDlCancel").hidden = true;
+      if (d.status === "done") { $("sttDlBar").style.width = "100%"; $("sttDlText").textContent = d.file + " を取得しました（SHA-256 を検証済み）。"; if (after) after(); }
+      else if (d.status === "cancelled") $("sttDlText").textContent = "キャンセルしました。もう一度始めると、途中から再開します。";
+      else $("sttDlText").textContent = "失敗: " + (d.error || d.status);
+    }
+  }, 1000);
+}
+$("sttDlCancel").onclick = async () => { try { await api("/stt/download/cancel", "POST", {}); } catch (e) { alert(e.message); } };
+async function saveStt() {
+  const body = { engine: $("sttEngine").value, model: selectedSttModel(), device: $("sttDevice").value, hints: $("sttHints").value };
+  msg($("sttMsg"), "info", "保存しています…");
+  let r;
+  try { r = await api("/stt/apply", "POST", body); } catch (e) { msg($("sttMsg"), "error", e.message); return; }
+  if (r.need_download) {
+    const n = r.need_download;
+    msg($("sttMsg"), "", "");
+    if (!confirm(`${n.label} のモデルファイル（${n.file}、${fmtMB(n.size_bytes)}、ライセンス ${n.license}）を Hugging Face から取得します。\nディスクの空き: ${n.free_gib.toFixed(1)} GiB。取得しますか？`)) return;
+    try { await api("/stt/download", "POST", { model: n.model, confirmed: true }); } catch (e) { msg($("sttMsg"), "error", e.message); return; }
+    pollSttDownload(() => saveStt());
+    return;
+  }
+  if (r.restarting) {
+    msg($("sttMsg"), "info", "音声認識を再起動しています…");
+    await new Promise((res) => setTimeout(res, 5000));
+    for (let i = 0; i < 300; i++) {
+      await new Promise((res) => setTimeout(res, 2000));
+      try { const x = await api("/stt"); if (x.healthy && x.effective.model === body.model && (body.engine === "faster-whisper" ? x.effective.engine === "faster-whisper" : x.effective.engine === "speechcpp")) break; } catch (e) {}
+    }
+    msg($("sttMsg"), "ok", "音声認識を切り替えました。");
+  } else msg($("sttMsg"), "ok", "保存しました（次の発話から反映されます）。");
+  await loadStt();
+}
+$("sttSave").onclick = () => saveStt();
 
 function toast(t) { const d = document.createElement("div"); d.className = "msg ok"; d.textContent = t; $("toast").appendChild(d); setTimeout(() => d.remove(), 4000); }
 const initialTab = location.hash.slice(1).split("-")[0];

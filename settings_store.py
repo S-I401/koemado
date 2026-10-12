@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 import hf_hub
 import profiles
+import stt_engine
 
 ROOT = Path(__file__).resolve().parent
 
@@ -91,6 +92,10 @@ DEFAULT_SETTINGS = {
         "vision": {"enabled": False, "store_images": False},
     },
     "tts": {"voice": "mio_bright", "num_steps": 24, "seed": 42},
+    # 音声認識。engine: auto（speech.cpp が使えれば speech.cpp、使えなければ faster-whisper）/ speechcpp / faster-whisper。
+    # model: parakeet-ja / qwen3-asr-0.6b / qwen3-asr-1.7b（speech.cpp のとき）。device: auto（プロファイルの既定）/ gpu / cpu。
+    # hints: よく使う言葉（固有名詞など。qwen3-asr のときだけ prompt として渡す）。モデル・デバイス・エンジンの変更は STT の再起動で反映、hints は次の発話から
+    "stt": {"engine": "auto", "model": stt_engine.DEFAULT_MODEL, "device": "auto", "hints": ""},
     # Hugging Face のトークン（任意。config/settings.json にだけ保存。画面・ログ・報告には出さない）
     "hf": {"token": ""},
     "character": "mio",
@@ -216,6 +221,16 @@ def validate_settings(s: dict):
         t["seed"] = None
     else:
         t["seed"] = int(t["seed"])
+    stt = s["stt"]
+    if stt.get("engine") not in stt_engine.ENGINES:
+        raise ValueError("音声認識のエンジンは auto / speechcpp / faster-whisper のどれかです。")
+    if stt.get("model") not in stt_engine.MODELS:
+        raise ValueError("音声認識のモデルは " + " / ".join(stt_engine.MODELS) + " のどれかです。")
+    if stt.get("device") not in stt_engine.DEVICES:
+        raise ValueError("音声認識のデバイスは auto / gpu / cpu のどれかです。")
+    stt["hints"] = str(stt.get("hints") or "").strip()
+    if len(stt["hints"]) > stt_engine.HINT_MAX_CHARS:
+        raise ValueError(f"よく使う言葉は {stt_engine.HINT_MAX_CHARS} 文字以内にしてください。")
     llm = s["llm"]
     llm["temperature"] = float(llm["temperature"])
     if not 0 <= llm["temperature"] <= 2:
