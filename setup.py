@@ -39,6 +39,7 @@ import hf_dl  # noqa: E402  （Hugging Face からの取得は hf download に�
 import hf_hub  # noqa: E402
 import model_picker  # noqa: E402
 import settings_store  # noqa: E402  （ユーザー設定・キャラクター）
+import stt_engine  # noqa: E402  （音声認識: speech.cpp / faster-whisper）
 
 # =====================================================================
 # 設定データ: モデルやバージョンの差し替えはこの 1 か所を直す
@@ -68,7 +69,7 @@ PINNED = {
     "aiavatar_sample_prefix": "aiavatarkit-0.9.1/examples/websocket/html/images",
     # git が無い PC 向けの持ち運べる Git（uv が git 依存の取得に使う）
     "mingit_url": "https://github.com/git-for-windows/git/releases/download/v2.47.1.windows.2/MinGit-2.47.1.2-64-bit.zip",
-    "stt_model": "small",
+    "stt_model": "small",       # faster-whisper（予備）のモデル
     "python": "3.12",
     "tts_python": "3.10",   # Irodori-TTS-Server の uv.lock は 3.10/3.11 の wheel を前提にしている（sentencepiece 0.1.99 は 3.12 の wheel が無い）
 }
@@ -88,7 +89,9 @@ SIZE_LABELS = {
     "llama.cpp": "llama.cpp（LLM エンジン）",
     "tts_env": "TTS の実行環境（PyTorch CUDA 12.8 など）",
     "tts_models": "TTS のモデル（Irodori int8・codec）",
-    "stt_env": "STT の実行環境",
+    "speechcpp": "STT: speech.cpp v" + stt_engine.SPEECHCPP["version"] + "（Vulkan。Python・CUDA 不要）",
+    "stt_asr": "STT のモデル（parakeet-tdt_ctc-0.6b-ja Q8_0）",
+    "stt_env": "STT の実行環境（faster-whisper）",
     "stt_model": "STT のモデル（Whisper small）",
     "app_env": "AIAvatarKit の実行環境（デスクトップのキャラ用の Qt WebEngine を含む）",
     "ui": "ブラウザ UI",
@@ -99,6 +102,8 @@ SIZES_GB = {
     "llama.cpp": (0.64, 1.9),    # zip 2 本 → 展開後 1.2GB（zip は展開後に消す）
     "tts_env": (3.2, 6.0),       # PyTorch cu128 + 依存（展開後の実測 5.2GB）+ Python 3.10
     "tts_models": (1.3, 1.4),
+    "speechcpp": (0.03, 0.1),    # zip 30.5MB → 展開後 約 93MB（zip は展開後に消す）
+    "stt_asr": (0.62, 0.62),     # 661,012,416 バイト
     "stt_env": (0.1, 0.3),
     "stt_model": (0.5, 0.5),
     "app_env": (0.7, 1.9),       # Python 3.12 + fastmcp・ddgs などを含む。PySide6（Qt WebEngine）が約 0.3GB / 0.7GB
@@ -168,6 +173,14 @@ DEFAULT_TTS_NUM_STEPS = 24
 DEFAULT_TTS_SEED = 42
 
 # =====================================================================
+
+
+def sha256_file(path: Path) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(8 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
 def say(*a, **k):
@@ -260,8 +273,14 @@ def detect_hardware(install_dir: Path, sim: dict) -> dict:
         "cores": physical_cores(), "cpu": cpu_name(),
         "disk_free_gib": disk_free, "drive": probe.drive or str(probe),
     })
+    hw["vulkan_ok"], hw["vulkan_why"] = stt_engine.vulkan_loader_found()
     # 模擬入力で上書き（テスト用）
     if sim:
+        if "vulkan" in sim:
+            hw["vulkan_ok"] = sim["vulkan"] not in ("0", "no", "false")
+            if not hw["vulkan_ok"]:
+                os.environ[stt_engine.ENV_NO_VULKAN] = "1"      # 以降の判定（speech.cpp が使えるか）もこの模擬に従う
+                hw["vulkan_why"] = stt_engine.vulkan_loader_found()[1]
         if hw["gpu"] is None and ("vram" in sim):
             hw["gpu"] = {"index": 0, "name": "(模擬 GPU)", "vram_mib": 0, "vram_free_mib": 0,
                          "driver": "999.0", "driver_major": 999, "cc": 8.9}
@@ -297,6 +316,7 @@ def print_hardware(hw: dict):
     say(f"  CPU        : {hw['cpu']}（物理コア {hw['cores']}）")
     say(f"  メモリ     : {hw['ram_total_gib']:.1f} GiB（空き {hw['ram_free_gib']:.1f} GiB）")
     say(f"  空き容量   : {hw['disk_free_gib']:.1f} GiB（{hw['drive']}）")
+    say("  Vulkan     : " + ("vulkan-1.dll あり（speech.cpp を使えます）" if hw.get("vulkan_ok") else "vulkan-1.dll が見つかりません（speech.cpp は使えません）"))
 
 
 def check_requirements(hw: dict, external: bool = False):
@@ -332,12 +352,44 @@ def sample_images_done(install: Path) -> bool:
     return (install / "characters").exists() and not d.exists()
 
 
+# 音声認識の導入方針。auto = Vulkan が使えれば speech.cpp、使えなければ faster-whisper。both = 両方（設定画面で切り替えて試せる）
+STT_PLAN = {"mode": "speechcpp"}
+STT_KEYS = {"speechcpp": ("speechcpp", "stt_asr"), "faster-whisper": ("stt_env", "stt_model"),
+            "both": ("speechcpp", "stt_asr", "stt_env", "stt_model")}
+
+
+def speechcpp_done(install: Path) -> bool:
+    mark = stt_engine.speech_dir(install) / ".setup_ok"
+    return stt_engine.speechcpp_installed(install) and mark.exists() and mark.read_text().strip() == stt_engine.SPEECHCPP["sha256"]
+
+
+def decide_stt(requested: str, hw: dict) -> tuple[str, str]:
+    """(導入方針, 案内)。requested: auto / speechcpp / faster-whisper / both"""
+    ok, why = hw["vulkan_ok"], hw["vulkan_why"]
+    if requested == "auto":
+        if ok:
+            return "speechcpp", ""
+        return "faster-whisper", (why + " 従来の faster-whisper（CPU）を入れて使います。"
+                                  "Vulkan が使えるようになったら、`setup.bat --stt both` で speech.cpp も追加できます。")
+    if requested in ("speechcpp", "both") and not ok:
+        return "faster-whisper", why + " speech.cpp は動かせないので、faster-whisper（CPU）だけを入れます。"
+    return requested, ""
+
+
+def stt_summary() -> str:
+    m = {"speechcpp": "speech.cpp（Vulkan。GPU か CPU）+ parakeet-tdt_ctc-0.6b-ja",
+         "faster-whisper": "faster-whisper small（CPU）", "both": "speech.cpp + faster-whisper（切り替え可）"}
+    return m[STT_PLAN["mode"]]
+
+
 def component_state(install: Path, name: str) -> bool:
     """その部品がすでに導入済みか（容量の見積もりから差し引く）"""
     return {
         "llama.cpp": (install / "llama.cpp" / "llama-server.exe").exists(),
         "tts_env": (install / "tts" / ".venv" / ".setup_ok").exists(),
         "tts_models": (install / "hf-home" / ".tts_prefetched").exists(),
+        "speechcpp": speechcpp_done(install),
+        "stt_asr": stt_engine.model_present(install, stt_engine.DEFAULT_MODEL),
         "stt_env": (install / "stt" / ".venv" / ".setup_ok").exists(),
         "stt_model": (install / "hf-home" / ".stt_prefetched").exists(),
         "app_env": (install / "app" / ".venv" / ".setup_ok").exists(),
@@ -379,6 +431,8 @@ def _components(install: Path, skip: tuple = ()) -> list[dict]:
     out = []
     for key, (dl, disk) in SIZES_GB.items():
         if key in skip:
+            continue
+        if key in ("speechcpp", "stt_asr", "stt_env", "stt_model") and key not in STT_KEYS[STT_PLAN["mode"]]:
             continue
         if key == "sample_images" and not component_state(install, "ui"):
             dl = 0.0
@@ -500,7 +554,7 @@ def show_plan(hw: dict, name: str, notes: list[str], plan: dict, llm: dict, inst
             say(f"  LLM : 外部の推論サーバーを使う（{args.llm_url}）。llama.cpp とモデルは入れません")
             if settings_store.is_cloud_url(args.llm_url):
                 say("  ※ 会話の内容が外部のサービスに送られます。")
-        say("  TTS : Irodori-TTS v4.1 Small（int8）／ STT: faster-whisper small（CPU）")
+        say("  TTS : Irodori-TTS v4.1 Small（int8）／ STT: " + stt_summary())
         for n in notes:
             say(f"  ※ {n}")
         _show_items(hw, plan, install, ports)
@@ -524,7 +578,7 @@ def show_plan(hw: dict, name: str, notes: list[str], plan: dict, llm: dict, inst
         say(f"        専門家（MoE）のうち {llm['info']['n_cpu_moe']}/{p['moe_layers']} 層を CPU 側に置く（LLM の VRAM 見込み 約 {llm['info']['llm_vram_estimate_mib'] / 1024:.1f} GiB）")
     else:
         say(f"        VRAM に収まる分だけ GPU に載せる（TTS 用に約 {llm['fit_target_mib'] / 1024:.1f} GiB の余白を残す）")
-    say("  TTS : Irodori-TTS v4.1 Small（int8）／ STT: faster-whisper small（CPU）")
+    say("  TTS : Irodori-TTS v4.1 Small（int8）／ STT: " + stt_summary())
     for n in notes:
         say(f"  ※ {n}")
     g = hw["gpu"]
@@ -653,7 +707,7 @@ class Installer:
         say("\n[配置] プログラムのファイルをインストール先にコピーします。")
         ignore = shutil.ignore_patterns(".venv", "__pycache__", ".env", ".env.local", "data", "html", "*.db", "*.db-*",
                                         "recorded_voices", "logs")
-        for name in ["ctl.py", "supervisor.py", "profiles.py", "hf_hub.py", "hf_dl.py", "model_picker.py", "settings_store.py", "tools_store.py", "configure.py", "setup.py",
+        for name in ["ctl.py", "supervisor.py", "profiles.py", "stt_engine.py", "hf_hub.py", "hf_dl.py", "model_picker.py", "settings_store.py", "tools_store.py", "configure.py", "setup.py",
                      "start.bat", "debug-start.bat", "stop.bat", "setup.bat", "configure.bat", "koemado.ico", "koemado.vbs", "display_env.py", "display.py", "display.bat", "start-mascot.bat", "start-browser.bat", "mascot.py", "README.md", "LICENSE"]:
             if (SRC_DIR / name).exists():
                 shutil.copy2(SRC_DIR / name, self.root / name)
@@ -703,11 +757,11 @@ class Installer:
         say("\n[準備] Hugging Face の CLI（hf download。hf_xet 入り）を入れます。")
         hf_dl.ensure_hf_cli(self.root, self.uv, env=self.env, python=PINNED["python"], log=say)
 
-    def run_download(self, repo: str, files: list[dict], local_dir: Path, label: str):
+    def run_download(self, repo: str, files: list[dict], local_dir: Path, label: str, revision: str = ""):
         """hf download（遅いときは並列の Range 取得に切り替わる）。進捗を 1 行で出す。Ctrl+C で中断（続きから再開できる）"""
         status = {}
         job = hf_dl.Job(self.root, repo, files, local_dir, getattr(self, "hf_token", ""), status=status, log=lambda line: None,
-                        uv=self.uv, base_env=self.env)
+                        uv=self.uv, base_env=self.env, revision=revision)
         t = threading.Thread(target=job.run, daemon=True)
         t.start()
         last = ""
@@ -815,6 +869,86 @@ class Installer:
 
     # ---- STT ----
     def install_stt(self):
+        """STT_PLAN に従って、speech.cpp（既定）と faster-whisper（予備）を入れる。
+        speech.cpp が動かなかったとき（speech devices が失敗）は、faster-whisper に切り替えて案内する"""
+        mode = STT_PLAN["mode"]
+        if mode in ("speechcpp", "both"):
+            if not self.install_speechcpp():
+                say("\n[STT] speech.cpp を動かせなかったので、従来の faster-whisper（CPU）を入れて使います。")
+                STT_PLAN["mode"] = "faster-whisper"
+                self.install_faster_whisper()
+                return
+        if mode in ("faster-whisper", "both"):
+            self.install_faster_whisper()
+
+    def install_speechcpp(self) -> bool:
+        """speech.cpp のリリース zip（版を固定）を SHA256SUMS と固定値で検証してから、stt\\speechcpp\\ に展開する。
+        公式の install.ps1 は PATH を書き換えるので使わない。戻り値: 動くか（speech devices が通るか）"""
+        pin = stt_engine.SPEECHCPP
+        dest = stt_engine.speech_dir(self.root)
+        if speechcpp_done(self.root):
+            say(f"\n[STT] speech.cpp {pin['version']} は導入済み")
+        else:
+            say(f"\n[STT] speech.cpp {pin['version']}（Vulkan ビルド、MIT）を入れます。")
+            zdir = self.root / ".downloads" / "speechcpp"
+            zdir.mkdir(parents=True, exist_ok=True)
+            zpath = zdir / pin["asset"]
+            if not zpath.exists() or sha256_file(zpath) != pin["sha256"]:
+                zpath.unlink(missing_ok=True)
+                download(pin["url"], zpath, "speech.cpp")
+            # 検証: リリースの SHA256SUMS と、このスクリプトに固定した値の両方に合うこと
+            try:
+                with urllib.request.urlopen(pin["sums_url"], timeout=60) as r:
+                    sums = r.read().decode("utf-8", "replace")
+            except Exception as e:  # noqa: BLE001
+                zpath.unlink(missing_ok=True)
+                die(f"speech.cpp の SHA256SUMS を取得できません: {e}")
+            listed = {line.split()[-1].lstrip("*"): line.split()[0].lower() for line in sums.splitlines() if len(line.split()) >= 2}
+            actual = sha256_file(zpath)
+            if listed.get(pin["asset"]) != actual or actual != pin["sha256"]:
+                zpath.unlink(missing_ok=True)
+                die(f"speech.cpp の zip の SHA-256 が一致しません。\n  取得したファイル: {actual}\n  SHA256SUMS      : {listed.get(pin['asset'])}\n  固定した値      : {pin['sha256']}\n"
+                    "  ダウンロードが壊れたか、配布物が差し替えられた可能性があります。zip は削除しました。もう一度 setup.bat を実行してください。")
+            say(f"  SHA-256 の検証: 一致（{actual[:16]}…）")
+            tmp = dest.with_name(dest.name + ".new")
+            shutil.rmtree(tmp, ignore_errors=True)
+            with zipfile.ZipFile(zpath) as z:
+                z.extractall(tmp)
+            if not (tmp / "speech.exe").exists():
+                die("speech.exe が展開されませんでした。")
+            ver = subprocess.run([str(tmp / "speech.exe"), "--version"], capture_output=True, text=True, errors="replace", cwd=str(tmp),
+                                 creationflags=0x08000000).stdout.strip()
+            if pin["version"] not in ver:
+                say(f"  [警告] speech.exe を起動できないか、バージョンが想定と違います: {ver!r}（Vulkan のローダーが無い可能性があります）")
+            shutil.rmtree(dest, ignore_errors=True)
+            tmp.replace(dest)
+            (dest / ".setup_ok").write_text(pin["sha256"])
+            zpath.unlink(missing_ok=True)
+            say(f"  展開しました: {dest}（{ver}）")
+        # 動作確認: speech devices が通ること
+        devs, why = stt_engine.devices(self.root, force=True)
+        if devs is None:
+            say("  [警告] " + why)
+            return False
+        say("  使えるデバイス（speech devices）: " + " / ".join(f"{d['name']}={d['description'].strip()}（{d['kind']}）" for d in devs))
+        self.install_asr_model(stt_engine.DEFAULT_MODEL)
+        return True
+
+    def install_asr_model(self, key: str):
+        m = stt_engine.MODELS[key]
+        if stt_engine.model_present(self.root, key):
+            say(f"[STT] 認識モデル {m['file']} は導入済み")
+            return
+        say(f"[STT] 認識モデル {m['repo']} / {m['file']}（{m['size_bytes'] / GIB:.2f} GiB、{m['license']}）をダウンロードします（hf download）。")
+        d = stt_engine.models_dir(self.root)
+        self.run_download(m["repo"], [{"path": m["file"], "size": m["size_bytes"], "sha256": m["sha256"]}], d, "STT モデル", revision=m["revision"])
+        got = sha256_file(d / m["file"])
+        if got != m["sha256"]:
+            (d / m["file"]).unlink(missing_ok=True)
+            die(f"{m['file']} の SHA-256 が一致しません（{got}）。ファイルを削除しました。もう一度 setup.bat を実行してください。")
+        say("  SHA-256 の検証: 一致")
+
+    def install_faster_whisper(self):
         stt = self.root / "stt"
         req = stt / "requirements.txt"
         digest = hashlib.sha256(req.read_bytes()).hexdigest()
@@ -825,7 +959,7 @@ class Installer:
             self.uv_run(["pip", "install", "--python", stt / ".venv" / "Scripts" / "python.exe", "-r", req])
             marker.write_text(digest)
         else:
-            say("\n[STT] 導入済み")
+            say("\n[STT] faster-whisper は導入済み")
         pre = self.root / "hf-home" / ".stt_prefetched"
         if not pre.exists():
             say(f"[STT] Whisper {PINNED['stt_model']} のモデルを取得します（hf download）。")
@@ -1002,10 +1136,10 @@ def build_config(name: str, hw: dict, ports: dict, args) -> dict:
         "ram_simulated": "ram" in hw["simulated"],
         "ports": ports,
         "tts": {"hf_checkpoint": PINNED["tts_hf_checkpoint"]},
-        "stt": {"model": PINNED["stt_model"], "cpu_threads": max(2, min(8, hw["cores"]))},
-        "start_timeout_sec": {"llm": 900, "tts": 900, "stt": 300, "app": 180},
+        "stt": {"model": PINNED["stt_model"], "cpu_threads": max(2, min(8, hw["cores"]))},   # model は faster-whisper（予備）用。speech.cpp のモデルは設定画面（config/settings.json の stt）
+        "start_timeout_sec": {"llm": 900, "tts": 900, "stt": 600, "app": 180},
         "external_wait_sec": 120,
-        "pinned": {k: PINNED[k] for k in ("llama_tag", "tts_commit", "tts_hf_checkpoint")},
+        "pinned": {**{k: PINNED[k] for k in ("llama_tag", "tts_commit", "tts_hf_checkpoint")}, "speechcpp": stt_engine.SPEECHCPP["version"]},
     }
 
 
@@ -1224,6 +1358,8 @@ def main():
     ap.add_argument("--hf-token-env", action="store_true", help="環境変数 HF_TOKEN の Hugging Face トークンを使う（トークンをコマンドラインに書かないための指定。保存はしない）")
     ap.add_argument("--ask-model", action="store_true", help="--dry-run でも、モデルの選び方を質問する（テスト用）")
     ap.add_argument("--llm-api-key", default="", help="external のときの API キー（任意。config/settings.json に保存される）")
+    ap.add_argument("--stt", choices=["auto", "speechcpp", "faster-whisper", "both"], default="auto",
+                    help="音声認識: auto=speech.cpp（Vulkan が使えない PC では faster-whisper）/ speechcpp / faster-whisper（従来。CPU）/ both=両方（設定画面で切り替えられる）")
     ap.add_argument("--display", choices=["mascot", "browser", "both", "ask"], default=None,
                     help="表示方法: mascot=デスクトップのキャラ（既定）/ browser=ブラウザのタブ / both=両方 / ask=最後に聞く（--yes のときは mascot）")
     args = ap.parse_args()
@@ -1236,6 +1372,9 @@ def main():
     print_hardware(hw)
     args.llm_explicit = bool(args.llm) or bool(args.model)
     args.hf_token, args.hf_save = "", False
+    STT_PLAN["mode"], stt_note = decide_stt(args.stt, hw)
+    if stt_note:
+        say(f"\n※ 音声認識: {stt_note}")
     choice = None
     # 先にプロファイルを決める（Strata の案内は、選ばれたプロファイルが high のときだけ）
     name, notes, llm = None, [], None

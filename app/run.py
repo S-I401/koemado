@@ -33,6 +33,7 @@ load_dotenv(BASE_DIR / ".env")
 
 import ctl  # noqa: E402
 import settings_store as ss  # noqa: E402
+import stt_engine  # noqa: E402
 import tools_store as ts  # noqa: E402
 from avatar_memory import SCHEMA, AvatarMemory  # noqa: E402
 from settings_api import RUNTIME, LocalOnlyMiddleware, make_router  # noqa: E402
@@ -227,11 +228,56 @@ def make_tts_request(text: str, style_info: dict = None, language: str = None) -
 
 tts = create_instant_synthesizer(request_maker=make_tts_request, timeout=120)
 
-# ---- STT: ローカルの OpenAI 互換サーバー ----
-stt = OpenAISpeechRecognizer(
+# ---- STT: ローカルの OpenAI 互換サーバー（speech.cpp の `speech serve`、または従来の faster-whisper）----
+class LocalSpeechRecognizer(OpenAISpeechRecognizer):
+    """OpenAISpeechRecognizer に、prompt（キャラ名と、設定画面に登録した「よく使う言葉」）を送れるようにしたもの。
+
+    AIAvatarKit 0.9.1 の OpenAISpeechRecognizer は model / language / file しか送らないので、transcribe を差し替える。
+    - speech.cpp は、model を省略するか、起動中のモデルの id と同じにする必要がある（別の id は 404）。
+      設定画面でモデルを切り替えたあとも合うように、model は送らない（起動中のモデルを使う）。
+    - prompt を受け付けるのは qwen3-asr だけ（parakeet は拒否する）ので、そのときだけ送る。
+    - 設定は毎回読む（hints の変更は次の発話から反映される。エンジン・モデル・デバイスは STT の再起動で反映される）。
+    """
+
+    def _form(self) -> dict:
+        form = {}
+        try:
+            st = {**stt_engine.default_stt_settings(), **(settings().get("stt") or {})}
+            r = stt_engine.resolve(CFG, settings(), ROOT, probe=False)
+            if r["engine"] == "speechcpp":
+                if r["model"]["hint"]:
+                    try:
+                        name = current_character().get("name", "")
+                    except Exception:
+                        name = ""
+                    prompt = stt_engine.build_prompt(name, st["hints"])
+                    if prompt:
+                        form["prompt"] = prompt
+            else:
+                form["model"] = CFG.get("stt", {}).get("model", "small")
+        except Exception:
+            logger.exception("STT の設定を読めませんでした（既定で認識します）")
+        return form
+
+    async def transcribe(self, data: bytes) -> str:
+        if len(data) < self.min_data_length:
+            return None
+        form_data = self._form()
+        if self.language and not self.alternative_languages:
+            form_data["language"] = self.language.split("-")[0] if "-" in self.language else self.language
+        files = {"file": ("voice.wav", self.to_wave_file(data), "audio/wav")}
+        resp = await self.http_request_with_retry(
+            method="POST", url=f"{self.base_url}/audio/transcriptions",
+            headers={"Authorization": f"Bearer {self.openai_api_key}"}, data=form_data, files=files)
+        try:
+            return resp.json()["text"]
+        except Exception:
+            return None
+
+
+stt = LocalSpeechRecognizer(
     openai_api_key="none",
     base_url=os.environ["STT_BASE_URL"],
-    model=os.getenv("STT_MODEL", "small"),
     language="ja",
     timeout=60,
 )

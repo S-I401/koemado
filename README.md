@@ -8,7 +8,7 @@ Windows の PC で、**ワンクリックで導入できるローカル音声会
 クラウドへの送信はありません（外部の推論サーバーを自分で選んだ場合を除く）。
 
 ```
-ブラウザ / デスクトップのキャラ（マイク） ─ AIAvatarKit ─ STT: faster-whisper（CPU）
+ブラウザ / デスクトップのキャラ（マイク） ─ AIAvatarKit ─ STT: speech.cpp（Vulkan。GPU か CPU）
                          │
                          ├─ LLM: llama.cpp の llama-server（GGUF）  ※ 外部の推論サーバーに替えることもできます
                          └─ TTS: Irodori-TTS v4.1 Small（int8, CUDA）
@@ -31,6 +31,7 @@ Windows の PC で、**ワンクリックで導入できるローカル音声会
 | OS | Windows 10 / 11（64bit） |
 | GPU | **NVIDIA GPU 必須**（RTX 20 シリーズ以降、VRAM 6GB 以上）。<br><br><br><br>ドライバ **570 以上**（PyTorch CUDA 12.8 の要件） |
 | メモリ | 16GB 以上（標準プロファイルは 32GB 以上） |
+| Vulkan | GPU のドライバに含まれる `vulkan-1.dll`（STT の speech.cpp 用）。<br><br><br><br>無い PC では、従来の faster-whisper（CPU）で動きます（「音声認識（STT）」の節） |
 | 空き容量 | プロファイルにより約 19〜35GB（下の表）。<br><br><br><br>インストール先のドライブに必要です |
 | ネットワーク | 導入時に GitHub / Hugging Face / PyPI からダウンロードします（合計 約 15〜32GB） |
 
@@ -126,7 +127,9 @@ setup.bat --llm strata                    Strata を導入して使う（high �
 setup.bat --model unsloth/Qwen3-8B-GGUF:Qwen3-8B-Q4_K_M.gguf
                                           同梱の LLM のモデルを指定する（リポジトリ:ファイル名。範囲外は選べない）
 setup.bat --model <repo>:<file> --hf-token-env   環境変数 HF_TOKEN のトークンを使う（コマンドラインにトークンは書かない）
-setup.bat --dry-run --simulate "vram=8,ram=32,disk=60"   別の PC を想定した判定（テスト用）
+setup.bat --stt auto|speechcpp|faster-whisper|both
+                                          音声認識の導入（既定の auto は、Vulkan が使えれば speech.cpp、使えなければ faster-whisper。both は両方）
+setup.bat --dry-run --simulate "vram=8,ram=32,disk=60"   別の PC を想定した判定（テスト用。vulkan=0 で Vulkan が無い PC）
 ```
 
 ### モデルの選び方（導入時）
@@ -176,14 +179,141 @@ PC のスペックから自動で選びます（`--profile` で変更可）。\
 | low | 6GB 以上 / 16GB 以上 | Gemma 4 E4B（QAT q4_0） | 4.8 GiB | 約 19GB |
 
 - **mid** は MoE モデルの専門家（experts）の重みの大部分を CPU 側に置き、VRAM を LLM 約 3.6GB + TTS 約 2.7GB（ピーク）に収めます（VRAM 8GB の GPU で、Windows のデスクトップ分を残すため）。
-- 容量の内訳: llama.cpp 約 1.2GB、TTS の実行環境（PyTorch CUDA）約 5.2GB、TTS・STT のモデル約 2GB、その他の環境約 1GB（ダウンロードのキャッシュは導入の最後に消します）。
+- 容量の内訳: llama.cpp 約 1.2GB、TTS の実行環境（PyTorch CUDA）約 5.2GB、TTS のモデル約 1.4GB、STT（speech.cpp 約 0.1GB + parakeet 約 0.7GB）、その他の環境約 1GB（Vulkan が使えない PC は、STT が faster-whisper の環境とモデルで約 0.8GB）（ダウンロードのキャッシュは導入の最後に消します）。
 - モデルの差し替えは `profiles.py` の表を直します。\
   Hugging Face のトークンを登録すると、設定画面で GGUF の一覧から、プロファイルの範囲内で自由に選べます（「モデルブラウザ」の節）。
 
 ### 固定しているバージョン
 
-llama.cpp `b11443`（CUDA 12 ビルド）／ Irodori-TTS-Server `61012c7`（`uv.lock` に従う）／ Irodori-TTS v4.1 Small int8（`Aratako/Irodori-TTS-v4.1-Small-Quantized`）／ aiavatar 0.9.1 ／ fastmcp 4.0.11 ／ ddgs 9.16.0 ／ faster-whisper 1.2.1（small, CPU int8）／ pystray 0.19.5 ／ pillow 12.3.0 ／ PySide6 6.11.2（Essentials / Addons、Qt WebEngine）／ shiboken6 6.11.2。\
+llama.cpp `b11443`（CUDA 12 ビルド）／ Irodori-TTS-Server `61012c7`（`uv.lock` に従う）／ Irodori-TTS v4.1 Small int8（`Aratako/Irodori-TTS-v4.1-Small-Quantized`）／ aiavatar 0.9.1 ／ fastmcp 4.0.11 ／ ddgs 9.16.0 ／ speech.cpp v0.8.4（`speech-0.8.4-windows-x64-vulkan.zip`、SHA-256 `c35e75e6…`）／ parakeet-tdt_ctc-0.6B-ja Q8_0（`sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF` `f7cb538`）／ Qwen3-ASR 0.6B・1.7B Q8_0（`sakasegawa/Qwen3-ASR-*-GGUF`）／ faster-whisper 1.2.1（small, CPU int8。Vulkan が使えない PC の予備）／ pystray 0.19.5 ／ pillow 12.3.0 ／ PySide6 6.11.2（Essentials / Addons、Qt WebEngine）／ shiboken6 6.11.2。\
 依存のバージョンは `app/requirements.txt` と `stt/requirements.txt` で固定しています。
+
+## 音声認識（STT）
+
+話した言葉を文字にする部分（STT）は、[speech.cpp](https://github.com/nyosegawa/speech.cpp)（MIT）の `speech serve` が既定です。\
+Python も CUDA も使わず、**Vulkan**（NVIDIA・AMD・Intel の GPU のドライバに含まれる `vulkan-1.dll`）で GPU を使います。\
+CPU でも動きます。\
+従来の faster-whisper（Whisper small、CPU）は、Vulkan が使えない PC のための予備として残しています。
+
+- 導入: `setup.bat` が、公式のリリース `speech-0.8.4-windows-x64-vulkan.zip`（約 30MB）を `stt\speechcpp\` に展開します。\
+  公式の `install.ps1` は PATH を書き換えるので使いません。\
+  zip は、リリースの `SHA256SUMS` と、`stt_engine.py` に固定した SHA-256 の**両方に一致したとき**だけ展開します。\
+  認識モデルの GGUF は `hf download` で `models\stt\` に取得し、固定したコミットの SHA-256 も検証します（一致しなければ削除してやり直します）。
+- 起動: 管理プロセスが `speech serve <モデル> --host 127.0.0.1 --port <STT のポート> --device <GPU か CPU> --language ja` をウィンドウなしで起動します。\
+  準備ができたかは `/v1/models` で見ます。\
+  出力は管理画面のログ（`logs\stt.log`）に流れます。\
+  初回は GPU のドライバがシェーダーをコンパイルするので、待ち時間の上限を 600 秒にしています（実測では、起動は数秒で、初回の認識だけ 5〜10 秒かかることがありました）。
+- 会話: AIAvatarKit の `OpenAISpeechRecognizer` は `prompt` を送れないので、`app/run.py` で継承して送れるようにしています（下の「よく使う言葉」）。
+
+### モデル
+
+| 設定の名前 | モデル | サイズ | CER（公表値） | 特徴 | ライセンス |
+|---|---|---|---|---|---|
+| `parakeet-ja`（既定） | [parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF)（`parakeet-tdt_ctc-0.6B-ja-Q8_0.gguf`） | 661MB | 7.9% | 速い。<br><br><br><br>かな書きになりやすい。<br><br><br><br>`prompt` は使えません | CC-BY-4.0（© NVIDIA） |
+| `qwen3-asr-0.6b` | [Qwen3-ASR 0.6B](https://huggingface.co/sakasegawa/Qwen3-ASR-0.6B-GGUF)（`Qwen3-ASR-0.6B-Q8_0.gguf`） | 842MB | 11.9% | 軽く、漢字で書ける。<br><br><br><br>固有名詞のヒントを渡せます | Apache-2.0 |
+| `qwen3-asr-1.7b` | [Qwen3-ASR 1.7B](https://huggingface.co/sakasegawa/Qwen3-ASR-1.7B-GGUF)（`Qwen3-ASR-1.7B-Q8_0.gguf`） | 2.18GB | 9.5% | 最も正確。<br><br><br><br>ヒント可。<br><br><br><br>VRAM は 2.3GB 使います | Apache-2.0 |
+| faster-whisper small | [Systran/faster-whisper-small](https://huggingface.co/Systran/faster-whisper-small) | 約 0.5GB | - | 従来。<br><br><br><br>CPU。<br><br><br><br>Vulkan が使えない PC の予備 | MIT |
+
+CER は speech.cpp が公表している Common Voice 8.0 日本語 test（4,483 発話、Q8_0）の値です。\
+モデルの GGUF は、speech.cpp の作者（sakasegawa）が変換したものです（リポジトリとファイル名は上のリンク先、コミットは `stt_engine.py` に固定）。
+
+### 比べてみた結果
+
+このリポジトリで、実際に比べました。\
+Irodori で合成した日本語 12 文（会話らしい短い文に、仙台・ミオ・Hugging Face・Python・数字を含む。声は `mio_bright` / `mio_a` / `mio_b` / `mio_c` / `mio_d`）を、16kHz・モノラルにして、各構成で認識しています（`tools/stt_bench.py`）。\
+PC は Ryzen 7 7800X3D（8 スレッド）+ RTX 4090（Vulkan）です。
+
+| 構成 | CER | CER\* | 読み CER | 完全一致 | 1 発話あたり（平均、約 4.5 秒の発話） |
+|---|---|---|---|---|---|
+| faster-whisper small（CPU） | 13.5% | 10.2% | 9.8% | 4 / 12 | 1.1〜1.2 秒 |
+| speech.cpp parakeet-ja（GPU） | 16.9% | 13.6% | 4.6% | 3 / 12 | 0.03〜0.05 秒 |
+| speech.cpp parakeet-ja（CPU） | 16.9% | 13.6% | 4.6% | 3 / 12 | 0.3 秒 |
+| speech.cpp qwen3-asr-0.6b（GPU） | 6.0% | 6.0% | 4.3% | 8 / 12 | 0.05〜0.08 秒 |
+| speech.cpp qwen3-asr-0.6b（CPU） | 6.2% | 6.2% | 5.0% | 8 / 12 | 0.9 秒 |
+| speech.cpp qwen3-asr-1.7b（GPU） | 5.1% | 4.2% | 3.6% | 8 / 12 | 0.09〜0.13 秒 |
+| speech.cpp qwen3-asr-1.7b（CPU） | 4.0% | 3.1% | 2.9% | 9 / 12 | 1.8 秒 |
+| speech.cpp qwen3-asr-1.7b（GPU、ヒント「仙台、ミオ、Hugging Face、Python、LLM」） | 5.0% | 3.1% | 2.9% | 9 / 12 | 0.14 秒 |
+
+- **CER**: 空白と句読点を除き、NFKC で正規化した文字列の編集距離 ÷ 正解の長さです。\
+  漢字とかなの書き分けも誤りに数えます。
+- **CER\***: さらに漢数字を算用数字にそろえたものです（「七時」と「7時」を同じに扱う）。
+- **読み CER**: 正解と認識結果の両方をひらがなの読みにしてから比べたものです（pykakasi。英単語の読みは近似です）。
+- 時間は、静かだった 2 回の計測の範囲です。\
+  もう 1 回は、ほかのセッションが CPU を使っていたようで、CPU の構成が 1.5〜3 倍遅くなりました（faster-whisper small は 2.2 秒、parakeet-ja の CPU は 1.0 秒）。\
+  CPU の時間は、ほかのアプリの負荷で大きく変わります。
+- 同じ構成で、GPU と CPU の CER が少し違うのは、演算の誤差で結果が変わる文があるためです。
+
+**正直な結果**:
+- **parakeet-ja が faster-whisper small より「明確に良い」とは言えません。**\
+  速度は圧倒的です（GPU で約 30 倍、CPU でも約 4 倍速い）。\
+  読み（音）の正確さも約 2 倍です（読み CER 4.6% 対 9.8%）。\
+  ただし、漢字で書き分ける力は低く（「みお」「ほんとう」「あした」「ばんごはん」のように、かな書きで出す）、表記の CER は faster-whisper small より悪くなりました（16.9% 対 13.5%）。\
+  LLM はかな書きでも意味を取れるので、会話では問題にならないことも多いと考えられます（今回は確かめていません）。\
+  ただ、固有名詞は、かなでは区別しにくくなります。
+- **Qwen3-ASR のほうが、この試験ではどれも正確**でした（CER 4〜6%）。\
+  特に 1.7B は、CPU でも 4.0%（1 発話 約 1.8 秒）で、faster-whisper small と同じくらいの時間で、より正確です。\
+  GPU に余裕があれば、0.6B は 0.1 秒以下で、6% 台です。
+- 公表されている Common Voice の CER（parakeet 7.9% < Qwen3-ASR 1.7B 9.5%）とは、順位が逆です。\
+  この試験は、合成音声の 12 文だけです（実際の人の声・雑音のある部屋ではありません）。\
+  差を決めたのは、主に漢字とかなの書き分けです。
+- **友人のフィードバック（「認識が悪い」）への対策としては、既定の parakeet-ja より、qwen3-asr-0.6b か 1.7b を勧めます。**\
+  既定を変えるときは、`stt_engine.py` の `DEFAULT_MODEL` を 1 行直します（設定画面でも切り替えられます）。
+
+### VRAM と、プロファイルごとの既定のデバイス
+
+mid の構成（VRAM 8GB の模擬。LLM・TTS・STT をすべて起動して、会話と認識を繰り返した最大）で、Windows の「GPU Process Memory」の専有メモリを、プロセスごとに測りました。
+
+| STT | LLM | TTS | STT | 合計の最大 | 7GB（7,168MiB）以下 |
+|---|---|---|---|---|---|
+| CPU（parakeet） | 3,518MiB | 2,410MiB | 0 | 5,929MiB | ○ |
+| parakeet-ja（GPU） | 3,518MiB | 2,424MiB | 705MiB | 6,647MiB | ○ |
+| qwen3-asr-0.6b（GPU） | 3,518MiB | 2,408MiB | 1,041MiB | 6,967MiB | ○（余裕は小さい） |
+| qwen3-asr-1.7b（GPU） | 3,518MiB | 2,442MiB | 2,321MiB | 8,281MiB | **×（8GB のカードに収まらない）** |
+
+デバイスが「自動」のときの既定は、次のとおりです。
+
+| プロファイル | parakeet-ja | qwen3-asr-0.6b | qwen3-asr-1.7b | 根拠 |
+|---|---|---|---|---|
+| high | GPU | GPU | GPU | VRAM 20GB 以上。<br><br><br><br>LLM が `--fit-target` で残す余白に、STT の分を足します |
+| mid | GPU | GPU | **CPU** | 上の実測。<br><br><br><br>1.7B は 8GB に収まらない（CPU でも 1 発話 約 1.8 秒） |
+| low | CPU | CPU | CPU | VRAM 6GB 級は、LLM と TTS でほぼ埋まる見込み（実機では未測定）。<br><br><br><br>parakeet は CPU でも 0.3 秒 |
+| 外部の LLM | GPU | GPU | GPU | LLM を別に動かすので、VRAM に余裕がある |
+| Strata | GPU | CPU | CPU | Strata が TTS 用に残す余白（約 1GB）に収まる parakeet だけ |
+
+### 切り替え方
+
+- **設定画面の「音声認識」タブ**（`http://127.0.0.1:8100/settings#stt`）で、エンジン（自動 / speech.cpp / faster-whisper）・モデル・デバイス（自動 / GPU / CPU）・よく使う言葉を選んで、「保存して適用」を押します。
+  - まだ取得していないモデルを選ぶと、ファイル名・サイズ・ライセンスを出して、**確認のあとで** Hugging Face から取得します（進捗バー、キャンセル、SHA-256 の検証つき）。
+  - エンジン・モデル・デバイスを変えたときは、**STT だけが再起動**します（LLM・TTS・会話は止まりません）。\
+    よく使う言葉は次の発話から反映されます。
+  - faster-whisper に戻すこともできます（導入してあるとき）。
+- 設定画面が開けないときは `configure.bat` →「音声認識」でも変えられます。\
+  設定は `config/settings.json` の `stt`（`engine` / `model` / `device` / `hints`）に保存します。
+- `setup.bat --stt auto|speechcpp|faster-whisper|both` で、導入するものを選べます（既定の `auto` は、Vulkan が使えれば speech.cpp、使えなければ faster-whisper）。\
+  `both` にすると、設定画面で faster-whisper にも切り替えられます。
+
+![音声認識](docs/screenshots/settings_stt.png)
+
+### よく使う言葉（固有名詞のヒント）
+
+qwen3-asr のときは、**キャラクターの名前**と、設定画面に登録した「よく使う言葉」（読点か改行で区切る、400 文字まで）を `prompt` として送ります。\
+モデルは `prompt` を背景として使い、指示としては扱いません。\
+この試験の「ミオさん、おはようございます。」は、ヒントなしの 1.7B では「みよさ、おはようございます。」になり、ヒントありでは正しく「ミオさん、…」になりました（アプリを通した会話でも確認）。\
+parakeet は `prompt` を受け付けないので、送りません。
+
+### Vulkan が無い PC
+
+`vulkan-1.dll` が見つからない、`speech devices` が通らない、という PC では、`setup.bat` が従来の faster-whisper（CPU）を入れて、その旨を表示します。\
+実行時も、speech.cpp を使えなければ faster-whisper で動かし、管理画面のログに理由を出します（`start.bat` は止まりません）。\
+テストでは、環境変数 `KOEMADO_SIMULATE_NO_VULKAN=1`（実行時）や `setup.bat --simulate "vulkan=0"`（導入時）で、`vulkan-1.dll` が無い PC を再現できます。\
+あとで Vulkan が使えるようになったら、`setup.bat --stt both` で speech.cpp も追加できます。
+
+### クレジット
+
+- parakeet-tdt_ctc-0.6b-ja: **© NVIDIA**、[CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/)（[nvidia/parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja) を GGUF に変換したもの）。\
+  ライセンスが求めるクレジットとして、設定画面の「音声認識」にも表示します。
+- Qwen3-ASR: © Alibaba Qwen、Apache-2.0（[Qwen/Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B)）。
+- speech.cpp: MIT（[nyosegawa/speech.cpp](https://github.com/nyosegawa/speech.cpp)）。
 
 ## 起動と管理画面
 
@@ -451,6 +581,10 @@ Hugging Face（HF）のトークンを登録すると、HF の GGUF モデルの
 設定の保存先は `config/settings.json`（声・LLM）と `characters/`（キャラクター）です。\
 `.env`（`app/.env`）はポートなど低レベルの値だけで、`start.bat` が作り直します。
 
+**音声認識**: エンジン（自動 / speech.cpp / faster-whisper）、モデル（parakeet-ja / qwen3-asr-0.6b / qwen3-asr-1.7b）、デバイス（自動 / GPU / CPU）、よく使う言葉（qwen3-asr のとき）。\
+未取得のモデルは、サイズを出して確認したあとで取得し、STT だけを再起動します。\
+詳しくは「音声認識（STT）」の節です。
+
 ## 表情とリップシンクの素材
 
 会話画面のアバターは、`characters/<id>/` に置いた素材に合わせて動きます。\
@@ -525,6 +659,8 @@ characters/<id>/
 | ブラウザで話しかけても反応しない | ブラウザのマイク許可（アドレスバー左の鍵アイコン）を確認してください。<br><br><br><br>`http://127.0.0.1` はマイクが使える扱いです。<br><br><br><br>Windows の「プライバシー → マイク」でブラウザを許可する必要もあります |
 | VRAM 不足（`CUDA out of memory`、LLM や TTS が起動しない） | ほかのアプリ（ゲーム・3D ソフト・ブラウザのハードウェアアクセラレーション）を閉じてください。<br><br><br><br>設定画面の LLM で、より軽いプロファイル（low）にするか、`--n-cpu-moe` を増やす（`profiles.py`）と VRAM を減らせます |
 | 返答が遅い | 同梱の LLM は VRAM に載らない分を CPU で処理します。<br><br><br><br>low にするか、外部の推論サーバーを使ってください。<br><br><br><br>TTS は num_steps を小さくすると速くなります |
+| 音声認識が悪い（固有名詞・漢字） | 設定画面の「音声認識」で、qwen3-asr-0.6b / 1.7B に替えてください。<br><br><br><br>よく使う言葉（固有名詞のヒント）も登録できます（比較は「音声認識（STT）」の節） |
+| 音声認識が動かない・faster-whisper になっている | `vulkan-1.dll` が見つからない（GPU のドライバを入れ直すと入ります）か、`stt\speechcpp\speech.exe` が無い可能性があります。<br><br><br><br>管理画面のログ（stt）に理由が出ます。<br><br><br><br>Vulkan が使えるようになったら `setup.bat --stt both` を実行してください |
 | ポートが使用中 | `setup.bat` と `start.bat` が空きポートに自動で付け替えます（既定: LLM 8081 / TTS 8088 / STT 8002 / アプリ 8100。8000 と 8080 は避けます） |
 | 起動に失敗する | 管理画面（`http://127.0.0.1:8099/`、またはトレイの「ログ・状態」）の「ログ」を見てください。<br><br><br><br>ファイルは `logs\llm.log`・`tts.log`・`stt.log`・`app.log`・`supervisor.log` です。<br><br><br><br>報告するときは、管理画面の「不具合報告用にまとめてダウンロード」の zip を送ってください（キーは伏せ字です） |
 | 管理画面が開かない・管理プロセスが動かない | `start.bat --console`（または `debug-start.bat`）で、従来どおり各サービスを**コンソールのウィンドウ**で起動できます（エラーがそのまま見えます）。<br><br><br><br>このときは管理画面・トレイはありません。<br><br><br><br>止めるときは `stop.bat` |
@@ -628,7 +764,10 @@ Irodori は生成した音声に透かし（SilentCipher）を入れます。
 | [Irodori-TTS-v4.1-Small（量子化）](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small-Quantized) | TTS のモデル | MIT（倫理的な制限あり） |
 | [Semantic-DACVAE-Japanese-32dim](https://huggingface.co/Aratako/Semantic-DACVAE-Japanese-32dim) / [DACVAE](https://github.com/facebookresearch/dacvae) | TTS の codec | MIT / Apache-2.0 |
 | [SilentCipher](https://github.com/sony/silentcipher) | 生成音声の透かし | MIT |
-| [faster-whisper](https://github.com/SYSTRAN/faster-whisper)（Whisper small） | STT | MIT |
+| [speech.cpp](https://github.com/nyosegawa/speech.cpp) | STT（既定。Vulkan） | MIT |
+| [parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja)（GGUF: sakasegawa） | STT のモデル（既定） | **CC-BY-4.0（© NVIDIA。クレジットの表示が必要）** |
+| [Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) 0.6B / 1.7B（GGUF: sakasegawa） | STT のモデル（任意） | Apache-2.0 |
+| [faster-whisper](https://github.com/SYSTRAN/faster-whisper)（Whisper small） | STT（予備。Vulkan が使えない PC） | MIT |
 | [silero-vad](https://github.com/snakers4/silero-vad) | 音声区間検出 | MIT |
 | [PyTorch](https://pytorch.org/) | TTS の実行 | BSD-3-Clause |
 | [Qwen3.6-35B-A3B](https://huggingface.co/Qwen/Qwen3.6-35B-A3B)（GGUF: unsloth） | LLM（high） | Apache-2.0 |
@@ -656,6 +795,7 @@ html-overrides/        会話画面への追加物（koemado-avatar.js = 口パ�
 configure.bat / .py    設定の対話 CLI（設定画面の予備）
 ctl.py                 起動・停止・再起動・ダウンロード・ショートカット作成の共通処理（コンソール起動もここ）
 profiles.py            LLM プロファイル表、モデルを選べるサイズの範囲、llama-server の引数
+stt_engine.py          音声認識のエンジン・モデルの表、Vulkan の判定、speech.cpp の起動コマンド、デバイスの自動選択
 hf_dl.py               Hugging Face からの取得（hf download の起動・進捗・キャンセル、遅いときの並列 Range 取得と SHA256 検証）
 model_picker.py        モデルの選択（GGUF の束ね・範囲との比較。設定画面と setup.bat の対話モードが共有）
 hf_hub.py              Hugging Face の API（検索・ファイル一覧・GGUF のメタデータ・トークンの確認）。トークンの送り先を huggingface.co に限る
@@ -663,10 +803,10 @@ settings_store.py      設定・キャラクターの読み書きと、ESP の�
 tools_store.py         MCP 設定（config/mcp.json）とスキル（skills/）の読み書き
 skills/                スキル（news-topics / research を同梱）
 app/                   AIAvatarKit 本体（run.py）、設定画面（settings_api.py / settings_ui）、天気・記憶、Web 検索・MCP・スキル・外部エージェント
-stt/                   faster-whisper の STT サーバー
+stt/                   faster-whisper の STT サーバー（予備）、speechcpp/（speech.cpp。導入時に展開）
 voices/                同梱の参照音声（Voice Design で作った成人女性の声）
 characters/            キャラクター（_common.md = 共通ルール、mio/ = サンプル）
-tools/                 e2e_test.py（WebSocket テスト）、make_voices.py（Voice Design で声を作る）、mcp_test_server.py（MCP の確認用）
+tools/                 e2e_test.py（WebSocket テスト）、stt_bench.py（STT の比較計測）、make_voices.py（Voice Design で声を作る）、mcp_test_server.py（MCP の確認用）
 ```
 
 導入後にできるもの（Git には入れません）: `strata/` `strata-data/`（Strata を選んだとき）`config.json` `config/` `llama.cpp/` `models/` `tts/` `hf-home/` `torch-home/` `app/.venv` `stt/.venv` `app/html/` `app/data/` `logs/` など。

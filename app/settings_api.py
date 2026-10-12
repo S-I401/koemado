@@ -6,6 +6,7 @@
 import asyncio
 import base64
 import ctypes
+import hashlib
 import json
 import re
 import shutil
@@ -32,6 +33,7 @@ import model_picker  # noqa: E402
 import profiles  # noqa: E402
 import display_env
 import settings_store as ss  # noqa: E402
+import stt_engine  # noqa: E402
 import tools_store as ts  # noqa: E402
 
 # run.py が起動時に埋める: 実際に登録されたツール・MCP の接続状態（設定画面の表示用。起動中は変わらない）
@@ -246,6 +248,10 @@ def mouth_status(cid: str) -> dict:
 DOWNLOAD = {"status": "idle"}
 _download_lock = threading.Lock()
 _job = None
+# 音声認識（speech.cpp）のモデルの取得。LLM のダウンロードとは別に動く
+STT_DL = {"status": "idle"}
+_stt_lock = threading.Lock()
+_stt_job = None
 
 
 def hf_page(repo: str) -> str:
@@ -1154,14 +1160,147 @@ def make_router(page_path: Path) -> APIRouter:
             raise HTTPException(400, str(e))
         return {"ok": True}
 
+    # ---- 音声認識（STT）----
+    def _stt_models_view() -> list[dict]:
+        out = []
+        for k, m in stt_engine.MODELS.items():
+            out.append({"key": k, "label": m["label"], "short": m["short"], "size_bytes": m["size_bytes"], "present": stt_engine.model_present(ROOT, k),
+                        "hint": m["hint"], "cer": m["cer"], "license": m["license"], "credit": m["credit"], "upstream": m["upstream"],
+                        "repo": m["repo"], "file": m["file"], "vram_mib": stt_engine.STT_VRAM_MIB[k]})
+        return out
+
+    def _stt_state_sync() -> dict:
+        c = cfg()
+        s = ss.load_settings(ROOT)
+        res = stt_engine.resolve(c, s, ROOT)
+        vk_ok, vk_why = stt_engine.vulkan_loader_found()
+        devs, devs_why = (stt_engine.devices(ROOT) if stt_engine.speechcpp_installed(ROOT) and vk_ok else (None, ""))
+        try:
+            char = ss.active_character(s, ROOT).get("name", "")
+        except Exception:
+            char = ""
+        return {
+            "settings": s["stt"],
+            "effective": {"engine": res["engine"], "label": res["label"], "device": res["device"], "device_name": res["device_name"],
+                          "model": res["model_key"], "fallback": res["fallback"]},
+            "healthy": ctl.check_health(c, "stt"),
+            "vulkan": {"ok": vk_ok, "why": vk_why},
+            "speechcpp": {"installed": stt_engine.speechcpp_installed(ROOT), "version": stt_engine.SPEECHCPP["version"], "license": stt_engine.SPEECHCPP["license"],
+                          "home": stt_engine.SPEECHCPP["home"]},
+            "faster_whisper_installed": stt_engine.fw_installed(ROOT),
+            "devices": devs, "devices_error": devs_why,
+            "profile": c.get("profile"),
+            "auto_device": {k: stt_engine.auto_device(c.get("profile"), k) for k in stt_engine.MODELS},
+            "models": _stt_models_view(),
+            "prompt_preview": stt_engine.build_prompt(char, s["stt"].get("hints", "")),
+            "character": char,
+            "disk_free_gib": hardware()["disk_free_gib"],
+        }
+
+    @r.get("/settings/api/stt")
+    async def stt_state():
+        return await asyncio.get_running_loop().run_in_executor(None, _stt_state_sync)
+
+    @r.post("/settings/api/stt/apply")
+    async def stt_apply(request: Request):
+        """音声認識の設定を保存する。モデルが未取得なら保存せず need_download を返す（確認のうえ /stt/download で取得してから、もう一度呼ぶ）。
+        エンジン・モデル・デバイスが変わったときは STT だけを再起動する（hints だけの変更は再起動しない）"""
+        guard_write(request)
+        b = await request.json()
+        cur = ss.load_settings(ROOT)["stt"]
+        new = {"engine": str(b.get("engine", cur["engine"])), "model": str(b.get("model", cur["model"])),
+               "device": str(b.get("device", cur["device"])), "hints": str(b.get("hints", cur["hints"]))}
+        if new["engine"] not in stt_engine.ENGINES or new["model"] not in stt_engine.MODELS or new["device"] not in stt_engine.DEVICES:
+            raise HTTPException(400, "エンジン・モデル・デバイスの指定が不正です。")
+        loop = asyncio.get_running_loop()
+        if new["engine"] == "faster-whisper":
+            if not stt_engine.fw_installed(ROOT):
+                raise HTTPException(400, "faster-whisper が導入されていません。setup.bat --stt both を実行すると追加できます。")
+        else:
+            ok, why = stt_engine.speechcpp_usable(ROOT)
+            if not ok:
+                if new["engine"] == "speechcpp" or not stt_engine.fw_installed(ROOT):
+                    raise HTTPException(400, why)
+            elif not stt_engine.model_present(ROOT, new["model"]):
+                m = stt_engine.MODELS[new["model"]]
+                return {"ok": False, "need_download": {"model": new["model"], "label": m["label"], "size_bytes": m["size_bytes"], "file": m["file"], "license": m["license"],
+                                                      "free_gib": hardware()["disk_free_gib"]}}
+        try:
+            ss.update_settings({"stt": new}, ROOT)
+        except (ValueError, KeyError) as e:
+            raise HTTPException(400, str(e))
+        changed = any(new[k] != cur[k] for k in ("engine", "model", "device"))
+        if changed:
+            spawn_detached([str(ROOT / "app" / ".venv" / "Scripts" / "python.exe"), str(ROOT / "ctl.py"), "restart", "stt"])
+        return {"ok": True, "restarting": changed}
+
+    @r.post("/settings/api/stt/download")
+    async def stt_download(request: Request):
+        guard_write(request)
+        b = await request.json()
+        key = str(b.get("model", ""))
+        if key not in stt_engine.MODELS:
+            raise HTTPException(400, "モデルの指定が不正です。")
+        if not b.get("confirmed"):
+            raise HTTPException(400, "確認が必要です。")
+        m = stt_engine.MODELS[key]
+        need = max(0, m["size_bytes"] - (stt_engine.model_path(ROOT, key).stat().st_size if stt_engine.model_path(ROOT, key).exists() else 0)) / profiles.GIB
+        if hardware()["disk_free_gib"] < need + profiles.DISK_MARGIN_GIB:
+            raise HTTPException(400, f"容量が足りません: ダウンロードに約 {need:.1f}GiB 必要ですが、空きは {hardware()['disk_free_gib']:.1f}GiB です。")
+        global _stt_job
+        with _stt_lock:
+            if STT_DL.get("status") == "running":
+                raise HTTPException(409, "ダウンロード中です。")
+            STT_DL.clear()
+            STT_DL.update(status="running", model=key, file=m["file"], done=0, total=m["size_bytes"], started=time.time(), speed=0, message="")
+            inner: dict = {}
+            _stt_job = hf_dl.Job(ROOT, m["repo"], [{"path": m["file"], "size": m["size_bytes"], "sha256": m["sha256"]}], stt_engine.models_dir(ROOT),
+                                 ss.hf_token(ROOT), status=inner, log=lambda line: print(line, flush=True), flags=hf_dl.CREATE_NO_WINDOW, revision=m["revision"])
+
+            def work(job=_stt_job, key=key, m=m, inner=inner):
+                t = threading.Thread(target=job.run, daemon=True)
+                t.start()
+                while t.is_alive():       # 進捗を見せる。完了（done）は、SHA-256 の検証が済むまで見せない
+                    time.sleep(0.5)
+                    STT_DL.update({k: v for k, v in inner.items() if k != "status"})
+                STT_DL.update(inner)
+                if inner.get("status") != "done":
+                    return
+                STT_DL.update(status="running", message="SHA-256 を検証しています…")
+                p = stt_engine.model_path(ROOT, key)
+                h = hashlib.sha256()
+                with open(p, "rb") as f:
+                    for chunk in iter(lambda: f.read(8 << 20), b""):
+                        h.update(chunk)
+                if h.hexdigest() != m["sha256"]:
+                    p.unlink(missing_ok=True)
+                    STT_DL.update(status="error", error="ダウンロードしたファイルの SHA-256 が一致しません（ファイルは削除しました）。もう一度試してください。", message="")
+                else:
+                    STT_DL.update(status="done", message="")
+            threading.Thread(target=work, daemon=True).start()
+        return {"ok": True}
+
+    @r.get("/settings/api/stt/download/status")
+    async def stt_download_status():
+        return dict(STT_DL)
+
+    @r.post("/settings/api/stt/download/cancel")
+    async def stt_download_cancel(request: Request):
+        guard_write(request)
+        if STT_DL.get("status") != "running":
+            raise HTTPException(400, "ダウンロード中ではありません。")
+        if _stt_job:
+            _stt_job.cancel()
+        return {"ok": True}
+
     # ---- 再起動 ----
     @r.post("/settings/api/restart")
     async def restart(request: Request):
         guard_write(request)
         body = await request.json()
         target = body.get("target", "all")
-        if target not in ("llm", "all"):
-            raise HTTPException(400, "target は llm か all です。")
+        if target not in ("llm", "stt", "all"):
+            raise HTTPException(400, "target は llm / stt / all のどれかです。")
         py = str(ROOT / "app" / ".venv" / "Scripts" / "python.exe")
         spawn_detached([py, str(ROOT / "ctl.py"), "restart", target])
         return {"ok": True, "message": "再起動しています。完了まで数十秒〜数分かかります。"}
