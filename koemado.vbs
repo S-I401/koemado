@@ -10,4 +10,6 @@ If Not fso.FileExists(py) Then
     WScript.Quit 1
 End If
 sh.CurrentDirectory = root
+' same environment as start.bat (it sets PYTHONUTF8=1); children inherit it
+sh.Environment("PROCESS")("PYTHONUTF8") = "1"
 sh.Run """" & py & """ """ & root & "\supervisor.py"" launch", 0, False
