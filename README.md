@@ -11,7 +11,7 @@ Windows の PC で、**ワンクリックで導入できるローカル音声会
 ブラウザ / デスクトップのキャラ（マイク） ─ AIAvatarKit ─ STT: speech.cpp（Vulkan。GPU か CPU）
                          │
                          ├─ LLM: llama.cpp の llama-server（GGUF）  ※ 外部の推論サーバーに替えることもできます
-                         └─ TTS: Irodori-TTS v4.1 Small（int8, CUDA）
+                         └─ TTS: Irodori-TTS v4.1 Small（speech.cpp、Vulkan。GGUF Q8_0。Python 版は予備）
 ```
 
 > **すべてのキャラクターに共通する決まり**\
@@ -31,9 +31,9 @@ Windows の PC で、**ワンクリックで導入できるローカル音声会
 | OS | Windows 10 / 11（64bit） |
 | GPU | **NVIDIA GPU 必須**（RTX 20 シリーズ以降、VRAM 6GB 以上）。<br><br><br><br>ドライバ **570 以上**（PyTorch CUDA 12.8 の要件） |
 | メモリ | 16GB 以上（標準プロファイルは 32GB 以上） |
-| Vulkan | GPU のドライバに含まれる `vulkan-1.dll`（STT の speech.cpp 用）。<br><br><br><br>無い PC では、従来の faster-whisper（CPU）で動きます（「音声認識（STT）」の節） |
-| 空き容量 | プロファイルにより約 19〜35GB（下の表）。<br><br><br><br>インストール先のドライブに必要です |
-| ネットワーク | 導入時に GitHub / Hugging Face / PyPI からダウンロードします（合計 約 15〜32GB） |
+| Vulkan | GPU のドライバに含まれる `vulkan-1.dll`（STT・TTS の speech.cpp 用）。<br><br><br><br>無い PC では、STT は faster-whisper（CPU）、TTS は Python 版 Irodori-TTS-Server（PyTorch。約 5GB 増える）で動きます（「音声認識（STT）」「音声合成（TTS）」の節） |
+| 空き容量 | プロファイルにより約 14〜29GB（下の表。Vulkan が使えない PC は、Python 版の TTS で約 6GB 増えます）。<br><br><br><br>インストール先のドライブに必要です |
+| ネットワーク | 導入時に GitHub / Hugging Face / PyPI からダウンロードします（合計 約 8〜24GB） |
 
 NVIDIA GPU が無い PC では、TTS が 1 文あたり十数秒かかり会話にならないため、導入を中止します。
 
@@ -127,6 +127,8 @@ setup.bat --llm strata                    Strata を導入して使う（high �
 setup.bat --model unsloth/Qwen3-8B-GGUF:Qwen3-8B-Q4_K_M.gguf
                                           同梱の LLM のモデルを指定する（リポジトリ:ファイル名。範囲外は選べない）
 setup.bat --model <repo>:<file> --hf-token-env   環境変数 HF_TOKEN のトークンを使う（コマンドラインにトークンは書かない）
+setup.bat --tts auto|speechcpp|python|both
+                                          音声合成の導入（既定の auto は、Vulkan が使えれば speech.cpp の Irodori-TTS、使えなければ Python 版。both は両方）
 setup.bat --stt auto|speechcpp|faster-whisper|both
                                           音声認識の導入（既定の auto は、Vulkan が使えれば speech.cpp、使えなければ faster-whisper。both は両方）
 setup.bat --dry-run --simulate "vram=8,ram=32,disk=60"   別の PC を想定した判定（テスト用。vulkan=0 で Vulkan が無い PC）
@@ -174,18 +176,18 @@ PC のスペックから自動で選びます（`--profile` で変更可）。\
 
 | プロファイル | 条件（VRAM / メモリ） | LLM（GGUF） | モデルのサイズ | 必要な空き容量（目安） |
 |---|---|---|---|---|
-| high | 20GB 以上 / 48GB 以上 | Qwen3.6-35B-A3B（UD-Q4_K_M） | 20.6 GiB | 約 35GB |
-| mid（標準） | 8GB 以上 / 32GB 以上 | Gemma 4 26B-A4B（QAT UD-Q4_K_XL） | 13.3 GiB | 約 27GB |
-| low | 6GB 以上 / 16GB 以上 | Gemma 4 E4B（QAT q4_0） | 4.8 GiB | 約 19GB |
+| high | 20GB 以上 / 48GB 以上 | Qwen3.6-35B-A3B（UD-Q4_K_M） | 20.6 GiB | 約 29GB |
+| mid（標準） | 8GB 以上 / 32GB 以上 | Gemma 4 26B-A4B（QAT UD-Q4_K_XL） | 13.3 GiB | 約 22GB |
+| low | 6GB 以上 / 16GB 以上 | Gemma 4 E4B（QAT q4_0） | 4.8 GiB | 約 14GB |
 
-- **mid** は MoE モデルの専門家（experts）の重みの大部分を CPU 側に置き、VRAM を LLM 約 3.6GB + TTS 約 2.7GB（ピーク）に収めます（VRAM 8GB の GPU で、Windows のデスクトップ分を残すため）。
-- 容量の内訳: llama.cpp 約 1.2GB、TTS の実行環境（PyTorch CUDA）約 5.2GB、TTS のモデル約 1.4GB、STT（speech.cpp 約 0.1GB + parakeet 約 0.7GB）、その他の環境約 1GB（Vulkan が使えない PC は、STT が faster-whisper の環境とモデルで約 0.8GB）（ダウンロードのキャッシュは導入の最後に消します）。
+- **mid** は MoE モデルの専門家（experts）の重みの大部分を CPU 側に置き、VRAM を LLM 約 3.6GB + TTS 約 1.6GB（speech.cpp、Q8_0。Python 版は約 2.7GB）に収めます（VRAM 8GB の GPU で、Windows のデスクトップ分を残すため）。
+- 容量の内訳: llama.cpp 約 1.2GB、TTS の実行環境（PyTorch CUDA）約 5.2GB、TTS のモデル（Irodori の GGUF）約 1.2GB、STT（speech.cpp 約 0.1GB + parakeet 約 0.7GB）、その他の環境約 1GB（Vulkan が使えない PC は、STT が faster-whisper の環境とモデルで約 0.8GB）（ダウンロードのキャッシュは導入の最後に消します）。
 - モデルの差し替えは `profiles.py` の表を直します。\
   Hugging Face のトークンを登録すると、設定画面で GGUF の一覧から、プロファイルの範囲内で自由に選べます（「モデルブラウザ」の節）。
 
 ### 固定しているバージョン
 
-llama.cpp `b11443`（CUDA 12 ビルド）／ Irodori-TTS-Server `61012c7`（`uv.lock` に従う）／ Irodori-TTS v4.1 Small int8（`Aratako/Irodori-TTS-v4.1-Small-Quantized`）／ aiavatar 0.9.1 ／ fastmcp 4.0.11 ／ ddgs 9.16.0 ／ speech.cpp v0.8.4（`speech-0.8.4-windows-x64-vulkan.zip`、SHA-256 `c35e75e6…`）／ parakeet-tdt_ctc-0.6B-ja Q8_0（`sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF` `f7cb538`）／ Qwen3-ASR 0.6B・1.7B Q8_0（`sakasegawa/Qwen3-ASR-*-GGUF`）／ faster-whisper 1.2.1（small, CPU int8。Vulkan が使えない PC の予備）／ pystray 0.19.5 ／ pillow 12.3.0 ／ PySide6 6.11.2（Essentials / Addons、Qt WebEngine）／ shiboken6 6.11.2。\
+llama.cpp `b11443`（CUDA 12 ビルド）／ Irodori-TTS v4.1 Small の GGUF Q8_0（`sakasegawa/Irodori-TTS-v4.1-Small-GGUF` `a8d7c01`、MF 版は `…-MF-GGUF` `205ab07`）／ Python 版（予備）: Irodori-TTS-Server `61012c7`（`uv.lock` に従う）・Irodori-TTS v4.1 Small int8（`Aratako/Irodori-TTS-v4.1-Small-Quantized`）／ aiavatar 0.9.1 ／ fastmcp 4.0.11 ／ ddgs 9.16.0 ／ speech.cpp v0.8.4（`speech-0.8.4-windows-x64-vulkan.zip`、SHA-256 `c35e75e6…`）／ parakeet-tdt_ctc-0.6B-ja Q8_0（`sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF` `f7cb538`）／ Qwen3-ASR 0.6B・1.7B Q8_0（`sakasegawa/Qwen3-ASR-*-GGUF`）／ faster-whisper 1.2.1（small, CPU int8。Vulkan が使えない PC の予備）／ pystray 0.19.5 ／ pillow 12.3.0 ／ PySide6 6.11.2（Essentials / Addons、Qt WebEngine）／ shiboken6 6.11.2。\
 依存のバージョンは `app/requirements.txt` と `stt/requirements.txt` で固定しています。
 
 ## 音声認識（STT）
@@ -314,6 +316,129 @@ parakeet は `prompt` を受け付けないので、送りません。
   ライセンスが求めるクレジットとして、設定画面の「音声認識」にも表示します。
 - Qwen3-ASR: © Alibaba Qwen、Apache-2.0（[Qwen/Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B)）。
 - speech.cpp: MIT（[nyosegawa/speech.cpp](https://github.com/nyosegawa/speech.cpp)）。
+
+## 音声合成（TTS）
+
+音声合成（TTS）は、speech.cpp（MIT）の `speech serve` で動く **Irodori-TTS v4.1 Small**（GGUF）が既定です。\
+音声認識（STT）と同じく、Python も PyTorch も使わず、**Vulkan** で GPU を使います。\
+従来の Python 版（Irodori-TTS-Server + PyTorch、int8）は、Vulkan が使えない PC のための予備として残しています。
+
+- 導入: `setup.bat` は、`speech.cpp`（STT と共通の `stt\speechcpp\`）と、Irodori の GGUF（既定は `irodori-tts` の Q8_0、約 1.2GB）だけを入れます。\
+  **Python 版の環境（Irodori-TTS-Server、PyTorch、Python 3.10、約 5GB）は、既定では入れません。**\
+  GGUF は `hf download`（コミット固定）で `models\tts\` に取得し、SHA-256 を検証します。
+- 起動: 管理プロセスが `speech serve <GGUF> --host 127.0.0.1 --port <TTS のポート> --device <GPU> --add-voice <名前>=<WAV> ...` をウィンドウなしで起動します（`tts\voices\` の WAV を、すべて `--add-voice` で渡します）。\
+  STT とは**別のプロセス**です（下の「1 つのプロセスにまとめない理由」）。
+- 会話: `app/run.py` が、`POST /v1/audio/speech` に `voice`・`steps`・`seed` を送ります（`model` は送らない）。\
+  応答は 48kHz・16bit・モノラルの WAV で、AIAvatarKit の `create_instant_synthesizer` がそのまま再生します（表情・口パクも従来どおり）。
+- 声の切り替え: **再起動なしで、次の発話から**効きます（起動時に渡した声の中から、リクエストごとに選ぶため）。\
+  参照音声を追加・削除したとき（アップロード、Voice Design の保存、削除）は、speech.cpp が声を起動時に読むので、**設定画面が TTS だけを自動で再起動**します（約 4〜5 秒）。\
+  壊れた WAV を渡すと TTS が起動しなくなるので、追加する前に WAV を検査し、起動に失敗したら追加を取り消します。
+
+### モデル（Irodori-TTS v4.1 Small）
+
+| 設定の名前 | 方式 | ファイル（Q8_0） | 特徴 |
+|---|---|---|---|
+| `irodori-tts`（既定） | Rectified Flow。<br><br><br><br>`num_steps` で品質と速さを選ぶ | `Irodori-TTS-859M-v4.1-Q8_0.gguf`（1.20GB） | 従来の Python 版と**同じモデル** |
+| `irodori-tts-mf` | MeanFlow。<br><br><br><br>steps は 4 が標準 | `Irodori-TTS-866M-MF-v4.1-Q8_0.gguf`（1.21GB） | 速い。<br><br><br><br>読み戻しの誤りは少し多い |
+
+どちらも [sakasegawa の GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF)（[MF 版](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF)）で、元のモデルは Aratako の [Irodori-TTS-v4.1-Small](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small)（[MF 版](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small-MF)）です。\
+重みの種類は F16・Q8_0・Q6_K・Q5_K・Q4_K があり、このアプリは Q8_0 を使います（F16 は VRAM が約 0.7GB 多く、この試験では速さも読み戻しの誤りも同じでした）。
+
+### 参照音声・Voice Design・透かし
+
+- **参照音声**は WAV（PCM、120 秒以内）です。\
+  `--add-voice NAME=FILE` は WAV をそのまま受け取ります（起動時に 1 つあたり 0.4〜0.7 秒かけて符号化）。\
+  複数の録音をまとめた声（`speech voice` で作る `*.voice.gguf`）にも対応していますが、このアプリは WAV 1 つを 1 つの声として使います。
+- **Voice Design**（設定画面の「声」）は、そのまま動きます。\
+  キャプションは `instructions`、声は `none`、seed はリクエストの `seed` で渡します。\
+  候補の WAV を参照音声として保存する流れも、従来と同じです（保存すると TTS が再起動して、声の一覧に加わります）。
+- **透かし（SilentCipher）は入りません。**\
+  speech.cpp の Irodori-TTS は、透かしを**対応していません**（speech.cpp の docs に「Not supported: the watermark」とあります）。\
+  従来の Python 版の Irodori-TTS-Server は、生成した音声に透かしを入れます。\
+  speech.cpp で作った音声には透かしがないので、後から Irodori で作った音声かを見分ける手がかりがありません。\
+  下の「Irodori-TTS の倫理的な制限」は、透かしの有無にかかわらず守ってください。
+- 乱数は、同じ seed でも、公式の実装や Python 版とは別の音声になります（speech.cpp の docs による）。
+- 長い文は 30 秒まで（文ごとに話します）。\
+  AIAvatarKit が文ごとに送るので、通常は影響しません。
+
+### 比べてみた結果（Python 版 / speech.cpp）
+
+同じ 8 文（会話らしい短い文。仙台・数字・英単語を含む）を、ミオの声（`mio_bright`、seed 42）で合成して比べました（`tools/tts_bench.py`。Ryzen 7 7800X3D + RTX 4090）。\
+試聴ページ: `I:\koemado-tmp\tts_compare\listen.html`（開発用の PC のパス。リポジトリには入れていません）。
+
+| 方式 | 1 文あたり（約 5 秒の発話） | RTF | 最初の音（ストリーム） | VRAM | F0 の中央値（参照 341Hz） | F0 のばらつき | 読み戻し CER\* |
+|---|---|---|---|---|---|---|---|
+| Python 版 Irodori（int8、24 steps） | 1.68 秒 | 0.33 | （非対応） | 2,662MiB | 315Hz | 0.69 半音 | 5.7% |
+| speech.cpp `irodori-tts-mf`（F16、4 steps） | 0.14 秒 | 0.026 | 0.06 秒 | 2,260MiB | 375Hz | 1.75 半音 | 7.5% |
+| speech.cpp `irodori-tts`（F16、16 steps） | 0.33 秒 | 0.060 | 0.15 秒 | 2,272MiB | 357Hz | 1.60 半音 | 5.7% |
+| speech.cpp `irodori-tts`（F16、24 steps） | 0.45 秒 | 0.084 | 0.23 秒 | 2,272MiB | 370Hz | 1.53 半音 | 6.2% |
+| 同 mf（**Q8_0**、4 steps） | 0.14 秒 | 0.027 | 0.05 秒 | **1,579MiB** | 367Hz | 1.59 半音 | 7.5% |
+| 同 rf（**Q8_0**、16 steps） | 0.33 秒 | 0.061 | 0.15 秒 | **1,597MiB** | 378Hz | 1.75 半音 | 5.7% |
+| 同 rf（**Q8_0**、24 steps） | 0.44 秒 | 0.081 | 0.22 秒 | **1,597MiB** | 371Hz | 1.77 半音 | 6.2% |
+
+- 時間は、リクエストから WAV が全部届くまで（AIAvatarKit は WAV を全部受け取ってから再生します）の中央値です（各文 2 回の中央値）。\
+  「最初の音」は、`response_format: pcm` のストリームで最初の音が届くまでです（アプリは WAV を使うので、現在は使っていません）。
+- VRAM は、Windows の「GPU Process Memory」の専有メモリを、プロセスごとに測った最大です（Python 版は、別の計測で 2,474MiB でした）。
+- **F0**（声の高さ）は pyin で、文ごとの F0 の中央値の、中央値とばらつき（半音）です（`tools/make_voices.py` と同じ）。\
+  参照音声 `mio_bright` は 341Hz です。\
+  Python 版は参照より約 1.4 半音低く、安定しています。\
+  speech.cpp は約 0.8〜1.8 半音高く、文によって高さが大きく動きます（「うんうん、わかった」は約 430〜445Hz まで上がる）。\
+  **声がミオらしいかは、聞いて決めてください**（試聴ページ）。
+- **読み戻し CER\***: 合成した音声を speech.cpp の qwen3-asr-1.7b で文字にして、元の文と比べた誤り率です（漢数字は算用数字にそろえる）。\
+  Python 版と `irodori-tts`（rf、16 steps）は同じ 5.7%、MeanFlow は 7.5% でした（8 文なので、1 文の違いで動きます）。
+- 速さ: speech.cpp は、同じモデル（rf、24 steps）で Python 版の約 4 倍、MeanFlow は約 12 倍速いです。\
+  新しい長さの文を初めて話すとき、GPU のドライバのシェーダーのコンパイルで、最初の 1 回だけ 1〜2 秒かかることがありました。
+- **仮の既定は `irodori-tts`（rf）、Q8_0、num_steps 24 です**（Python 版と同じモデルで、声の違いを最小にするため）。\
+  速さを優先するなら `irodori-tts-mf` に替えられます（設定画面）。\
+  音の良し悪しは、聞いて決めてください。
+
+### 1 つのプロセスにまとめない理由
+
+`speech serve` は、1 つのプロセスに TTS・STT・VAD を同時に持てます（ポートが 1 つになります）。\
+それでもこのアプリは、**TTS と STT を別のプロセス**にしています。
+- **デバイスを別に選びたい**: `--device` は、1 つのプロセスの全モデルに共通です。\
+  mid の既定は「TTS は GPU、STT は parakeet / 0.6B なら GPU、1.7B なら CPU」で、VRAM 8GB の PC では、デバイスを揃えられません。
+- **再起動を別にしたい**: speech.cpp は参照音声を起動時に読むので、声を追加するたびに TTS を再起動します。\
+  1 つのプロセスだと、そのたびに STT も止まります。\
+  STT のモデルを切り替えるときも、TTS が止まってしまいます。
+- **VRAM は変わらない**: モデルは別々に載るので、1 つにしても VRAM は減りません（プロセスごとの文脈の分は、少し減る可能性があります。実測はしていません）。
+- **待ち**: speech.cpp は、モデルごとに 1 リクエストずつ処理します。\
+  TTS と STT は別のモデルなので、1 つのプロセスでも互いを待たせません（GPU の演算は取り合います）。\
+  別のプロセスでも、同じです。
+
+### VRAM（mid、VRAM 8GB の模擬。LLM・TTS・STT をすべて起動した最大）
+
+プロセスごとの専有メモリの最大です。\
+TTS が Python 版（int8）だった前回は、STT が CPU のとき 5,929MiB でした。
+
+| STT | LLM | TTS（speech.cpp、Q8_0） | STT | 合計の最大 | 7GB（7,168MiB）以下 |
+|---|---|---|---|---|---|
+| CPU（parakeet） | 3,518MiB | 1,596MiB | 0 | 5,114MiB | ○ |
+| parakeet-ja（GPU） | 3,518MiB | 1,600MiB | 705MiB | 5,823MiB | ○ |
+| qwen3-asr-0.6b（GPU） | 3,518MiB | 1,609MiB | 1,041MiB | 6,169MiB | ○ |
+| qwen3-asr-1.7b（GPU） | 3,518MiB | 1,600MiB | 2,321MiB | 7,439MiB | **×（わずかに超える）** |
+
+- 既定の組み合わせ（TTS は speech.cpp、STT は parakeet-ja の GPU）は 5,823MiB で、7GB に収まります。
+- qwen3-asr-1.7b を GPU にすると 7GB を超えるので、デバイス「自動」では mid は CPU のままです（STT の節の表のとおり）。\
+  GPU に載せたいときは、設定画面で選べますが、警告が出ます。
+- TTS の VRAM が約 0.8GB 減ったので、mid の LLM に、専門家の層をあと 2 層ぶん（約 0.8GB）載せる余地があります（この変更では、LLM の設定は変えていません）。
+
+### 切り替え方
+
+- **設定画面の「声」タブ**の上の「音声合成エンジン」で、エンジン（自動 / speech.cpp / Python 版）とモデル（`irodori-tts-mf` / `irodori-tts`）を選んで、「保存して適用」を押します。\
+  未取得のモデルは、サイズを出して確認したあとで取得します（進捗・キャンセル・SHA-256 の検証つき）。\
+  変えたときは TTS だけが再起動します。
+- `setup.bat --tts auto|speechcpp|python|both`: 既定の `auto` は、Vulkan が使えれば speech.cpp、使えなければ Python 版です。\
+  `both` は両方を入れて、設定画面で切り替えられるようにします。
+- 設定は `config/settings.json` の `tts`（`engine` / `model` / `mf_steps` / `num_steps` / `seed` / `voice`）です。
+
+![声（speech.cpp）](docs/screenshots/settings_voice_speechcpp.png)
+
+### Vulkan が無い PC
+
+`vulkan-1.dll` が無い、`speech devices` が通らない PC では、`setup.bat` が Python 版の Irodori-TTS-Server（PyTorch、約 5GB）を入れて、その旨を表示します（STT は faster-whisper）。\
+実行時も、speech.cpp を使えなければ Python 版で動かし、管理画面のログに理由を出します。\
+テストでは、`KOEMADO_SIMULATE_NO_VULKAN=1`（実行時）や `setup.bat --simulate "vulkan=0"`（導入時）で再現できます。
 
 ## 起動と管理画面
 
@@ -479,7 +604,8 @@ parakeet は `prompt` を受け付けないので、送りません。
 
 ![声](docs/screenshots/settings_voice.png)
 
-**声**: 参照音声（`tts/voices/`）の一覧と試聴、切り替え（**次の発話から反映。再起動不要**）。\
+**声**: 音声合成エンジン（speech.cpp / Python 版）とモデル（`irodori-tts-mf` / `irodori-tts`）の選択、参照音声（`tts/voices/`）の一覧と試聴、切り替え（**次の発話から反映。再起動不要**）。\
+参照音声を追加・削除すると、speech.cpp の TTS が自動で再起動します（詳しくは「音声合成（TTS）」の節）。\
 参照音声のアップロード（wav / flac / mp3 / ogg / opus。m4a / aac / webm はこの環境で読めないので不可）。\
 Voice Design（キャプション + seed で候補を作り、試聴して気に入ったら保存）。\
 num_steps（速度と音質）。\
@@ -654,7 +780,7 @@ characters/<id>/
 | 症状 | 対処 |
 |---|---|
 | 「ドライバが古すぎます」で止まる | NVIDIA の最新ドライバに更新してください（570 以上）。<br><br><br><br>このスクリプトはドライバを更新しません |
-| 導入に時間がかかる | 初回は合計 15〜32GB のダウンロードと、PyTorch（CUDA）の展開があります。<br><br><br><br>HDD や、ウイルス対策ソフトのリアルタイム検査が有効だと、展開に数十分かかることがあります（SSD なら数分）。<br><br><br><br>途中で止めても再実行で続きから再開します |
+| 導入に時間がかかる | 初回は合計 8〜24GB のダウンロードがあります（Vulkan が使えない PC は、PyTorch（CUDA）の展開もあります）。<br><br><br><br>HDD や、ウイルス対策ソフトのリアルタイム検査が有効だと、展開に数十分かかることがあります（SSD なら数分）。<br><br><br><br>途中で止めても再実行で続きから再開します |
 | 「空き容量が足りません」 | `--install-dir` で空きのあるドライブを指定するか、空きを増やしてください。<br><br><br><br>足りないときは 1 段下のプロファイルに自動で下げます |
 | ブラウザで話しかけても反応しない | ブラウザのマイク許可（アドレスバー左の鍵アイコン）を確認してください。<br><br><br><br>`http://127.0.0.1` はマイクが使える扱いです。<br><br><br><br>Windows の「プライバシー → マイク」でブラウザを許可する必要もあります |
 | VRAM 不足（`CUDA out of memory`、LLM や TTS が起動しない） | ほかのアプリ（ゲーム・3D ソフト・ブラウザのハードウェアアクセラレーション）を閉じてください。<br><br><br><br>設定画面の LLM で、より軽いプロファイル（low）にするか、`--n-cpu-moe` を増やす（`profiles.py`）と VRAM を減らせます |
@@ -751,7 +877,9 @@ Irodori-TTS（MIT ライセンス）には、ライセンスに加えて次の�
 
 同梱の声（`voices/mio_bright` と `mio_a`〜`mio_d`）は、キャプションと固定 seed の Voice Design で作ったもので、実在の人物の声ではありません（キャプション・seed・安定度は `voices/voices_meta.json`）。\
 サンプルキャラ「ミオ」の既定の声は `mio_bright`（高めで軽やかな、明るく可愛らしい声）です。\
-Irodori は生成した音声に透かし（SilentCipher）を入れます。
+従来の Python 版の Irodori は、生成した音声に透かし（SilentCipher）を入れます。\
+**speech.cpp の Irodori-TTS（既定）は、透かしに対応していないので、入りません。**\
+制限は、透かしの有無にかかわらず守ってください。
 
 ## 依存するソフトウェアのライセンス
 
@@ -760,11 +888,12 @@ Irodori は生成した音声に透かし（SilentCipher）を入れます。
 | このリポジトリ | | MIT |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | LLM の推論 | MIT |
 | [AIAvatarKit](https://github.com/uezo/aiavatarkit) | 音声会話の基盤・ブラウザ UI | Apache-2.0 |
-| [Irodori-TTS](https://github.com/Aratako/Irodori-TTS) / [Irodori-TTS-Server](https://github.com/Aratako/Irodori-TTS-Server) | 音声合成 | MIT |
+| [Irodori-TTS](https://github.com/Aratako/Irodori-TTS) / [Irodori-TTS-Server](https://github.com/Aratako/Irodori-TTS-Server) | 音声合成（Python 版は予備） | MIT |
+| [Irodori-TTS v4.1 Small（GGUF、sakasegawa）](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF) / [MF 版](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF) | TTS のモデル（既定。speech.cpp 用） | MIT（倫理的な制限あり。コーデック（DACVAE）も MIT / Apache-2.0） |
 | [Irodori-TTS-v4.1-Small（量子化）](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small-Quantized) | TTS のモデル | MIT（倫理的な制限あり） |
 | [Semantic-DACVAE-Japanese-32dim](https://huggingface.co/Aratako/Semantic-DACVAE-Japanese-32dim) / [DACVAE](https://github.com/facebookresearch/dacvae) | TTS の codec | MIT / Apache-2.0 |
-| [SilentCipher](https://github.com/sony/silentcipher) | 生成音声の透かし | MIT |
-| [speech.cpp](https://github.com/nyosegawa/speech.cpp) | STT（既定。Vulkan） | MIT |
+| [SilentCipher](https://github.com/sony/silentcipher) | 生成音声の透かし（Python 版のみ） | MIT |
+| [speech.cpp](https://github.com/nyosegawa/speech.cpp) | STT・TTS（既定。Vulkan） | MIT |
 | [parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja)（GGUF: sakasegawa） | STT のモデル（既定） | **CC-BY-4.0（© NVIDIA。クレジットの表示が必要）** |
 | [Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) 0.6B / 1.7B（GGUF: sakasegawa） | STT のモデル（任意） | Apache-2.0 |
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper)（Whisper small） | STT（予備。Vulkan が使えない PC） | MIT |
@@ -796,6 +925,7 @@ configure.bat / .py    設定の対話 CLI（設定画面の予備）
 ctl.py                 起動・停止・再起動・ダウンロード・ショートカット作成の共通処理（コンソール起動もここ）
 profiles.py            LLM プロファイル表、モデルを選べるサイズの範囲、llama-server の引数
 stt_engine.py          音声認識のエンジン・モデルの表、Vulkan の判定、speech.cpp の起動コマンド、デバイスの自動選択
+tts_engine.py          音声合成のエンジン・モデルの表、speech.cpp（Irodori-TTS）の起動コマンド、声（--add-voice）の一覧
 hf_dl.py               Hugging Face からの取得（hf download の起動・進捗・キャンセル、遅いときの並列 Range 取得と SHA256 検証）
 model_picker.py        モデルの選択（GGUF の束ね・範囲との比較。設定画面と setup.bat の対話モードが共有）
 hf_hub.py              Hugging Face の API（検索・ファイル一覧・GGUF のメタデータ・トークンの確認）。トークンの送り先を huggingface.co に限る
@@ -806,7 +936,7 @@ app/                   AIAvatarKit 本体（run.py）、設定画面（settings_
 stt/                   faster-whisper の STT サーバー（予備）、speechcpp/（speech.cpp。導入時に展開）
 voices/                同梱の参照音声（Voice Design で作った成人女性の声）
 characters/            キャラクター（_common.md = 共通ルール、mio/ = サンプル）
-tools/                 e2e_test.py（WebSocket テスト）、stt_bench.py（STT の比較計測）、make_voices.py（Voice Design で声を作る）、mcp_test_server.py（MCP の確認用）
+tools/                 e2e_test.py（WebSocket テスト）、stt_bench.py（STT の比較計測）、tts_bench.py（TTS の比較計測）と gpu_sampler.ps1（VRAM の計測）、make_voices.py（Voice Design で声を作る）、mcp_test_server.py（MCP の確認用）
 ```
 
 導入後にできるもの（Git には入れません）: `strata/` `strata-data/`（Strata を選んだとき）`config.json` `config/` `llama.cpp/` `models/` `tts/` `hf-home/` `torch-home/` `app/.venv` `stt/.venv` `app/html/` `app/data/` `logs/` など。

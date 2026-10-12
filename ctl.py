@@ -3,7 +3,7 @@
 標準ライブラリだけで動く。設定の正本は config.json（setup.py が生成）。
   python ctl.py start [--no-browser]   従来どおり、各サービスをコンソールのウィンドウで起動する（start.bat --console）
   python ctl.py stop
-  python ctl.py restart [llm|stt|all]   設定変更のあとの再起動
+  python ctl.py restart [llm|stt|tts|all]   設定変更のあとの再起動
   python ctl.py status
   python ctl.py shortcuts            デスクトップとスタートメニューに、ウィンドウを出さずに起動する koemado のショートカットを作る
   python ctl.py _run NAME LOGFILE -- CMD ARGS...   （別ウィンドウ内の中継。内部用）
@@ -26,6 +26,7 @@ sys.path.insert(0, str(ROOT))
 import hf_hub  # noqa: E402
 import settings_store  # noqa: E402
 import stt_engine  # noqa: E402
+import tts_engine  # noqa: E402
 CONFIG_PATH = ROOT / "config.json"
 RUN_DIR = ROOT / "run"
 LOG_DIR = ROOT / "logs"
@@ -101,7 +102,16 @@ def stt_resolved(cfg: dict, root: Path = ROOT, probe: bool = True) -> dict:
     return stt_engine.resolve(cfg, settings_store.load_settings(root), root, probe=probe)
 
 
+def tts_resolved(cfg: dict, root: Path = ROOT) -> dict:
+    return tts_engine.resolve(cfg, settings_store.load_settings(root), root)
+
+
 def svc_label(cfg: dict, name: str, root: Path = ROOT) -> str:
+    if name == "tts":
+        try:
+            return tts_resolved(cfg, root)["label"]
+        except Exception:
+            return LABEL["tts"]
     return stt_label(cfg, root) if name == "stt" else LABEL[name]
 
 
@@ -117,6 +127,8 @@ def start_timeout(cfg: dict, name: str) -> int:
     t = cfg.get("start_timeout_sec", {}).get(name, 600)
     if name == "stt" and stt_resolved(cfg, probe=False)["engine"] == "speechcpp":
         t = max(t, 600)
+    if name == "tts" and tts_resolved(cfg)["engine"] == "speechcpp":
+        t = max(t, 600)
     return t
 
 
@@ -129,8 +141,9 @@ def health_url(cfg: dict, name: str) -> tuple[str, str | None]:
         return f"http://127.0.0.1:{p['llm']}/health", None
     if name == "stt":
         return stt_engine.health(cfg, settings_store.load_settings(ROOT), ROOT)
+    if name == "tts":
+        return tts_engine.health(cfg, settings_store.load_settings(ROOT), ROOT)
     return {
-        "tts": (f"http://127.0.0.1:{p['tts']}/health", '"loaded":true'),
         "app": (f"http://127.0.0.1:{p['app']}/static/index.html", None),
     }[name]
 
@@ -220,6 +233,11 @@ def service_command(cfg: dict, name: str, root: Path = ROOT) -> tuple[list[str],
     env = base_env(cfg, root)
     if name == "llm":
         return llama_command(cfg, root), root / "llama.cpp", env
+    if name == "tts" and tts_resolved(cfg, root)["engine"] == "speechcpp":
+        r = tts_resolved(cfg, root)
+        r["device_name"] = tts_engine.device_name(cfg, root)
+        # speech.cpp: Python も PyTorch も使わない。参照音声（tts/voices/*.wav）は --add-voice で渡す（起動後に増えた声は、TTS の再起動で使える）
+        return tts_engine.speechcpp_command(cfg, r, root), stt_engine.speech_dir(root), env
     if name == "tts":
         t = cfg["tts"]
         env.update({
@@ -660,10 +678,10 @@ def restart(cfg: dict, target: str) -> int:
     """設定を変えたあとの再起動。target: llm / all"""
     info = supervisor_info()
     if info:        # 常駐の管理プロセスがあれば、そちらに頼む（LLM だけの再起動も、管理プロセスが判断する）
-        return 0 if supervisor_post(info, "/api/restart/" + (target if target in ("llm", "stt") else "all")) else 1
-    if target == "stt":
-        stop(cfg, quiet=True, only=["stt"])
-        return start(cfg, open_browser=False, only=["stt"])
+        return 0 if supervisor_post(info, "/api/restart/" + (target if target in ("llm", "stt", "tts") else "all")) else 1
+    if target in ("stt", "tts"):
+        stop(cfg, quiet=True, only=[target])
+        return start(cfg, open_browser=False, only=[target])
     if target == "llm":
         if managed_strata(cfg):                  # Strata は LLM だけ再起動できないので、全体を再起動する
             target = "all"

@@ -34,6 +34,7 @@ load_dotenv(BASE_DIR / ".env")
 import ctl  # noqa: E402
 import settings_store as ss  # noqa: E402
 import stt_engine  # noqa: E402
+import tts_engine  # noqa: E402
 import tools_store as ts  # noqa: E402
 from avatar_memory import SCHEMA, AvatarMemory  # noqa: E402
 from settings_api import RUNTIME, LocalOnlyMiddleware, make_router  # noqa: E402
@@ -212,18 +213,26 @@ async def get_system_prompt(context_id, user_id, system_prompt_params):
     return "\n\n".join(parts)
 
 
-# ---- TTS: Irodori-TTS-Server。声と num_steps は毎回設定を読むので、再起動なしで切り替わる ----
+# ---- TTS: speech.cpp の Irodori-TTS（既定）、または従来の Irodori-TTS-Server（Python 版）。
+# 声・steps・seed は毎回設定を読むので、再起動なしで次の発話から切り替わる（speech.cpp は、起動時に渡した声の中から選ぶ。
+# 起動後に増えた声は、設定画面が TTS を再起動して使えるようにする）----
 def make_tts_request(text: str, style_info: dict = None, language: str = None) -> httpx.Request:
     s = settings()
     try:
         voice = ss.effective_voice(s, current_character())
     except Exception:
         voice = s["tts"]["voice"]
+    url = os.environ["TTS_BASE_URL"].rstrip("/") + "/audio/speech"
+    r = tts_engine.resolve(CFG, s, ROOT)
+    if r["engine"] == "speechcpp":
+        # model は送らない（speech.cpp は、起動中のモデルと同じ id か、省略を受け付ける）
+        body = tts_engine.speech_body(text, voice, tts_engine.steps_for(s, r["model_key"]), s["tts"].get("seed"))
+        return httpx.Request("POST", url, json=body)
     irodori = {"num_steps": int(s["tts"]["num_steps"])}
     if s["tts"].get("seed") is not None:
         irodori["seed"] = int(s["tts"]["seed"])
     body = {"model": "irodori-tts", "input": text, "voice": voice, "response_format": "wav", "irodori": irodori}
-    return httpx.Request("POST", os.environ["TTS_BASE_URL"].rstrip("/") + "/audio/speech", json=body)
+    return httpx.Request("POST", url, json=body)
 
 
 tts = create_instant_synthesizer(request_maker=make_tts_request, timeout=120)

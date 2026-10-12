@@ -34,6 +34,7 @@ import profiles  # noqa: E402
 import display_env
 import settings_store as ss  # noqa: E402
 import stt_engine  # noqa: E402
+import tts_engine  # noqa: E402
 import tools_store as ts  # noqa: E402
 
 # run.py が起動時に埋める: 実際に登録されたツール・MCP の接続状態（設定画面の表示用。起動中は変わらない）
@@ -157,12 +158,20 @@ def remote_size(repo: str, file: str) -> int | None:
 
 
 async def tts_synth(text: str, voice: str, num_steps: int, caption: str | None = None, seed: int | None = None) -> bytes:
-    irodori = {"num_steps": num_steps}
-    if caption:
-        irodori["caption"] = caption
-    if seed is not None:
-        irodori["seed"] = seed
-    body = {"model": "irodori-tts", "input": text, "voice": voice, "response_format": "wav", "irodori": irodori}
+    """設定画面の試聴・Voice Design 用の合成。エンジン（speech.cpp / Python 版）に合わせた本文で TTS に頼む"""
+    s = ss.load_settings(ROOT)
+    res = tts_engine.resolve(cfg(), s, ROOT)
+    if res["engine"] == "speechcpp":
+        # MeanFlow は steps が少ない（mf_steps）。画面の num_steps は rf と Python 版のもの
+        steps = tts_engine.steps_for(s, res["model_key"]) if res["model_key"] == "irodori-tts-mf" else num_steps
+        body = tts_engine.speech_body(text, voice, steps, seed, (caption or "")[:tts_engine.CAPTION_MAX_CHARS * 2] or None)
+    else:
+        irodori = {"num_steps": num_steps}
+        if caption:
+            irodori["caption"] = caption
+        if seed is not None:
+            irodori["seed"] = seed
+        body = {"model": "irodori-tts", "input": text, "voice": voice, "response_format": "wav", "irodori": irodori}
     async with httpx.AsyncClient(timeout=180) as client:
         r = await client.post(tts_base() + "/audio/speech", json=body)
     if r.status_code != 200:
@@ -188,6 +197,41 @@ def spawn_detached(args: list[str]):
     quoted = ",".join("'" + a.replace("'", "''") + "'" for a in args[1:])
     cmd = f"Start-Process -FilePath '{args[0]}' -ArgumentList {quoted} -WindowStyle Hidden -WorkingDirectory '{ROOT}'"
     subprocess.run(["powershell", "-NoProfile", "-Command", cmd], check=False, creationflags=0x08000000)
+
+
+def tts_is_speechcpp() -> bool:
+    return tts_engine.resolve(cfg(), ss.load_settings(ROOT), ROOT)["engine"] == "speechcpp"
+
+
+def check_voice_wav(data: bytes) -> str | None:
+    """speech.cpp の参照音声にできる WAV か（PCM の WAV、120 秒以内）。だめなら理由を返す。壊れた声を渡すと、TTS が起動しなくなるため先に確かめる"""
+    import io
+    import wave
+    try:
+        with wave.open(io.BytesIO(data), "rb") as w:
+            sec = w.getnframes() / max(1, w.getframerate())
+            if w.getnchannels() not in (1, 2):
+                return "チャンネル数はモノラルかステレオにしてください。"
+    except Exception:
+        return "PCM の WAV として読めません（16bit の WAV にしてください）。"
+    if sec < 1.0:
+        return "短すぎます（1 秒以上、10〜30 秒の静かな音声がおすすめです）。"
+    if sec > 120:
+        return "長すぎます（120 秒以内。10〜30 秒がおすすめです）。"
+    return None
+
+
+async def restart_tts_and_wait(timeout: float = 150) -> bool:
+    """TTS だけを再起動して、準備できるまで待つ（speech.cpp は参照音声を起動時に読むので、声を増やしたら再起動する）"""
+    spawn_detached([str(ROOT / "app" / ".venv" / "Scripts" / "python.exe"), str(ROOT / "ctl.py"), "restart", "tts"])
+    loop = asyncio.get_running_loop()
+    await asyncio.sleep(4)
+    end = time.time() + timeout
+    while time.time() < end:
+        if await loop.run_in_executor(None, ctl.check_health, cfg(), "tts"):
+            return True
+        await asyncio.sleep(2)
+    return False
 
 
 # ------------------------------------------------------------------ アバターの素材（口の差分） ----
@@ -252,6 +296,9 @@ _job = None
 STT_DL = {"status": "idle"}
 _stt_lock = threading.Lock()
 _stt_job = None
+# 音声合成（speech.cpp の Irodori-TTS）のモデルの取得
+TTS_DL = {"status": "idle"}
+_tts_job = None
 
 
 def hf_page(repo: str) -> str:
@@ -474,6 +521,9 @@ def make_router(page_path: Path) -> APIRouter:
         if not ss.valid_voice_id(name):
             raise HTTPException(400, "声の ID は半角の英数字・_・- で 40 文字以内にしてください。")
         ext = Path(file.filename or "").suffix.lower()
+        sp = tts_is_speechcpp()
+        if sp and ext != ".wav":
+            raise HTTPException(400, "speech.cpp の TTS は WAV（PCM）だけ読めます。wav に変換してアップロードしてください（Python 版の TTS なら flac / mp3 / ogg / opus も使えます）。")
         if ext in ss.REJECTED_EXTS:
             raise HTTPException(400, f"{ext} はこの環境では読み込めません。wav / flac / mp3 / ogg / opus に変換してください。")
         if ext not in ss.AUDIO_EXTS:
@@ -485,12 +535,20 @@ def make_router(page_path: Path) -> APIRouter:
         d.mkdir(parents=True, exist_ok=True)
         if any(f.stem == name for f in d.iterdir() if f.is_file()):
             raise HTTPException(400, f"「{name}」はすでにあります。別の ID にしてください。")
+        if sp:
+            why = check_voice_wav(data)
+            if why:
+                raise HTTPException(400, "この音声は参照音声として使えません: " + why)
         dest = d / f"{name}{ext}"
         dest.write_bytes(data)
         try:  # 実際に読み込めて合成できるか確認する
+            if sp and not await restart_tts_and_wait():     # 声は起動時に読むので、TTS を再起動する
+                raise HTTPException(500, "TTS が再起動後に起動しませんでした")
             await tts_synth("テストです。", name, 8)
         except HTTPException as e:
             dest.unlink(missing_ok=True)
+            if sp:
+                await restart_tts_and_wait()      # 元の声の一覧に戻す
             raise HTTPException(400, f"この音声は参照音声として使えませんでした（{e.detail}）")
         meta = ss.load_voices_meta(ROOT)
         meta[name] = {"source": "upload", "original_name": file.filename, "consent_confirmed": True, "created": ss.now()}
@@ -531,6 +589,10 @@ def make_router(page_path: Path) -> APIRouter:
         if dest.exists():
             raise HTTPException(400, f"「{name}」はすでにあります。別の ID にしてください。")
         shutil.copy2(src, dest)
+        if tts_is_speechcpp() and not await restart_tts_and_wait():
+            dest.unlink(missing_ok=True)
+            await restart_tts_and_wait()
+            raise HTTPException(500, "声を追加できませんでした（TTS が再起動後に起動しませんでした）。")
         info = json.loads((tmp / f"design_{token}.json").read_text(encoding="utf-8"))
         meta = ss.load_voices_meta(ROOT)
         meta[name] = {"source": "voice-design", **info, "created": ss.now(), "note": "Irodori の Voice Design で作った声（実在の人物の声ではない）"}
@@ -547,6 +609,8 @@ def make_router(page_path: Path) -> APIRouter:
             f.unlink()
         meta.pop(voice_id, None)
         ss.save_voices_meta(meta, ROOT)
+        if tts_is_speechcpp():
+            await restart_tts_and_wait()
         return {"ok": True}
 
     # ---- LLM ----
@@ -1293,14 +1357,135 @@ def make_router(page_path: Path) -> APIRouter:
             _stt_job.cancel()
         return {"ok": True}
 
+    # ---- 音声合成（TTS）のエンジン・モデル ----
+    def _tts_models_view() -> list[dict]:
+        out = []
+        for k, m in tts_engine.TTS_MODELS.items():
+            f = tts_engine.model_file(k)
+            out.append({"key": k, "label": m["label"], "short": m["short"], "size_bytes": f["size_bytes"], "file": f["file"], "present": tts_engine.model_present(ROOT, k),
+                        "upstream": m["upstream"], "default_steps": m["default_steps"]})
+        return out
+
+    def _tts_state_sync() -> dict:
+        c = cfg()
+        s = ss.load_settings(ROOT)
+        res = tts_engine.resolve(c, s, ROOT)
+        vk_ok, vk_why = stt_engine.vulkan_loader_found()
+        return {
+            "settings": {k: s["tts"].get(k) for k in ("engine", "model", "mf_steps", "num_steps", "seed")},
+            "effective": {"engine": res["engine"], "label": res["label"], "model": res["model_key"], "fallback": res["fallback"]},
+            "healthy": ctl.check_health(c, "tts"),
+            "vulkan": {"ok": vk_ok, "why": vk_why},
+            "speechcpp_installed": stt_engine.speechcpp_installed(ROOT),
+            "python_installed": tts_engine.python_installed(ROOT),
+            "models": _tts_models_view(),
+            "voice_formats": ["wav"] if res["engine"] == "speechcpp" else [e.lstrip(".") for e in ss.AUDIO_EXTS],
+            "disk_free_gib": hardware()["disk_free_gib"],
+        }
+
+    @r.get("/settings/api/tts")
+    async def tts_state():
+        return await asyncio.get_running_loop().run_in_executor(None, _tts_state_sync)
+
+    @r.post("/settings/api/tts/apply")
+    async def tts_apply(request: Request):
+        """音声合成のエンジン・モデルを保存する。未取得のモデルなら保存せず need_download を返す。変わったときは TTS だけを再起動する"""
+        guard_write(request)
+        b = await request.json()
+        cur = ss.load_settings(ROOT)["tts"]
+        new = {"engine": str(b.get("engine", cur["engine"])), "model": str(b.get("model", cur["model"])), "mf_steps": int(b.get("mf_steps", cur["mf_steps"]))}
+        if new["engine"] not in tts_engine.ENGINES or new["model"] not in tts_engine.TTS_MODELS:
+            raise HTTPException(400, "エンジンかモデルの指定が不正です。")
+        if new["engine"] == "python":
+            if not tts_engine.python_installed(ROOT):
+                raise HTTPException(400, "Python 版の Irodori-TTS-Server が導入されていません。setup.bat --tts both を実行すると追加できます。")
+        else:
+            ok, why = stt_engine.speechcpp_usable(ROOT)
+            if not ok:
+                if new["engine"] == "speechcpp" or not tts_engine.python_installed(ROOT):
+                    raise HTTPException(400, why)
+            elif not tts_engine.model_present(ROOT, new["model"]):
+                m = tts_engine.TTS_MODELS[new["model"]]
+                f = tts_engine.model_file(new["model"])
+                return {"ok": False, "need_download": {"model": new["model"], "label": m["label"], "size_bytes": f["size_bytes"], "file": f["file"], "license": "MIT",
+                                                      "free_gib": hardware()["disk_free_gib"]}}
+        try:
+            ss.update_settings({"tts": new}, ROOT)
+        except (ValueError, KeyError) as e:
+            raise HTTPException(400, str(e))
+        changed = any(new[k] != cur[k] for k in ("engine", "model"))
+        if changed:
+            spawn_detached([str(ROOT / "app" / ".venv" / "Scripts" / "python.exe"), str(ROOT / "ctl.py"), "restart", "tts"])
+        return {"ok": True, "restarting": changed}
+
+    @r.post("/settings/api/tts/download")
+    async def tts_download(request: Request):
+        guard_write(request)
+        b = await request.json()
+        key = str(b.get("model", ""))
+        if key not in tts_engine.TTS_MODELS:
+            raise HTTPException(400, "モデルの指定が不正です。")
+        if not b.get("confirmed"):
+            raise HTTPException(400, "確認が必要です。")
+        m, f = tts_engine.TTS_MODELS[key], tts_engine.model_file(key)
+        have = tts_engine.model_path(ROOT, key).stat().st_size if tts_engine.model_path(ROOT, key).exists() else 0
+        need = max(0, f["size_bytes"] - have) / profiles.GIB
+        if hardware()["disk_free_gib"] < need + profiles.DISK_MARGIN_GIB:
+            raise HTTPException(400, f"容量が足りません: ダウンロードに約 {need:.1f}GiB 必要ですが、空きは {hardware()['disk_free_gib']:.1f}GiB です。")
+        global _tts_job
+        with _stt_lock:
+            if TTS_DL.get("status") == "running":
+                raise HTTPException(409, "ダウンロード中です。")
+            TTS_DL.clear()
+            TTS_DL.update(status="running", model=key, file=f["file"], done=0, total=f["size_bytes"], started=time.time(), speed=0, message="")
+            inner: dict = {}
+            _tts_job = hf_dl.Job(ROOT, m["repo"], [{"path": f["file"], "size": f["size_bytes"], "sha256": f["sha256"]}], tts_engine.models_dir(ROOT),
+                                 ss.hf_token(ROOT), status=inner, log=lambda line: print(line, flush=True), flags=hf_dl.CREATE_NO_WINDOW, revision=m["revision"])
+
+            def work(job=_tts_job, key=key, f=f, inner=inner):
+                t = threading.Thread(target=job.run, daemon=True)
+                t.start()
+                while t.is_alive():
+                    time.sleep(0.5)
+                    TTS_DL.update({k: v for k, v in inner.items() if k != "status"})
+                TTS_DL.update(inner)
+                if inner.get("status") != "done":
+                    return
+                TTS_DL.update(status="running", message="SHA-256 を検証しています…")
+                path = tts_engine.model_path(ROOT, key)
+                h = hashlib.sha256()
+                with open(path, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(8 << 20), b""):
+                        h.update(chunk)
+                if h.hexdigest() != f["sha256"]:
+                    path.unlink(missing_ok=True)
+                    TTS_DL.update(status="error", error="ダウンロードしたファイルの SHA-256 が一致しません（ファイルは削除しました）。もう一度試してください。", message="")
+                else:
+                    TTS_DL.update(status="done", message="")
+            threading.Thread(target=work, daemon=True).start()
+        return {"ok": True}
+
+    @r.get("/settings/api/tts/download/status")
+    async def tts_download_status():
+        return dict(TTS_DL)
+
+    @r.post("/settings/api/tts/download/cancel")
+    async def tts_download_cancel(request: Request):
+        guard_write(request)
+        if TTS_DL.get("status") != "running":
+            raise HTTPException(400, "ダウンロード中ではありません。")
+        if _tts_job:
+            _tts_job.cancel()
+        return {"ok": True}
+
     # ---- 再起動 ----
     @r.post("/settings/api/restart")
     async def restart(request: Request):
         guard_write(request)
         body = await request.json()
         target = body.get("target", "all")
-        if target not in ("llm", "stt", "all"):
-            raise HTTPException(400, "target は llm / stt / all のどれかです。")
+        if target not in ("llm", "stt", "tts", "all"):
+            raise HTTPException(400, "target は llm / stt / tts / all のどれかです。")
         py = str(ROOT / "app" / ".venv" / "Scripts" / "python.exe")
         spawn_detached([py, str(ROOT / "ctl.py"), "restart", target])
         return {"ok": True, "message": "再起動しています。完了まで数十秒〜数分かかります。"}

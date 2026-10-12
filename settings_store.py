@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 import hf_hub
 import profiles
 import stt_engine
+import tts_engine
 
 ROOT = Path(__file__).resolve().parent
 
@@ -91,7 +92,10 @@ DEFAULT_SETTINGS = {
         # 画像認識。enabled = アプリが画像を受け付けて LLM に渡す。store_images = 会話の記録に画像を残す（既定は残さない）
         "vision": {"enabled": False, "store_images": False},
     },
-    "tts": {"voice": "mio_bright", "num_steps": 24, "seed": 42},
+    # 音声合成。engine: auto（speech.cpp が使えれば speech.cpp、使えなければ Python 版）/ speechcpp / python。
+    # model: irodori-tts-mf（MeanFlow。mf_steps = 4 が標準で速い）/ irodori-tts（Rectified Flow。num_steps で品質と速さを選ぶ。Python 版と同じモデル）。
+    # num_steps は Python 版と irodori-tts（rf）の steps。モデル・エンジンの変更は TTS の再起動で反映、声と steps と seed は次の発話から
+    "tts": {"voice": "mio_bright", "num_steps": 24, "seed": 42, "engine": "auto", "model": tts_engine.DEFAULT_MODEL, "mf_steps": 4},
     # 音声認識。engine: auto（speech.cpp が使えれば speech.cpp、使えなければ faster-whisper）/ speechcpp / faster-whisper。
     # model: parakeet-ja / qwen3-asr-0.6b / qwen3-asr-1.7b（speech.cpp のとき）。device: auto（プロファイルの既定）/ gpu / cpu。
     # hints: よく使う言葉（固有名詞など。qwen3-asr のときだけ prompt として渡す）。モデル・デバイス・エンジンの変更は STT の再起動で反映、hints は次の発話から
@@ -231,6 +235,13 @@ def validate_settings(s: dict):
     stt["hints"] = str(stt.get("hints") or "").strip()
     if len(stt["hints"]) > stt_engine.HINT_MAX_CHARS:
         raise ValueError(f"よく使う言葉は {stt_engine.HINT_MAX_CHARS} 文字以内にしてください。")
+    if t.get("engine") not in tts_engine.ENGINES:
+        raise ValueError("音声合成のエンジンは auto / speechcpp / python のどれかです。")
+    if t.get("model") not in tts_engine.TTS_MODELS:
+        raise ValueError("音声合成のモデルは " + " / ".join(tts_engine.TTS_MODELS) + " のどれかです。")
+    t["mf_steps"] = int(t.get("mf_steps") or 4)
+    if not 1 <= t["mf_steps"] <= 16:
+        raise ValueError("mf_steps は 1〜16 の範囲で指定してください。")
     llm = s["llm"]
     llm["temperature"] = float(llm["temperature"])
     if not 0 <= llm["temperature"] <= 2:

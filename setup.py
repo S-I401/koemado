@@ -40,6 +40,7 @@ import hf_hub  # noqa: E402
 import model_picker  # noqa: E402
 import settings_store  # noqa: E402  （ユーザー設定・キャラクター）
 import stt_engine  # noqa: E402  （音声認識: speech.cpp / faster-whisper）
+import tts_engine  # noqa: E402  （音声合成: speech.cpp の Irodori-TTS / Python 版）
 
 # =====================================================================
 # 設定データ: モデルやバージョンの差し替えはこの 1 か所を直す
@@ -87,8 +88,9 @@ from profiles import (PROFILES, PROFILE_ORDER, TTS_VRAM_MIB, DESKTOP_HEADROOM_MI
 # 環境の構築中は、ダウンロードのキャッシュと展開後のファイルが両方ある（キャッシュは終わりに消す）
 SIZE_LABELS = {
     "llama.cpp": "llama.cpp（LLM エンジン）",
-    "tts_env": "TTS の実行環境（PyTorch CUDA 12.8 など）",
-    "tts_models": "TTS のモデル（Irodori int8・codec）",
+    "tts_gguf": "TTS のモデル（Irodori-TTS v4.1 Small、GGUF Q8_0。speech.cpp 用）",
+    "tts_env": "TTS の実行環境（PyTorch CUDA 12.8 など。Python 版）",
+    "tts_models": "TTS のモデル（Irodori int8・codec。Python 版）",
     "speechcpp": "STT: speech.cpp v" + stt_engine.SPEECHCPP["version"] + "（Vulkan。Python・CUDA 不要）",
     "stt_asr": "STT のモデル（parakeet-tdt_ctc-0.6b-ja Q8_0）",
     "stt_env": "STT の実行環境（faster-whisper）",
@@ -100,6 +102,7 @@ SIZE_LABELS = {
 # (ダウンロード量, ディスク使用量) の概算 GiB。ディスクは展開後で、導入中のキャッシュ分を含む
 SIZES_GB = {
     "llama.cpp": (0.64, 1.9),    # zip 2 本 → 展開後 1.2GB（zip は展開後に消す）
+    "tts_gguf": (1.12, 1.12),    # 1,199,474,528 バイト
     "tts_env": (3.2, 6.0),       # PyTorch cu128 + 依存（展開後の実測 5.2GB）+ Python 3.10
     "tts_models": (1.3, 1.4),
     "speechcpp": (0.03, 0.1),    # zip 30.5MB → 展開後 約 93MB（zip は展開後に消す）
@@ -354,8 +357,17 @@ def sample_images_done(install: Path) -> bool:
 
 # 音声認識の導入方針。auto = Vulkan が使えれば speech.cpp、使えなければ faster-whisper。both = 両方（設定画面で切り替えて試せる）
 STT_PLAN = {"mode": "speechcpp"}
+# 音声合成の導入方針。auto = Vulkan が使えれば speech.cpp の Irodori-TTS、使えなければ Python 版。both = 両方（設定画面で切り替えられる）
+TTS_PLAN = {"mode": "speechcpp"}
 STT_KEYS = {"speechcpp": ("speechcpp", "stt_asr"), "faster-whisper": ("stt_env", "stt_model"),
             "both": ("speechcpp", "stt_asr", "stt_env", "stt_model")}
+TTS_KEYS = {"speechcpp": ("speechcpp", "tts_gguf"), "python": ("tts_env", "tts_models"),
+            "both": ("speechcpp", "tts_gguf", "tts_env", "tts_models")}
+OPTIONAL_KEYS = ("speechcpp", "stt_asr", "stt_env", "stt_model", "tts_gguf", "tts_env", "tts_models")
+
+
+def needed_keys() -> set:
+    return set(STT_KEYS[STT_PLAN["mode"]]) | set(TTS_KEYS[TTS_PLAN["mode"]])
 
 
 def speechcpp_done(install: Path) -> bool:
@@ -376,6 +388,25 @@ def decide_stt(requested: str, hw: dict) -> tuple[str, str]:
     return requested, ""
 
 
+def decide_tts(requested: str, hw: dict) -> tuple[str, str]:
+    """(導入方針, 案内)。requested: auto / speechcpp / python / both"""
+    ok, why = hw["vulkan_ok"], hw["vulkan_why"]
+    if requested == "auto":
+        if ok:
+            return "speechcpp", ""
+        return "python", (why + " 従来の Python 版 Irodori-TTS-Server（PyTorch、約 5GB）を入れて使います。"
+                          "Vulkan が使えるようになったら、`setup.bat --tts both` で speech.cpp の TTS も追加できます。")
+    if requested in ("speechcpp", "both") and not ok:
+        return "python", why + " speech.cpp は動かせないので、Python 版の Irodori-TTS-Server だけを入れます。"
+    return requested, ""
+
+
+def tts_summary() -> str:
+    m = {"speechcpp": "Irodori-TTS v4.1 Small（speech.cpp、GGUF Q8_0。Python・PyTorch 不要）", "python": "Irodori-TTS v4.1 Small（Python 版、int8、PyTorch CUDA）",
+         "both": "speech.cpp + Python 版（切り替え可）"}
+    return m[TTS_PLAN["mode"]]
+
+
 def stt_summary() -> str:
     m = {"speechcpp": "speech.cpp（Vulkan。GPU か CPU）+ parakeet-tdt_ctc-0.6b-ja",
          "faster-whisper": "faster-whisper small（CPU）", "both": "speech.cpp + faster-whisper（切り替え可）"}
@@ -386,6 +417,7 @@ def component_state(install: Path, name: str) -> bool:
     """その部品がすでに導入済みか（容量の見積もりから差し引く）"""
     return {
         "llama.cpp": (install / "llama.cpp" / "llama-server.exe").exists(),
+        "tts_gguf": tts_engine.model_present(install, tts_engine.DEFAULT_MODEL),
         "tts_env": (install / "tts" / ".venv" / ".setup_ok").exists(),
         "tts_models": (install / "hf-home" / ".tts_prefetched").exists(),
         "speechcpp": speechcpp_done(install),
@@ -432,7 +464,7 @@ def _components(install: Path, skip: tuple = ()) -> list[dict]:
     for key, (dl, disk) in SIZES_GB.items():
         if key in skip:
             continue
-        if key in ("speechcpp", "stt_asr", "stt_env", "stt_model") and key not in STT_KEYS[STT_PLAN["mode"]]:
+        if key in OPTIONAL_KEYS and key not in needed_keys():
             continue
         if key == "sample_images" and not component_state(install, "ui"):
             dl = 0.0
@@ -554,7 +586,7 @@ def show_plan(hw: dict, name: str, notes: list[str], plan: dict, llm: dict, inst
             say(f"  LLM : 外部の推論サーバーを使う（{args.llm_url}）。llama.cpp とモデルは入れません")
             if settings_store.is_cloud_url(args.llm_url):
                 say("  ※ 会話の内容が外部のサービスに送られます。")
-        say("  TTS : Irodori-TTS v4.1 Small（int8）／ STT: " + stt_summary())
+        say("  TTS : " + tts_summary() + "\n  STT : " + stt_summary())
         for n in notes:
             say(f"  ※ {n}")
         _show_items(hw, plan, install, ports)
@@ -578,7 +610,7 @@ def show_plan(hw: dict, name: str, notes: list[str], plan: dict, llm: dict, inst
         say(f"        専門家（MoE）のうち {llm['info']['n_cpu_moe']}/{p['moe_layers']} 層を CPU 側に置く（LLM の VRAM 見込み 約 {llm['info']['llm_vram_estimate_mib'] / 1024:.1f} GiB）")
     else:
         say(f"        VRAM に収まる分だけ GPU に載せる（TTS 用に約 {llm['fit_target_mib'] / 1024:.1f} GiB の余白を残す）")
-    say("  TTS : Irodori-TTS v4.1 Small（int8）／ STT: " + stt_summary())
+    say("  TTS : " + tts_summary() + "\n  STT : " + stt_summary())
     for n in notes:
         say(f"  ※ {n}")
     g = hw["gpu"]
@@ -668,6 +700,7 @@ class Installer:
         self.hw = hw
         self.uv = None
         self.env = None
+        self.speechcpp_failed = False
 
     # ---- 準備 ----
     def prepare_env(self):
@@ -707,7 +740,7 @@ class Installer:
         say("\n[配置] プログラムのファイルをインストール先にコピーします。")
         ignore = shutil.ignore_patterns(".venv", "__pycache__", ".env", ".env.local", "data", "html", "*.db", "*.db-*",
                                         "recorded_voices", "logs")
-        for name in ["ctl.py", "supervisor.py", "profiles.py", "stt_engine.py", "hf_hub.py", "hf_dl.py", "model_picker.py", "settings_store.py", "tools_store.py", "configure.py", "setup.py",
+        for name in ["ctl.py", "supervisor.py", "profiles.py", "stt_engine.py", "tts_engine.py", "hf_hub.py", "hf_dl.py", "model_picker.py", "settings_store.py", "tools_store.py", "configure.py", "setup.py",
                      "start.bat", "debug-start.bat", "stop.bat", "setup.bat", "configure.bat", "koemado.ico", "koemado.vbs", "display_env.py", "display.py", "display.bat", "start-mascot.bat", "start-browser.bat", "mascot.py", "README.md", "LICENSE"]:
             if (SRC_DIR / name).exists():
                 shutil.copy2(SRC_DIR / name, self.root / name)
@@ -816,21 +849,44 @@ class Installer:
 
     # ---- TTS ----
     def install_tts(self):
+        """TTS_PLAN に従って、speech.cpp の Irodori-TTS（既定。GGUF だけ）と Python 版 Irodori-TTS-Server（予備）を入れる。
+        speech.cpp が動かなかったとき（speech devices が失敗）は、Python 版に切り替えて案内する"""
+        mode = TTS_PLAN["mode"]
+        self.install_voices()
+        if mode in ("speechcpp", "both"):
+            if STT_PLAN["mode"] == "faster-whisper" and self.speechcpp_failed:
+                ok = False
+            else:
+                ok = self.install_speechcpp()
+            if ok:
+                self.install_tts_gguf(tts_engine.DEFAULT_MODEL)
+            else:
+                say("\n[TTS] speech.cpp を動かせなかったので、従来の Python 版 Irodori-TTS-Server（PyTorch）を入れて使います。")
+                TTS_PLAN["mode"] = "python"
+                self.install_tts_python()
+                return
+        if mode in ("python", "both"):
+            self.install_tts_python()
+
+    def install_tts_gguf(self, key: str):
+        m = tts_engine.TTS_MODELS[key]
+        f = tts_engine.model_file(key)
+        if tts_engine.model_present(self.root, key):
+            say(f"[TTS] Irodori の GGUF {f['file']} は導入済み")
+            return
+        say(f"[TTS] Irodori-TTS の GGUF {m['repo']} / {f['file']}（{f['size_bytes'] / GIB:.2f} GiB、MIT）をダウンロードします（hf download）。")
+        d = tts_engine.models_dir(self.root)
+        self.run_download(m["repo"], [{"path": f["file"], "size": f["size_bytes"], "sha256": f["sha256"]}], d, "TTS モデル", revision=m["revision"])
+        got = sha256_file(d / f["file"])
+        if got != f["sha256"]:
+            (d / f["file"]).unlink(missing_ok=True)
+            die(f"{f['file']} の SHA-256 が一致しません（{got}）。ファイルを削除しました。もう一度 setup.bat を実行してください。")
+        say("  SHA-256 の検証: 一致")
+
+    def install_voices(self):
         tts = self.root / "tts"
-        commit = PINNED["tts_commit"]
-        marker = tts / ".venv" / ".setup_ok"
-        if marker.exists() and marker.read_text().strip() == commit:
-            say("\n[TTS] 導入済み")
-        else:
-            say("\n[TTS] Irodori-TTS-Server を取得して環境を作ります（PyTorch が大きいので時間がかかります）。")
-            if not (tts / ".git").exists():
-                run(["git", "clone", PINNED["tts_repo"], tts], env=self.env)
-            run(["git", "fetch", "origin"], cwd=tts, env=self.env, check=False)
-            run(["git", "checkout", "--quiet", commit], cwd=tts, env=self.env)
-            self.uv_run(["sync", "--frozen", "--extra", "cu128", "--python", PINNED["tts_python"]], cwd=tts)
-            marker.write_text(commit)
-        # 声（参照音声）
-        (tts / "voices").mkdir(exist_ok=True)
+        # 声（参照音声）。speech.cpp は起動時にここから --add-voice で読み、Python 版はここを直接読む
+        (tts / "voices").mkdir(parents=True, exist_ok=True)
         for f in (SRC_DIR / "voices").iterdir():
             if f.is_file() and f.suffix.lower() in settings_store.AUDIO_EXTS:
                 shutil.copy2(f, tts / "voices" / f.name)
@@ -838,6 +894,21 @@ class Installer:
         if shipped.exists() and not settings_store.voices_meta_path(self.root).exists():
             settings_store.voices_meta_path(self.root).parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(shipped, settings_store.voices_meta_path(self.root))
+
+    def install_tts_python(self):
+        tts = self.root / "tts"
+        commit = PINNED["tts_commit"]
+        marker = tts / ".venv" / ".setup_ok"
+        if marker.exists() and marker.read_text().strip() == commit:
+            say("\n[TTS] Python 版は導入済み")
+        else:
+            say("\n[TTS] Irodori-TTS-Server（Python 版）を取得して環境を作ります（PyTorch が大きいので時間がかかります）。")
+            if not (tts / ".git").exists():
+                run(["git", "clone", PINNED["tts_repo"], tts], env=self.env)
+            run(["git", "fetch", "origin"], cwd=tts, env=self.env, check=False)
+            run(["git", "checkout", "--quiet", commit], cwd=tts, env=self.env)
+            self.uv_run(["sync", "--frozen", "--extra", "cu128", "--python", PINNED["tts_python"]], cwd=tts)
+            marker.write_text(commit)
         # 重みのダウンロードと動作確認（サーバーを一度起動して、読み込めたら止める）
         pre = self.root / "hf-home" / ".tts_prefetched"
         if not pre.exists():
@@ -872,8 +943,12 @@ class Installer:
         """STT_PLAN に従って、speech.cpp（既定）と faster-whisper（予備）を入れる。
         speech.cpp が動かなかったとき（speech devices が失敗）は、faster-whisper に切り替えて案内する"""
         mode = STT_PLAN["mode"]
+        self.speechcpp_failed = False
         if mode in ("speechcpp", "both"):
-            if not self.install_speechcpp():
+            if self.install_speechcpp():
+                self.install_asr_model(stt_engine.DEFAULT_MODEL)
+            else:
+                self.speechcpp_failed = True
                 say("\n[STT] speech.cpp を動かせなかったので、従来の faster-whisper（CPU）を入れて使います。")
                 STT_PLAN["mode"] = "faster-whisper"
                 self.install_faster_whisper()
@@ -931,7 +1006,6 @@ class Installer:
             say("  [警告] " + why)
             return False
         say("  使えるデバイス（speech devices）: " + " / ".join(f"{d['name']}={d['description'].strip()}（{d['kind']}）" for d in devs))
-        self.install_asr_model(stt_engine.DEFAULT_MODEL)
         return True
 
     def install_asr_model(self, key: str):
@@ -1360,6 +1434,8 @@ def main():
     ap.add_argument("--llm-api-key", default="", help="external のときの API キー（任意。config/settings.json に保存される）")
     ap.add_argument("--stt", choices=["auto", "speechcpp", "faster-whisper", "both"], default="auto",
                     help="音声認識: auto=speech.cpp（Vulkan が使えない PC では faster-whisper）/ speechcpp / faster-whisper（従来。CPU）/ both=両方（設定画面で切り替えられる）")
+    ap.add_argument("--tts", choices=["auto", "speechcpp", "python", "both"], default="auto",
+                    help="音声合成: auto=speech.cpp の Irodori-TTS（Vulkan が使えない PC では Python 版）/ speechcpp / python（従来。PyTorch、約 5GB）/ both=両方（設定画面で切り替えられる）")
     ap.add_argument("--display", choices=["mascot", "browser", "both", "ask"], default=None,
                     help="表示方法: mascot=デスクトップのキャラ（既定）/ browser=ブラウザのタブ / both=両方 / ask=最後に聞く（--yes のときは mascot）")
     args = ap.parse_args()
@@ -1375,6 +1451,9 @@ def main():
     STT_PLAN["mode"], stt_note = decide_stt(args.stt, hw)
     if stt_note:
         say(f"\n※ 音声認識: {stt_note}")
+    TTS_PLAN["mode"], tts_note = decide_tts(args.tts, hw)
+    if tts_note:
+        say(f"\n※ 音声合成: {tts_note}")
     choice = None
     # 先にプロファイルを決める（Strata の案内は、選ばれたプロファイルが high のときだけ）
     name, notes, llm = None, [], None
