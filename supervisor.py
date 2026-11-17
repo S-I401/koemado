@@ -146,7 +146,8 @@ REDACT = Redactor()
 
 # ------------------------------------------------------------------ ログ ----
 
-_POLL_NOISE = re.compile(r'"GET (/health|/static/index\.html) HTTP/1\.1" 200|^\d+\.\d+\.\d+\.\d+ GET /v1/models 200')
+_POLL_NOISE = re.compile(r'"GET (/health|/static/index\.html) HTTP/1\.1" 200|^\d+\.\d+\.\d+\.\d+ GET /v1/models 200'
+                         r'|^\d\d:\d\d:\d\d\s+GET\s+/v1/models\s+200\b')  # 後者は speech.cpp 0.8.10 以降の serve のログ（時刻  GET  パス  状態）
 _LVL_LLAMA = re.compile(r"^\d+\.\d+\.\d+\.\d+ ([WEID]) ")
 _LVL_ERR = re.compile(r"\b(ERROR|CRITICAL|FATAL|Traceback|Exception|Error:)\b|\[エラー\]|異常終了")
 _LVL_WARN = re.compile(r"\b(WARN|WARNING)\b|警告")

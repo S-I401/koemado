@@ -189,7 +189,7 @@ PC のスペックから自動で選びます（`--profile` で変更可）。\
 
 ### 固定しているバージョン
 
-llama.cpp `b11443`（CUDA 12 ビルド）／ Irodori-TTS-Server `61012c7`（`uv.lock` に従う。既定）・Irodori-TTS v4.1 Small int8（`Aratako/Irodori-TTS-v4.1-Small-Quantized`）／ speech.cpp 版（選択肢）: Irodori-TTS v4.1 Small の GGUF Q8_0（`sakasegawa/Irodori-TTS-v4.1-Small-GGUF` `a8d7c01`、MF 版は `…-MF-GGUF` `205ab07`）／ aiavatar 0.9.1 ／ fastmcp 4.0.11 ／ ddgs 9.16.0 ／ speech.cpp v0.8.4（`speech-0.8.4-windows-x64-vulkan.zip`、SHA-256 `c35e75e6…`）／ parakeet-tdt_ctc-0.6B-ja Q8_0（`sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF` `f7cb538`）／ Qwen3-ASR 0.6B・1.7B Q8_0（`sakasegawa/Qwen3-ASR-*-GGUF`）／ faster-whisper 1.2.1（small, CPU int8。Vulkan が使えない PC の予備）／ pystray 0.19.5 ／ pillow 12.3.0 ／ PySide6 6.11.2（Essentials / Addons、Qt WebEngine）／ shiboken6 6.11.2。\
+llama.cpp `b11443`（CUDA 12 ビルド）／ Irodori-TTS-Server `61012c7`（`uv.lock` に従う。既定）・Irodori-TTS v4.1 Small int8（`Aratako/Irodori-TTS-v4.1-Small-Quantized`）／ speech.cpp 版（選択肢）: Irodori-TTS v4.1 Small の GGUF Q8_0（`sakasegawa/Irodori-TTS-v4.1-Small-GGUF` `66fe2cd`、MF 版は `…-MF-GGUF` `9db7da1`）／ aiavatar 0.9.1 ／ fastmcp 4.0.11 ／ ddgs 9.16.0 ／ speech.cpp v0.11.0（`speech-0.11.0-windows-x64-vulkan.zip`、SHA-256 `b64f4981…`）／ parakeet-tdt_ctc-0.6B-ja Q8_0（`sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF` `f7cb538`）／ Qwen3-ASR 0.6B・1.7B Q8_0（`sakasegawa/Qwen3-ASR-*-GGUF`）／ faster-whisper 1.2.1（small, CPU int8。Vulkan が使えない PC の予備）／ pystray 0.19.5 ／ pillow 12.3.0 ／ PySide6 6.11.2（Essentials / Addons、Qt WebEngine）／ shiboken6 6.11.2。\
 依存のバージョンは `app/requirements.txt` と `stt/requirements.txt` で固定しています。
 
 ## 音声認識（STT）
@@ -199,7 +199,7 @@ Python も CUDA も使わず、**Vulkan**（NVIDIA・AMD・Intel の GPU のド�
 CPU でも動きます。\
 従来の faster-whisper（Whisper small、CPU）は、Vulkan が使えない PC のための予備として残しています。
 
-- 導入: `setup.bat` が、公式のリリース `speech-0.8.4-windows-x64-vulkan.zip`（約 30MB）を `stt\speechcpp\` に展開します。\
+- 導入: `setup.bat` が、公式のリリース `speech-0.11.0-windows-x64-vulkan.zip`（約 30MB）を `stt\speechcpp\` に展開します。\
   公式の `install.ps1` は PATH を書き換えるので使いません。\
   zip は、リリースの `SHA256SUMS` と、`stt_engine.py` に固定した SHA-256 の**両方に一致したとき**だけ展開します。\
   認識モデルの GGUF は `hf download` で `models\stt\` に取得し、固定したコミットの SHA-256 も検証します（一致しなければ削除してやり直します）。

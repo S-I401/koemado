@@ -25,19 +25,19 @@ ENV_NO_VULKAN = "KOEMADO_SIMULATE_NO_VULKAN"
 
 # ---- speech.cpp（動作確認した版。公式の install.ps1 は PATH を変えるので使わない）----
 SPEECHCPP = {
-    "version": "0.8.4",
-    "asset": "speech-0.8.4-windows-x64-vulkan.zip",
-    "url": "https://github.com/nyosegawa/speech.cpp/releases/download/v0.8.4/speech-0.8.4-windows-x64-vulkan.zip",
-    "sums_url": "https://github.com/nyosegawa/speech.cpp/releases/download/v0.8.4/SHA256SUMS",
+    "version": "0.11.0",
+    "asset": "speech-0.11.0-windows-x64-vulkan.zip",
+    "url": "https://github.com/nyosegawa/speech.cpp/releases/download/v0.11.0/speech-0.11.0-windows-x64-vulkan.zip",
+    "sums_url": "https://github.com/nyosegawa/speech.cpp/releases/download/v0.11.0/SHA256SUMS",
     # リリースの SHA256SUMS と同じ値（コードにも固定する。SHA256SUMS の改ざんにも気づけるように、両方を照合する）
-    "sha256": "c35e75e64b170d69c2249fc32a82ae6e1a16170f2064eeb60cf815d3a5d65001",
-    "size_bytes": 30547352,
-    "disk_bytes": 93 * 1024 * 1024,        # 展開後（speech.exe + speech.dll）の実測
+    "sha256": "b64f498179fc46d08149317eaea9fe6f24e6fa0cd194557b374c97e76ccc9c67",
+    "size_bytes": 29718214,
+    "disk_bytes": 89 * 1024 * 1024,        # 展開後（speech.exe・speech.dll・speech.h・speech.lib。92,846,040 バイト）の実測
     "license": "MIT",
     "home": "https://github.com/nyosegawa/speech.cpp",
 }
 
-# ---- 認識モデル（speech.cpp の v0.8.4 のカタログと同じ。Q8_0。revision / sha256 は speech models --json の値）----
+# ---- 認識モデル（speech.cpp の v0.11.0 のカタログと同じ。Q8_0。revision / sha256 は speech models --json の値）----
 # id: speech serve の /v1/models が返す id（カタログの名前とは違い、GGUF が持つモデル名）。cer: Common Voice 8.0 日本語の test（4,483 発話）の CER（speech.cpp の docs による。Q8_0）
 MODELS = {
     "parakeet-ja": {

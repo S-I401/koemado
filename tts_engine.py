@@ -14,12 +14,12 @@ from pathlib import Path
 
 import stt_engine
 
-# ---- Irodori-TTS v4.1 Small の GGUF（speech.cpp v0.8.4 のカタログと同じ。speech models --json の revision / sha256）----
+# ---- Irodori-TTS v4.1 Small の GGUF（speech.cpp v0.11.0 のカタログと同じ。speech models --json の revision / sha256）----
 # type: このアプリが使う重みの種類。サイズは MB でなくバイト。mf = MeanFlow（4 steps で速い）、rf = Rectified Flow（steps 指定。Python 版と同じモデル）
 TTS_MODELS = {
     "irodori-tts-mf": {
         "label": "irodori-tts-mf（MeanFlow・速い）", "short": "Irodori-TTS v4.1 Small MF",
-        "repo": "sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF", "revision": "205ab071cb54e46509a84d3a48535df283bc3b0f",
+        "repo": "sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF", "revision": "9db7da1bec3d1069ef8e29732e0497be60c7b047",
         "files": {
             "f16": {"file": "Irodori-TTS-866M-MF-v4.1-F16.gguf", "size_bytes": 1920321792, "sha256": "e237dc3eefe469b8bba87872beacf12fb7fe00dbdf85767edca8ec04ab910d13"},
             "q8_0": {"file": "Irodori-TTS-866M-MF-v4.1-Q8_0.gguf", "size_bytes": 1207133984, "sha256": "2d161b0bbcd74f906f6b07e03d031075f8ae916db1b8bd4daf16cb37b451086a"},
@@ -28,7 +28,7 @@ TTS_MODELS = {
     },
     "irodori-tts": {
         "label": "irodori-tts（Rectified Flow・steps 指定）", "short": "Irodori-TTS v4.1 Small",
-        "repo": "sakasegawa/Irodori-TTS-v4.1-Small-GGUF", "revision": "a8d7c01cf5c306d7b495a1db61e027ca4a9c269a",
+        "repo": "sakasegawa/Irodori-TTS-v4.1-Small-GGUF", "revision": "66fe2cde1973fd44e7202fbe36df722103958188",
         "files": {
             "f16": {"file": "Irodori-TTS-859M-v4.1-F16.gguf", "size_bytes": 1905903936, "sha256": "f334932bdf166579bada0a3c8bdabb7199af85682fdcefb6f1cb7e444f5c75b3"},
             "q8_0": {"file": "Irodori-TTS-859M-v4.1-Q8_0.gguf", "size_bytes": 1199474528, "sha256": "293668c68ed2eec670d69c8c30d570410eedd14678acbdb1a80b3d03117c1600"},
