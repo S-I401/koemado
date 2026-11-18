@@ -225,6 +225,10 @@ def llama_command(cfg: dict, root: Path = ROOT) -> list[str]:
                 margin += stt_engine.STT_VRAM_MIB[r["model_key"]]
         except Exception:
             pass
+        try:       # プロファイルの余白が見込む TTS（約 2.8GB）より大きい TTS（Irodori v4 Large など）を speech.cpp で動かすときは、その分も残す
+            margin += tts_engine.vram_extra_mib(tts_resolved(cfg, root))
+        except Exception:
+            pass
         cmd += ["--fit", "on", "--fit-target", str(margin)]
     return cmd
 
@@ -676,7 +680,17 @@ def start(cfg: dict, open_browser: bool = True, only: list[str] = None) -> int:
 
 
 def restart(cfg: dict, target: str) -> int:
-    """設定を変えたあとの再起動。target: llm / all"""
+    """設定を変えたあとの再起動。target: llm / stt / tts / all。"llm,tts" のようにコンマで並べると、その複数だけを再起動する"""
+    if "," in target:
+        parts = [t for t in dict.fromkeys(target.split(",")) if t in ("llm", "stt", "tts")]
+        if len(parts) < 2 or "all" in target.split(",") or ("llm" in parts and managed_strata(cfg)):
+            target = "all" if len(parts) != 1 else parts[0]       # Strata は LLM だけ再起動できないので、全体を再起動する
+        else:
+            info = supervisor_info()
+            if info:
+                return 0 if all([supervisor_post(info, "/api/restart/" + t) for t in parts]) else 1
+            stop(cfg, quiet=True, only=parts)
+            return start(cfg, open_browser=False, only=parts)
     info = supervisor_info()
     if info:        # 常駐の管理プロセスがあれば、そちらに頼む（LLM だけの再起動も、管理プロセスが判断する）
         return 0 if supervisor_post(info, "/api/restart/" + (target if target in ("llm", "stt", "tts") else "all")) else 1

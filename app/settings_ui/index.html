@@ -97,7 +97,8 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
       </select></div>
     <div><label>MeanFlow の steps（irodori-tts-mf のとき。標準は 4）</label><input type="number" id="ttsMfSteps" min="1" max="16" step="1"></div>
   </div>
-  <div id="ttsModelBox"><label>speech.cpp のモデル（Irodori-TTS v4.1 Small。Q8_0）</label><div id="ttsModels"></div></div>
+  <div id="ttsModelBox"><label>speech.cpp のモデル（Q8_0。選んだときだけ取得します。取得したファイルは SHA-256 で検証します）</label><div id="ttsModels"></div>
+    <div id="ttsLicense"></div></div>
   <p><button class="btn primary" id="ttsSave" type="button">保存して適用</button> <span class="note">エンジン・モデルを変えると、TTS だけが再起動します。声・steps・seed は次の発話から反映されます。参照音声を追加・削除したときも、speech.cpp は声を起動時に読むので、TTS が自動で再起動します（数秒）。</span></p>
   <div id="ttsMsg"></div>
   <div id="ttsDlBox" hidden>
@@ -107,8 +108,8 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
   </div>
   <p class="note" id="ttsNote"></p>
 
-  <h2>使う声</h2>
-  <p class="note">声はいま選んでいるキャラクターに紐づきます。変えると、次の発話から切り替わります（再起動は不要）。</p>
+  <h2 id="voiceTitle">使う声</h2>
+  <p class="note" id="voiceNote">声はいま選んでいるキャラクターに紐づきます。変えると、次の発話から切り替わります（再起動は不要）。</p>
   <div id="voiceList"></div>
   <div class="row">
     <div><label>num_steps（小さいほど速く、大きいほど安定。既定 24。Python 版と irodori-tts（rf）の steps。MeanFlow は上の steps）</label>
@@ -118,6 +119,7 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
   <p><button class="btn primary" id="saveTts">速度・seed を保存</button></p>
 
   <h2>感情を声に乗せる</h2>
+  <p class="note" id="veModeNote" hidden></p>
   <p class="note">Irodori は、文に絵文字を入れると、声の調子（楽しげ・怒り・驚き・泣き声・ため息など）が変わります。絵文字は<strong>声にだけ</strong>入れて、画面の字幕・吹き出し・会話の記録・記憶には出しません。変えると次の発話から反映されます（再起動は不要）。</p>
   <label style="display:flex;gap:8px;align-items:center;color:var(--text)"><input type="checkbox" id="veA">
     <strong>方式 A</strong>: 表情（[face:joy] など）に合わせて、文の先頭に絵文字を付ける</label>
@@ -132,6 +134,7 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
   <p class="note">オンのときは、システムプロンプトに使ってよい一覧を入れます（次の会話から）。一覧にない絵文字（🥵 👅 💋 😱 など）は、LLM が出しても TTS に渡す前に取り除きます。LLM が文中に絵文字を入れた文には、方式 A の絵文字は付けません。キャラごとの上書きは、<code>characters/&lt;id&gt;/character.yaml</code> に <code>voice_emotion: {face: false, inline: true}</code> のように書きます。</p>
   <p><button class="btn primary" id="veSave" type="button">保存</button> <span id="veMsg"></span></p>
 
+  <div id="refVoiceBox">
   <h2>参照音声を追加</h2>
   <div class="adult"><strong>注意:</strong> 本人の同意がない実在人物（声優・有名人など）の声は使わないでください。なりすまし・偽情報への利用は禁止です（Irodori-TTS の利用条件）。</div>
   <div class="row">
@@ -159,13 +162,15 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
       <div style="align-self:end"><button class="btn primary" id="dsSave">この声を保存</button></div>
     </div>
   </div>
+  </div>
+  <div id="noCloneNote" class="msg info" hidden>いまの音声合成モデル（Qwen3-TTS）は、固定の話者だけです。参照音声の追加と Voice Design は使えません（Irodori のモデルに切り替えると使えます）。</div>
 </section>
 
 <!-- ============================== LLM ============================== -->
 <section class="tab" id="tab-llm">
   <div class="card" id="strataTip">
     <div class="title">Strata（Qwen3.8-Flash-Next）の推奨条件</div>
-    <div class="note">同梱の LLM より返答の質が大幅に上がります。<strong>VRAM 12GB 以上・RAM 48GB 以上で、ディスクに約 80GB の空きがある PC</strong>で推奨します（同梱プロファイルが mid でも high でも）。
+    <div class="note">同梱の LLM より返答の質が大幅に上がります。<strong>VRAM 12GB 以上・RAM 48GB 以上で、ディスクに約 100GB の空きがある PC</strong>で推奨します（同梱プロファイルが mid でも high でも）。
       VRAM が 12〜19GB だと専門家のキャッシュが小さくなり、速度は下がります（Strata の README の実測: RTX 5070 12GB・RAM 64GB で IQ2_XS 約 79 tokens/s）。RAM 32GB では Coder 版しか載らず、日本語の雑談に弱いので推奨しません。
       別ソフトウェアで（ライセンスは Strata 側）、1 リクエストずつしか処理せず、起動時に 1〜3 分 PC が重くなります。
       導入は <code>setup.bat --llm strata</code>、すでに入っているときは下の「自分で用意した推論サーバー」でプリセット「Strata」を選びます。</div>
@@ -328,7 +333,7 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
     <div id="sttModels"></div>
   </div>
   <div id="sttHintBox">
-    <label>よく使う言葉（固有名詞のヒント。読点か改行で区切る。キャラクターの名前は自動で加わります）</label>
+    <label id="sttHintLabel">よく使う言葉（固有名詞のヒント。読点か改行で区切る。キャラクターの名前は自動で加わります）</label>
     <textarea id="sttHints" maxlength="400" placeholder="例: 仙台、ミオ、Hugging Face"></textarea>
     <div class="note" id="sttHintNote"></div>
   </div>
@@ -341,7 +346,7 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
   </div>
 
   <h2>モデルの比べ方</h2>
-  <p class="note">CER は Common Voice 8.0 日本語 test（4,483 発話）の文字誤り率で、小さいほど正確です（speech.cpp の公表値、Q8_0）。漢字とかなの書き分けなど、表記の違いも誤りに数えます。parakeet は、かな書きにする傾向があります。このアプリで合成音声を使って比べた結果は、README の「音声認識」にあります。</p>
+  <p class="note">CER は文字誤り率で、小さいほど正確です（speech.cpp の公表値、Q8_0）。表の CER は、モデルごとにデータセットが違います: parakeet・qwen3-asr は Common Voice 8.0 日本語 test（4,483 発話）、haas-ja は FLEURS 日本語 test（650 発話。haas-ja は Common Voice 26.0 で学習していて、Common Voice 8.0 の値が公表されていません）。<strong>データセットが違う CER どうしは比べられません</strong>。FLEURS では、haas-ja 4.39% に対して parakeet-ja 5.00%、ReazonSpeech 7.95% です（speech.cpp の docs）。漢字とかなの書き分けなど、表記の違いも誤りに数えます。parakeet は、かな書きにする傾向があります。このアプリで合成音声を使って比べた結果は、README の「音声認識」にあります。</p>
   <table id="sttTable"></table>
 
   <h2>クレジットとライセンス</h2>
@@ -367,7 +372,7 @@ td, th { border-bottom: 1px solid var(--line); padding: 4px 8px; text-align: lef
     <div class="row">
       <div><label>一人称</label><input type="text" id="cFirst" placeholder="私"></div>
       <div><label>ユーザーの呼び方（二人称）</label><input type="text" id="cSecond" placeholder="あなた"></div>
-      <div><label>使う声</label><select id="cVoice"></select></div>
+      <div><label>使う声（参照音声。Qwen3-TTS のときは、「声」タブで選んだ話者を使います）</label><select id="cVoice"></select></div>
     </div>
     <label>口調</label><input type="text" id="cStyle">
     <label>性格</label><textarea id="cPersonality" style="min-height:60px"></textarea>
@@ -588,9 +593,32 @@ function renderChips() {
 }
 
 /* ---------------- 声 ---------------- */
+const GENDER_JA = { female: "女性", male: "男性" };
 function renderVoices() {
   const st = S.settings.tts;
   $("numSteps").value = st.num_steps; $("ttsSeed").value = st.seed ?? "";
+  const tv = S.tts_voice || { kind: "reference" };
+  const sp = tv.kind === "speakers";
+  $("refVoiceBox").hidden = sp; $("noCloneNote").hidden = !sp; $("numSteps").disabled = sp;
+  $("voiceTitle").textContent = sp ? "使う話者（" + tv.label + "）" : "使う声";
+  $("voiceNote").textContent = sp
+    ? "このモデルは、固定の 9 話者から選びます（参照音声の声は使えません）。日本語の文は、どの話者でも読めますが、母語が日本語なのは ono_anna だけです。変えると、次の発話から切り替わります（再起動は不要）。キャラクターに設定した声（参照音声）は使わず、ここで選んだ話者で話します。"
+    : "声はいま選んでいるキャラクターに紐づきます。変えると、次の発話から切り替わります（再起動は不要）。";
+  const ve = $("veModeNote");
+  ve.hidden = !sp;
+  ve.textContent = !sp ? "" : tv.emotion === "instructions"
+    ? "Qwen3-TTS 1.7B は絵文字を読めないので、絵文字は取り除き、感情は「話し方の指示（instructions。例: 嬉しそうに弾んだ声で話してください。）」にして渡します（下の設定のうち、方式 A・B の on/off と強さは効きます。絵文字の対応表は、既定の表情だけが指示に変わります）。"
+    : "Qwen3-TTS 0.6B は話し方の指示を受け付けないので、感情は声に乗りません（絵文字は取り除いてから読み上げます）。感情を乗せたいときは、1.7B か Irodori を選んでください。";
+  if (sp) {
+    $("voiceList").innerHTML = tv.speakers.map((v) => `<div class="card voice ${v.id === S.active_voice ? "sel" : ""}">
+      <label style="margin:0;display:flex;gap:6px;align-items:center;color:var(--text)"><input type="radio" name="voice" value="${esc(v.id)}" ${v.id === S.active_voice ? "checked" : ""}><span class="name">${esc(v.id)}</span></label>
+      <div class="meta">${esc(v.desc)}（${GENDER_JA[v.gender] || v.gender}）${v.id === tv.default_speaker ? " ・ 既定" : ""}</div>
+      <button class="btn" data-play="${esc(v.id)}">▶ 試聴</button>
+    </div>`).join("");
+    document.querySelectorAll("input[name=voice]").forEach((r) => r.onchange = () => chooseVoice(r.value));
+    document.querySelectorAll("[data-play]").forEach((b) => b.onclick = () => play(b.dataset.play, b));
+    return;
+  }
   $("voiceList").innerHTML = S.voices.map((v) => {
     const meta = [v.caption ? "キャプション: " + v.caption : "", v.seed != null ? "seed " + v.seed : "", v.source ? "（" + ({ "voice-design": "Voice Design", upload: "アップロード" }[v.source] || v.source) + "）" : ""].filter(Boolean).join(" ");
     return `<div class="card voice ${v.id === S.active_voice ? "sel" : ""}">
@@ -622,6 +650,12 @@ async function play(id, btn) {
 }
 async function chooseVoice(id) {
   try {
+    if ((S.tts_voice || {}).kind === "speakers") {      // 固定の話者のモデル: 話者だけを保存する（キャラクターの参照音声の声は変えない）
+      await api("/settings", "PUT", { tts: { speaker: id } });
+      await refresh(true);
+      toast("話者を「" + id + "」にしました。次の発話から変わります。");
+      return;
+    }
     await api("/settings", "PUT", { tts: { voice: id } });
     const cid = S.active_character;
     if (cid) { const c = await api("/characters/" + cid); c.voice = id; delete c.images; delete c.id; await api("/characters/" + cid, "PUT", c); }
@@ -1379,7 +1413,7 @@ async function loadTts() {
   $("ttsModels").innerHTML = TT.models.map((m) => `
     <label class="card ${m.key === s.model ? "sel" : ""}" style="display:block;color:var(--text);margin:6px 0;cursor:pointer">
       <input type="radio" name="ttsModel" value="${m.key}" ${m.key === s.model ? "checked" : ""}> <span class="title">${esc(m.label)}</span>
-      <span class="note"> ・ ${fmtMB(m.size_bytes)} ・ ${m.present ? "取得済み" : "未取得（選ぶと取得を確認します）"} ・ ${m.key === "irodori-tts-mf" ? "速い（steps 4）" : "steps で品質と速さを選ぶ（下の num_steps。Python 版と同じモデル）"}</span>
+      <span class="note"> ・ ${fmtMB(m.size_bytes)} ・ ${m.present ? "取得済み" : "未取得（選ぶと取得を確認します）"} ・ ライセンス ${esc(m.license)} ・ VRAM 約 ${(m.vram_mib / 1024).toFixed(1)}GB ・ ${esc(m.note)}${m.speechcpp_only ? " ・ speech.cpp 専用" : ""}</span>
     </label>`).join("");
   document.querySelectorAll("input[name=ttsModel]").forEach((r) => r.onchange = updateTtsForm);
   $("ttsEngine").onchange = updateTtsForm;
@@ -1396,7 +1430,12 @@ function updateTtsForm() {
   $("ttsModelBox").hidden = py;
   document.querySelectorAll("#ttsModels .card").forEach((c) => c.classList.toggle("sel", c.querySelector("input").checked));
   $("ttsMfSteps").disabled = py || selectedTtsModel() !== "irodori-tts-mf";
+  const m = TT.models.find((x) => x.key === selectedTtsModel());
+  $("ttsLicense").innerHTML = !m ? "" : `<div class="${m.license_note ? "msg warn" : "note"}"><strong>${esc(m.short)}</strong>: ライセンス ${esc(m.license)}（© ${esc(m.credit)}）。${linkify(esc(m.license_note || ""))}`
+    + (m.vram_mib >= 4000 ? `<br>VRAM を約 ${(m.vram_mib / 1024).toFixed(1)}GB 使います（この PC は ${TT.vram_gib.toFixed(0)}GB）。LLM と同時に載せると足りなくなることがあるので、LLM の余白を自動で増やしますが、LLM の GPU 層が減って遅くなります。自動では選ばれません。` : "")
+    + (m.voice_kind === "speakers" ? "<br>固定の 9 話者のモデルです。参照音声の声（mio_bright など）は使えず、「声」の話者（既定 ono_anna）で話します。" : "") + "</div>";
 }
+function linkify(t) { return t.replace(/https:\/\/[^\s、。）)]+/g, (u) => `<a href="${u}" target="_blank" rel="noopener noreferrer">${u}</a>`); }
 let ttsDlTimer = null;
 function pollTtsDownload(after) {
   $("ttsDlBox").hidden = false; $("ttsDlCancel").hidden = false; clearInterval(ttsDlTimer);
@@ -1422,14 +1461,13 @@ async function saveTts() {
   try { r = await api("/tts/apply", "POST", body); } catch (e) { msg($("ttsMsg"), "error", e.message); return; }
   if (r.need_download) {
     const n = r.need_download; msg($("ttsMsg"), "", "");
-    if (!confirm(`${n.label} のモデルファイル（${n.file}、${fmtMB(n.size_bytes)}、ライセンス ${n.license}）を Hugging Face から取得します。
-ディスクの空き: ${n.free_gib.toFixed(1)} GiB。取得しますか？`)) return;
+    if (!confirm(`${n.label} のモデルファイル（${n.file}、${fmtMB(n.size_bytes)}、ライセンス ${n.license}）を Hugging Face から取得します。${n.license_note ? "\n\n" + n.license_note : ""}\nディスクの空き: ${n.free_gib.toFixed(1)} GiB。取得しますか？`)) return;
     try { await api("/tts/download", "POST", { model: n.model, confirmed: true }); } catch (e) { msg($("ttsMsg"), "error", e.message); return; }
     pollTtsDownload(() => saveTts());
     return;
   }
   if (r.restarting) {
-    msg($("ttsMsg"), "info", "音声合成を再起動しています…");
+    msg($("ttsMsg"), "info", r.llm_restarting ? "音声合成と LLM を再起動しています（LLM の余白を変えるため。LLM の読み込みで数分かかることがあります）…" : "音声合成を再起動しています…");
     await new Promise((res) => setTimeout(res, 5000));
     for (let i = 0; i < 300; i++) {
       await new Promise((res) => setTimeout(res, 2000));
@@ -1438,6 +1476,7 @@ async function saveTts() {
     msg($("ttsMsg"), "ok", "音声合成を切り替えました。");
   } else msg($("ttsMsg"), "ok", "保存しました。");
   await loadTts();
+  await refresh(true);      // 声の一覧（参照音声 / 固定の話者）を、いまのモデルに合わせる
 }
 $("ttsSave").onclick = () => saveTts();
 
@@ -1461,18 +1500,19 @@ async function loadStt() {
   $("sttModels").innerHTML = ST.models.map((m) => `
     <label class="card ${m.key === s.model ? "sel" : ""}" style="display:block;color:var(--text);margin:6px 0;cursor:pointer">
       <input type="radio" name="sttModel" value="${m.key}" ${m.key === s.model ? "checked" : ""}> <span class="title">${esc(m.label)}</span>
-      <span class="note"> ・ ${fmtMB(m.size_bytes)} ・ CER ${esc(m.cer)} ・ ${m.present ? "取得済み" : "未取得（選ぶと取得を確認します）"}${m.hint ? " ・ 固有名詞のヒントを渡せます" : ""} ・ GPU のとき VRAM 約 ${(m.vram_mib / 1024).toFixed(1)}GB ・ 「自動」では${ST.auto_device[m.key] === "gpu" ? " GPU" : " CPU"}</span>
+      <span class="note"> ・ ${fmtMB(m.size_bytes)} ・ CER ${esc(m.cer)}（${esc(m.cer_set)}） ・ ライセンス ${esc(m.license)} ・ ${m.present ? "取得済み" : "未取得（選ぶと取得を確認します）"}${m.hint ? (m.hint_kind === "keywords" ? " ・ 固有名詞のキーワードを渡せます" : " ・ 固有名詞のヒントを渡せます") : ""} ・ GPU のとき VRAM 約 ${(m.vram_mib / 1024).toFixed(1)}GB ・ 「自動」では${ST.auto_device[m.key] === "gpu" ? " GPU" : " CPU"}</span>
     </label>`).join("");
   document.querySelectorAll("input[name=sttModel]").forEach((r) => r.onchange = updateSttForm);
   $("sttEngine").onchange = updateSttForm; $("sttDevice").onchange = updateSttForm;
-  $("sttTable").innerHTML = "<tr><th>モデル</th><th>CER</th><th>大きさ</th><th>ライセンス</th><th>特徴</th></tr>" + ST.models.map((m) => `<tr><td>${esc(m.short)}</td><td>${esc(m.cer)}</td><td>${fmtMB(m.size_bytes)}</td><td>${esc(m.license)}</td><td>${m.key === "parakeet-ja" ? "最も速い（既定）。かな書きになりやすい" : m.key === "qwen3-asr-0.6b" ? "軽く、漢字で書ける。ヒント可" : "最も正確。ヒント可。VRAM 8GB 級では CPU 向き"}</td></tr>`).join("")
+  $("sttTable").innerHTML = "<tr><th>モデル</th><th>CER</th><th>大きさ</th><th>ライセンス</th><th>特徴</th></tr>" + ST.models.map((m) => `<tr><td>${esc(m.short)}</td><td>${esc(m.cer)}<br><span class="note">${esc(m.cer_set)}</span></td><td>${fmtMB(m.size_bytes)}</td><td>${esc(m.license)}</td><td>${m.key === "parakeet-ja" ? "速い。かな書きになりやすい" : m.key === "haas-ja" ? "既定。日本語専用。句読点つきで、parakeet-ja より正確（FLEURS）。このアプリの合成音声でも、parakeet-ja より速く正確。キーワード（読みも指定可）を渡せる。VRAM は parakeet とほぼ同じ" : m.key === "qwen3-asr-0.6b" ? "軽く、漢字で書ける。ヒント可" : "最も正確。ヒント可。VRAM 8GB 級では CPU 向き"}</td></tr>`).join("")
     + "<tr><td>faster-whisper small</td><td colspan=\"2\">（従来。CPU）</td><td>MIT</td><td>speech.cpp が使えない PC の予備</td></tr>";
   $("sttCredit").innerHTML = `音声認識エンジン: <a href="${esc(ST.speechcpp.home)}" target="_blank" rel="noopener noreferrer">speech.cpp</a> v${esc(ST.speechcpp.version)}（${esc(ST.speechcpp.license)}）。<br>` +
     "parakeet-tdt_ctc-0.6b-ja: <strong>© NVIDIA</strong>、<a href=\"https://creativecommons.org/licenses/by/4.0/\" target=\"_blank\" rel=\"noopener noreferrer\">CC-BY-4.0</a>（<a href=\"https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja\" target=\"_blank\" rel=\"noopener noreferrer\">nvidia/parakeet-tdt_ctc-0.6b-ja</a> を GGUF に変換したもの。sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF）。この表示は、ライセンスが求めるクレジットです。<br>" +
-    "Qwen3-ASR: © Alibaba Qwen、Apache-2.0（<a href=\"https://huggingface.co/Qwen/Qwen3-ASR-1.7B\" target=\"_blank\" rel=\"noopener noreferrer\">Qwen/Qwen3-ASR</a>）。";
+    "Qwen3-ASR: © Alibaba Qwen、Apache-2.0（<a href=\"https://huggingface.co/Qwen/Qwen3-ASR-1.7B\" target=\"_blank\" rel=\"noopener noreferrer\">Qwen/Qwen3-ASR</a>）。<br>" +
+    "Haas-ja v1.0: © Third Intelligence、Apache-2.0（<a href=\"https://huggingface.co/third-intelligence/Haas-ja-v1.0\" target=\"_blank\" rel=\"noopener noreferrer\">third-intelligence/Haas-ja-v1.0</a>。GGUF: sakasegawa/Haas-ja-v1.0-GGUF）。";
   updateSttForm();
 }
-function selectedSttModel() { return (document.querySelector("input[name=sttModel]:checked") || {}).value || "parakeet-ja"; }
+function selectedSttModel() { return (document.querySelector("input[name=sttModel]:checked") || {}).value || "haas-ja"; }
 function updateSttForm() {
   if (!ST) return;
   const fw = $("sttEngine").value === "faster-whisper";
@@ -1483,7 +1523,10 @@ function updateSttForm() {
   $("sttDevWarn").innerHTML = (!fw && dv === "gpu" && ST.auto_device[m.key] === "cpu")
     ? `<div class="msg warn">この PC のプロファイル（${esc(ST.profile)}）では、${esc(m.short)} を GPU に載せると、LLM・TTS と合わせて VRAM が足りなくなる見込みです（CPU なら VRAM を使いません）。</div>` : "";
   $("sttHintBox").hidden = fw || !m.hint;
-  $("sttHintNote").textContent = m.hint ? "いまのヒント: " + (ST.prompt_preview || "（なし）") : "";
+  $("sttHintLabel").textContent = m.hint_kind === "keywords"
+    ? "よく使う言葉（キーワード。読点か改行で区切る。キャラクターの名前は自動で加わります。読みを付けるときは「表記=読み,読み」。例: Haas=ハース,ハウス）"
+    : "よく使う言葉（固有名詞のヒント。読点か改行で区切る。キャラクターの名前は自動で加わります）";
+  $("sttHintNote").textContent = m.hint ? (m.hint_kind === "keywords" ? "いまのキーワード: " : "いまのヒント: ") + ((m.hint_kind === "keywords" ? ST.keywords_preview : ST.prompt_preview) || "（なし）") + (m.hint_kind === "keywords" ? "（多く並べるほど、言っていない言葉を書く可能性が増えるので、必要な語だけにしてください）" : "") : "";
   if (fw) $("sttHintNote").textContent = "";
 }
 let sttDlTimer = null;
@@ -1518,7 +1561,7 @@ async function saveStt() {
     return;
   }
   if (r.restarting) {
-    msg($("sttMsg"), "info", "音声認識を再起動しています…");
+    msg($("sttMsg"), "info", r.llm_restarting ? "音声認識と LLM を再起動しています（LLM の余白を変えるため。LLM の読み込みで数分かかることがあります）…" : "音声認識を再起動しています…");
     await new Promise((res) => setTimeout(res, 5000));
     for (let i = 0; i < 300; i++) {
       await new Promise((res) => setTimeout(res, 2000));

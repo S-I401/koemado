@@ -73,17 +73,17 @@ When resuming, it shows the remaining amount, minus what is already downloaded.
 
 ### Using Strata (recommended for PCs with 12 GB+ VRAM and 48 GB+ RAM)
 
-If the PC has **at least 12 GB VRAM and at least 48 GB RAM**, and the disk has room for Strata (about 80 GB), setup offers [Strata](https://github.com/Niko1221/Strata) (Qwen3.8-Flash-Next) regardless of the profile (high / mid / low).
+If the PC has **at least 12 GB VRAM and at least 48 GB RAM**, and the disk has room for Strata (about 100 GB), setup offers [Strata](https://github.com/Niko1221/Strata) (Qwen3.8-Flash-Next) regardless of the profile (high / mid / low).
 Replies are much better than with the bundled LLM (Gemma 4 26B-A4B for mid).
 With 12 to 19 GB of VRAM the expert cache is smaller and speed drops (measured in Strata's README: RTX 5070 12 GB with 64 GB RAM gives about 79 tokens/s with IQ2_XS and about 53 tokens/s with IQ3_S).
 
-- Strata's requirements: NVIDIA (or an AMD GPU supported by Strata, but this project itself is NVIDIA-only), 12 GB+ VRAM, 48 GB+ RAM (with 32 GB RAM only the Coder edition fits, which is weak at Japanese chat, so it is not offered), about 80 GB of disk (about 70 GB download).
+- Strata's requirements: NVIDIA (or an AMD GPU supported by Strata, but this project itself is NVIDIA-only), 12 GB+ VRAM, 48 GB+ RAM (with 32 GB RAM only the Coder edition fits, which is weak at Japanese chat, so it is not offered), about 100 GB of disk (the download is about 70 to 90 GB depending on the model you pick; the largest, IQ3_S, is about 84 GB plus about 6 GB for the draft model).
 - Caveats: it is separate software (licensed by Strata). It handles one request at a time. It makes the PC sluggish for 1 to 3 minutes at startup.
 - Choices: **[1]** install Strata and use it (fetched into `<install dir>\strata`, and Strata's installer opens in a separate window; model selection and download happen there) / **[2]** already installed (enter its URL) / **[3]** continue with the bundled LLM (shown with the selected profile name).
-- `--yes` never installs the roughly 70 GB on its own (it continues with the selected bundled profile and only prints the guidance). `--llm strata` chooses [1], and `--llm external --llm-url http://127.0.0.1:8080/v1` chooses [2].
+- `--yes` never installs the up to roughly 90 GB on its own (it continues with the selected bundled profile and only prints the guidance). `--llm strata` chooses [1], and `--llm external --llm-url http://127.0.0.1:8080/v1` chooses [2].
 - After [1], `start.bat` starts Strata first and waits up to 10 minutes for `/v1/models` to respond (progress is shown in the admin console). The port is read from Strata's `strata-*.json`. `stop.bat` only stops the Strata that `start.bat` started.
 - So that Strata does not fill the VRAM with its expert cache, `--vram-reserve-mib 3500` (headroom for TTS) is written **only into the Strata settings of this install**. LLM-to-TTS serialization is on, `reasoning_effort=none`, temperature 0.8.
-- The Strata commit is pinned (`82f46a8`). Update Strata yourself with `strata\UPDATE.bat`.
+- The Strata commit is pinned (`c77572806996`, v0.2.15). Update Strata yourself with `strata\UPDATE.bat`.
 - Strata's installer (START-HERE.bat) may install Python 3.12 into your user profile on PCs without Python (that is Strata's own behavior).
 
 ### Refusal suppression for Strata (ESP) and image recognition
@@ -106,7 +106,7 @@ setup.bat --profile mid --yes             choose the profile and proceed without
 setup.bat --install-dir D:\aiavatar       choose the install location (default: this folder)
 setup.bat --llm external --llm-url http://127.0.0.1:1234/v1 --llm-model MODEL
                                           use an external inference server (no llama.cpp or model installed)
-setup.bat --llm strata                    install and use Strata (for high-end PCs; about 70 GB)
+setup.bat --llm strata                    install and use Strata (for high-end PCs; up to about 90 GB)
 setup.bat --model unsloth/Qwen3-8B-GGUF:Qwen3-8B-Q4_K_M.gguf
                                           choose the bundled LLM's model (repository:file; models outside the range are refused)
 setup.bat --model <repo>:<file> --hf-token-env   use the HF_TOKEN environment variable (never put a token on the command line)
@@ -148,12 +148,12 @@ If there is not enough free disk space, it drops one level.
 | low | 6 GB+ / 16 GB+ | Gemma 4 E4B (QAT q4_0) | 4.8 GiB | about 19 GB |
 
 - **mid** keeps most of the MoE experts' weights on the CPU side so that VRAM holds about 3.6 GB for the LLM plus about 2.7 GB (peak) for TTS (on an 8 GB GPU, leaving room for the Windows desktop).
-- Disk breakdown: llama.cpp about 1.2 GB, the TTS runtime (PyTorch CUDA) about 5.2 GB, the TTS models (Irodori int8 and codec) about 1.4 GB, STT (speech.cpp about 0.1 GB plus parakeet about 0.7 GB), other environments about 1 GB (with the speech.cpp TTS, the runtime and models, about 6.6 GB, become a GGUF of about 1.2 GB; on a PC without Vulkan STT is faster-whisper, about 0.8 GB; the download cache is removed at the end of setup).
+- Disk breakdown: llama.cpp about 1.2 GB, the TTS runtime (PyTorch CUDA) about 5.2 GB, the TTS models (Irodori int8 and codec) about 1.4 GB, STT (speech.cpp about 0.1 GB plus haas-ja about 0.7 GB), other environments about 1 GB (with the speech.cpp TTS, the runtime and models, about 6.6 GB, become a GGUF of about 1.2 GB; on a PC without Vulkan STT is faster-whisper, about 0.8 GB; the download cache is removed at the end of setup).
 - To swap a model, edit the table in `profiles.py`. If you register a Hugging Face token, you can also pick any GGUF from a list in the settings screen, within the range of your profile (see "Model browser" below).
 
 ### Pinned versions
 
-llama.cpp `b11443` (CUDA 12 build) / Irodori-TTS-Server `61012c7` (follows `uv.lock`; default) and Irodori-TTS v4.1 Small int8 (`Aratako/Irodori-TTS-v4.1-Small-Quantized`) / speech.cpp version (optional): Irodori-TTS v4.1 Small GGUF Q8_0 (`sakasegawa/Irodori-TTS-v4.1-Small-GGUF` `66fe2cd`; the MF one is `...-MF-GGUF` `9db7da1`) / aiavatar 0.9.1 / fastmcp 4.0.11 / ddgs 9.16.0 / speech.cpp v0.11.0 (`speech-0.11.0-windows-x64-vulkan.zip`, SHA-256 `b64f4981...`) / parakeet-tdt_ctc-0.6B-ja Q8_0 (`sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF` `f7cb538`) / Qwen3-ASR 0.6B and 1.7B Q8_0 (`sakasegawa/Qwen3-ASR-*-GGUF`) / faster-whisper 1.2.1 (small, CPU int8; fallback for PCs without Vulkan) / pystray 0.19.5 / pillow 12.3.0 / PySide6 6.11.2 (Essentials / Addons; Qt WebEngine) / shiboken6 6.11.2. Dependency versions are pinned in `app/requirements.txt` and `stt/requirements.txt`.
+llama.cpp `b12487` (CUDA 12 build) / Irodori-TTS-Server `ce06beb` (follows `uv.lock`; default) and Irodori-TTS v4.1 Small int8 (`Aratako/Irodori-TTS-v4.1-Small-Quantized`) / speech.cpp version (optional): Irodori-TTS v4.1 Small GGUF Q8_0 (`sakasegawa/Irodori-TTS-v4.1-Small-GGUF` `66fe2cd`; the MF one is `...-MF-GGUF` `9db7da1`) / aiavatar 0.9.2 / fastmcp 4.2.1 / ddgs 9.16.1 / speech.cpp v0.11.0 (`speech-0.11.0-windows-x64-vulkan.zip`, SHA-256 `b64f4981...`) / Haas-ja v1.0 Q8_0 (default; `sakasegawa/Haas-ja-v1.0-GGUF` `6b965d5`) / parakeet-tdt_ctc-0.6B-ja Q8_0 (optional; `sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF` `f7cb538`) / Qwen3-ASR 0.6B and 1.7B Q8_0 (`sakasegawa/Qwen3-ASR-*-GGUF`) / faster-whisper 1.2.1 (small, CPU int8; fallback for PCs without Vulkan) / pystray 0.19.5 / pillow 13.0.0 / PySide6 6.12.0 (Essentials / Addons; Qt WebEngine) / shiboken6 6.12.0. Dependency versions are pinned in `app/requirements.txt` and `stt/requirements.txt`.
 
 ## Speech recognition (STT)
 
@@ -169,18 +169,24 @@ The old faster-whisper (Whisper small, CPU) stays as a fallback for PCs where Vu
   Readiness is checked with `/v1/models`.
   Its output goes to the log of the admin console (`logs\stt.log`).
   The first start can be slow while the GPU driver compiles shaders, so the wait limit is 600 seconds (in practice startup took a few seconds, and only the first recognition sometimes took 5 to 10 seconds).
-- Conversation: AIAvatarKit's `OpenAISpeechRecognizer` cannot send `prompt`, so `app/run.py` subclasses it to send one (see "Frequently used words" below).
+- Conversation: AIAvatarKit's `OpenAISpeechRecognizer` cannot send `prompt` or `keywords`, so `app/run.py` subclasses it to send them (see "Frequently used words" below).
 
 ### Models
 
 | Setting name | Model | Size | CER (published) | Notes | License |
 |---|---|---|---|---|---|
-| `parakeet-ja` (default) | [parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) (`parakeet-tdt_ctc-0.6B-ja-Q8_0.gguf`) | 661 MB | 7.9% | Fast. Tends to write in kana. No `prompt` | CC-BY-4.0 (c) NVIDIA |
+| `parakeet-ja` | [parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) (`parakeet-tdt_ctc-0.6B-ja-Q8_0.gguf`) | 661 MB | 7.9% | Fast. Tends to write in kana. No `prompt` | CC-BY-4.0 (c) NVIDIA |
+| `haas-ja` (default) | [Haas-ja v1.0](https://huggingface.co/sakasegawa/Haas-ja-v1.0-GGUF) (`Haas-616M-ja-v1.0-Q8_0.gguf`, Third Intelligence) | 656 MB | 4.39% (**FLEURS**; no Common Voice 8.0 figure is published) | Japanese only, with punctuation. More accurate than parakeet-ja (5.00% on FLEURS). Accepts proper nouns as `keywords` (readings can be given). VRAM is about the same as parakeet (measured peak +721 MiB; see "VRAM" below) | Apache-2.0 |
 | `qwen3-asr-0.6b` | [Qwen3-ASR 0.6B](https://huggingface.co/sakasegawa/Qwen3-ASR-0.6B-GGUF) (`Qwen3-ASR-0.6B-Q8_0.gguf`) | 842 MB | 11.9% | Light, writes kanji. Accepts hints for proper nouns | Apache-2.0 |
 | `qwen3-asr-1.7b` | [Qwen3-ASR 1.7B](https://huggingface.co/sakasegawa/Qwen3-ASR-1.7B-GGUF) (`Qwen3-ASR-1.7B-Q8_0.gguf`) | 2.18 GB | 9.5% | Most accurate. Accepts hints. Uses 2.3 GB of VRAM | Apache-2.0 |
 | faster-whisper small | [Systran/faster-whisper-small](https://huggingface.co/Systran/faster-whisper-small) | about 0.5 GB | - | The old engine. CPU. Fallback when Vulkan is missing | MIT |
 
-CER is the value speech.cpp publishes for the Common Voice 8.0 Japanese test set (4,483 utterances, Q8_0).
+CER is the value speech.cpp publishes (Q8_0), and **`haas-ja` alone uses a different dataset**:
+`parakeet-ja` and `qwen3-asr` are on the Common Voice 8.0 Japanese test set (4,483 utterances), `haas-ja` on the FLEURS Japanese test set (650 utterances), because Haas was trained on Common Voice 26.0 and no Common Voice 8.0 figure is published.
+**CERs from different datasets cannot be compared.** On FLEURS, haas-ja is 4.39%, parakeet-ja 5.00% and ReazonSpeech 7.95% (speech.cpp's docs).
+The default `haas-ja` is installed by `setup.bat`. The other models, such as `parakeet-ja`, are downloaded only when you choose them in the settings screen.
+A PC set up when `parakeet-ja` was the default has only `parakeet-ja`.
+If you update without having chosen a model in the settings, the app keeps running on the installed `parakeet-ja` until `haas-ja` is present (the admin screen shows the reason). Running `setup.bat` again downloads `haas-ja` and switches over. If you have chosen a model in the settings, that choice is kept.
 The GGUF files were converted by speech.cpp's author (sakasegawa); the repositories and file names are linked above and the commits are pinned in `stt_engine.py`.
 
 ### Comparison
@@ -219,8 +225,27 @@ The PC is a Ryzen 7 7800X3D (8 threads) with an RTX 4090 (Vulkan).
   With a GPU to spare, the 0.6B model takes under 0.1 s at about 6%.
 - The published Common Voice CERs rank them the other way (parakeet 7.9% < Qwen3-ASR 1.7B 9.5%).
   This test is only 12 synthesized sentences (no real human voices, no noisy room), and the difference comes mostly from kanji versus kana spelling.
-- **Against the friend's feedback ("recognition is bad"), we recommend qwen3-asr-0.6b or 1.7b rather than the default parakeet-ja.**
-  To change the default, edit `DEFAULT_MODEL` in `stt_engine.py` (one line; it can also be changed in the settings screen).
+- **Against the friend's feedback ("recognition is bad"), we recommend haas-ja (now the default) or qwen3-asr-0.6b / 1.7b rather than parakeet-ja.**
+  The default is set by `DEFAULT_MODEL` in `stt_engine.py` (it can also be changed in the settings screen).
+
+#### Why the default is now haas-ja
+
+Separately from the table above, we compared only haas-ja and parakeet-ja on 12 Japanese sentences synthesized with Irodori (about 5 s per utterance).
+CER is measured after removing spaces and punctuation, NFKC normalization and turning kanji numerals into Arabic numerals.
+RTX 4090, speech.cpp v0.11.0 (Vulkan). The sentences and conditions are not necessarily the same as in the table above, so do not line the numbers up against it.
+
+| Setup | CER | Exact | Per utterance | Startup |
+|---|---|---|---|---|
+| haas-ja (GPU) | **6.3%** | **7 / 12** | 0.023 s | 1.5 s |
+| parakeet-ja (GPU) | 10.9% | 3 / 12 | 0.027 s | 5.1 s |
+| haas-ja (CPU) | - | - | 0.22 s | - |
+| parakeet-ja (CPU) | - | - | 0.22 s | - |
+
+- haas-ja has the lower CER (6.3% vs 10.9%), starts faster and is slightly faster on the GPU, so **the default changed from parakeet-ja to haas-ja**.
+  CPU speed is the same (about 0.22 s for both).
+- VRAM is about 0.7 GB for both (after loading on the GPU haas-ja grows by +678 MiB with a peak of +721 MiB; parakeet-ja by +685 MiB and +722 MiB).
+  So the profiles that use the GPU automatically (mid, Strata and so on) treat haas-ja like parakeet-ja.
+- `parakeet-ja` can still be chosen in the settings screen.
 
 ### VRAM and the default device per profile
 
@@ -235,13 +260,13 @@ On the mid setup (simulating 8 GB of VRAM, with the LLM, TTS and STT all running
 
 With the device set to "auto" the defaults are:
 
-| Profile | parakeet-ja | qwen3-asr-0.6b | qwen3-asr-1.7b | Reason |
+| Profile | parakeet-ja / haas-ja | qwen3-asr-0.6b | qwen3-asr-1.7b | Reason |
 |---|---|---|---|---|
 | high | GPU | GPU | GPU | 20 GB or more of VRAM. The margin that the LLM leaves with `--fit-target` is enlarged by the STT's share |
-| mid | GPU | CPU | **CPU** | With the default Python TTS, 0.6B on the GPU reaches 7,057 MiB with little margin, so auto uses the CPU (only parakeet on the GPU). 1.7B does not fit in 8 GB (about 1.8 s per utterance on CPU) |
-| low | CPU | CPU | CPU | A 6 GB card is expected to be nearly full with the LLM and TTS (not measured on real hardware). parakeet takes 0.3 s on CPU |
+| mid | GPU | CPU | **CPU** | With the default Python TTS, 0.6B on the GPU reaches 7,057 MiB with little margin, so auto uses the CPU (only parakeet-ja and haas-ja on the GPU). 1.7B does not fit in 8 GB (about 1.8 s per utterance on CPU) |
+| low | CPU | CPU | CPU | A 6 GB card is expected to be nearly full with the LLM and TTS (not measured on real hardware). parakeet-ja and haas-ja take 0.3 s or less on CPU |
 | External LLM | GPU | GPU | GPU | The LLM runs elsewhere, so there is VRAM to spare |
-| Strata | GPU | CPU | CPU | Only parakeet fits in the margin (about 1 GB) that Strata leaves for TTS |
+| Strata | GPU | CPU | CPU | Only parakeet-ja and haas-ja fit in the margin (about 1 GB) that Strata leaves for TTS |
 
 ### How to switch
 
@@ -262,7 +287,12 @@ With the device set to "auto" the defaults are:
 With qwen3-asr, the **character's name** and the "frequently used words" registered in the settings screen (separated by commas or line breaks, up to 400 characters) are sent as `prompt`.
 The model uses the prompt as background, not as instructions.
 In this test, "ミオさん、おはようございます。" came out as "みよさ、おはようございます。" with the 1.7B model and no hints, and correctly as "ミオさん、…" with hints (also confirmed through a real conversation turn in the app).
-parakeet does not accept `prompt`, so nothing is sent.
+With `haas-ja`, the same words are sent as `keywords[]` (one word per item; the `keywords` of speech.cpp's OpenAI-compatible API).
+Haas favors the spelling of those words while decoding and writes them as given (the character's name is added automatically).
+To give a reading, write "written form=reading,reading" (for example `Haas=ハース,ハウス`; items are separated by a Japanese comma or a line break, and readings by an ASCII comma).
+The more words you list, the more likely a word is written that was not said, so list only what you need (`keywords_guard` drops changes that do not contain a whole keyword).
+With `keywords`, the result carries no timestamps (this app does not use them).
+parakeet accepts neither `prompt` nor `keywords`, so nothing is sent.
 
 ### PCs without Vulkan
 
@@ -276,6 +306,7 @@ If Vulkan becomes available later, `setup.bat --stt both` adds speech.cpp.
 - parakeet-tdt_ctc-0.6b-ja: **(c) NVIDIA**, [CC-BY-4.0](https://creativecommons.org/licenses/by/4.0/) (the GGUF is a conversion of [nvidia/parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja)).
   This is the attribution the license asks for; it is also shown in the "Speech recognition" tab of the settings screen.
 - Qwen3-ASR: (c) Alibaba Qwen, Apache-2.0 ([Qwen/Qwen3-ASR-1.7B](https://huggingface.co/Qwen/Qwen3-ASR-1.7B)).
+- Haas-ja v1.0: (c) Third Intelligence, Apache-2.0 ([third-intelligence/Haas-ja-v1.0](https://huggingface.co/third-intelligence/Haas-ja-v1.0); the GGUF is sakasegawa/Haas-ja-v1.0-GGUF).
 - speech.cpp: MIT ([nyosegawa/speech.cpp](https://github.com/nyosegawa/speech.cpp)).
 
 ## Speech synthesis (TTS)
@@ -285,6 +316,7 @@ In listening tests, **the Python version sounded most like Mio (the cutest) and 
 As an option you can use **Irodori-TTS v4.1 Small** (GGUF) on `speech serve` from speech.cpp (MIT).
 The speech.cpp version needs no Python and no PyTorch and uses your GPU through **Vulkan**.
 It is faster (about 4 times with the same model, about 12 times with MeanFlow) and uses about 0.8 to 1 GB less VRAM.
+On the speech.cpp version you can also choose **Irodori-TTS v4 Large** (high quality, slow) and **Qwen3-TTS** (0.6B and 1.7B; 9 fixed speakers); see "More models" below (they are downloaded only when you choose them in the settings screen).
 
 - Install: the default of `setup.bat` is the Python version (Irodori-TTS-Server, PyTorch, Python 3.10, about 5 GB).
   **`setup.bat --tts speechcpp`** installs only speech.cpp (shared with STT, in `stt\speechcpp\`) and the Irodori GGUF (by default `irodori-tts` Q8_0, about 1.2 GB), without the Python environment.
@@ -293,6 +325,7 @@ It is faster (about 4 times with the same model, about 12 times with MeanFlow) a
 - Starting the speech.cpp version: the supervisor runs `speech serve <GGUF> --host 127.0.0.1 --port <TTS port> --device <GPU> --add-voice <name>=<WAV> ...` without a console window (every WAV in `tts\voices\` is passed with `--add-voice`).
   It is a **separate process** from STT (see "Why TTS and STT are not one process" below).
 - Conversation with the speech.cpp version: `app/run.py` sends `voice`, `steps` and `seed` to `POST /v1/audio/speech` (no `model`).
+  speech.cpp rejects any field it does not know with 400 (`unsupported_parameter`), so only the fields the model accepts are sent (no `steps` for Qwen3-TTS, and `instructions` only for the 1.7B model).
   The reply is a 48 kHz, 16-bit, mono WAV that AIAvatarKit's `create_instant_synthesizer` plays as it is (expressions and lip-sync work as before).
 - Switching voices: with either version it takes effect **from the next utterance with no restart**.
   The speech.cpp version reads voices at start, so when you add or remove a reference voice (upload, saving a Voice Design, delete) **the settings screen restarts only the TTS automatically** (about 4 to 5 seconds).
@@ -307,6 +340,40 @@ It is faster (about 4 times with the same model, about 12 times with MeanFlow) a
 
 Both are [sakasegawa's GGUF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF) ([MF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF)) of Aratako's [Irodori-TTS-v4.1-Small](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small) ([MF](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small-MF)).
 Weights come in F16, Q8_0, Q6_K, Q5_K and Q4_K; this app uses Q8_0 (F16 uses about 0.7 GB more VRAM, and in this test it was no faster and no better on read-back).
+
+### More models (speech.cpp only; downloaded only when you choose them)
+
+These three run **only on speech.cpp** (they cannot run on the Python version, so even with the engine on "auto" they run on speech.cpp).
+`setup.bat` does not install them. When you choose one in the settings screen's "Voice" tab, the app shows its size and license, asks you to confirm, downloads it and verifies the SHA-256 (the same flow as `irodori-tts-mf`).
+None of them is ever chosen automatically.
+
+| Setting name | Model | File (Q8_0) | Voice | Notes | License |
+|---|---|---|---|---|---|
+| `irodori-tts-large` | [Irodori-TTS v4 Large (3.4B)](https://huggingface.co/sakasegawa/Irodori-TTS-v4-Large-GGUF) (original: [Aratako/Irodori-TTS-v4-Large](https://huggingface.co/Aratako/Irodori-TTS-v4-Large)) | `Irodori-TTS-3.4B-v4-Q8_0.gguf` (3.88 GB) | Reference voices (same use as Small; Voice Design works too) | About 4 times the size of Small; follows a voice described in words and a reference more closely. 2 to 4 times slower, slightly weaker on kanji readings. Steps work as with Small (rf; `num_steps`). **About 4.5 GB of VRAM** | **Gemma Terms of Use + Irodori's ethical restrictions** (commercial use allowed; see the note below) |
+| `qwen3-tts-0.6b` | [Qwen3-TTS-12Hz 0.6B CustomVoice](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-0.6B-CustomVoice-GGUF) (original: [Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice)) | `Qwen3-TTS-12Hz-0.6B-CustomVoice-Q8_0.gguf` (1.21 GB) | 9 fixed speakers | Light (about 1.4 GB of VRAM). No `steps`. Does not accept style instructions (`instructions`) | Apache-2.0 |
+| `qwen3-tts-1.7b` | [Qwen3-TTS-12Hz 1.7B CustomVoice](https://huggingface.co/sakasegawa/Qwen3-TTS-12Hz-1.7B-CustomVoice-GGUF) (original: [Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice)) | `Qwen3-TTS-12Hz-1.7B-CustomVoice-Q8_0.gguf` (2.29 GB) | 9 fixed speakers | About 2.5 GB of VRAM. Emotion can be added with style instructions (`instructions`) | Apache-2.0 |
+
+The VRAM figures are **estimates** from the RTX 2080 (Vulkan, Q8_0) numbers in speech.cpp's docs, not measurements made with this app.
+Choosing `irodori-tts-large` automatically raises the VRAM margin (`--fit-target`) the bundled LLM leaves by that much (about 1.7 GB), so the LLM keeps fewer layers on the GPU and replies more slowly.
+
+**Voices of Qwen3-TTS (CustomVoice)**:
+- You pick one of the model's 9 speakers: `ono_anna` (Japanese, female; the default), `aiden` and `ryan` (English, male), `serena` and `vivian` (Chinese, female), `dylan`, `eric` and `uncle_fu` (Chinese, male) and `sohee` (Korean, female).
+  Every speaker can read Japanese text, but only `ono_anna` is a native Japanese speaker.
+- **Cloning a voice from a reference recording is not possible** (and `--add-voice` is not used). Adding reference voices and Voice Design are unavailable while a Qwen3-TTS model is in use (switch back to an Irodori model to use them).
+- Choose the speaker in the settings screen's "Voice" tab (`tts.speaker` in `config/settings.json`).
+  The voice set on a character (such as `mio_bright`, a reference voice) cannot be used with Qwen3-TTS, so the **default speaker (`ono_anna`) speaks instead**.
+  Switch back to Irodori and the character's own voice is used again.
+- Emotion: Qwen3-TTS cannot read emoji, so **emoji are removed** before the text is sent.
+  Only the 1.7B model turns the expression tag (such as `[face:joy]`) or the speaking-style emoji the LLM wrote into a short Japanese instruction (for example "嬉しそうに弾んだ声で話してください。") and sends it as `instructions`.
+  The 0.6B model does not accept `instructions` (it answers 400), so no emotion is added (and the LLM is not asked to write speaking-style emoji in that case).
+- The output is a 24 kHz, 16-bit, mono WAV (Irodori's is 48 kHz).
+
+**License of Irodori-TTS v4 Large (Gemma Terms of Use + Irodori's ethical restrictions)**:
+- v4 Large contains a text encoder derived from Google's T5Gemma 2, so it is under the [Gemma Terms of Use](https://ai.google.dev/gemma/terms). Commercial use is allowed.
+- Please make the people who use your app follow the [Gemma Prohibited Use Policy](https://ai.google.dev/gemma/prohibited_use_policy) too (nothing more than that is required).
+- Irodori's ethical restrictions (no impersonation, no disinformation; see "Ethical restrictions of Irodori-TTS" below) apply as well.
+- Gemma's NOTICE: "Gemma is provided under and subject to the Gemma Terms of Use found at ai.google.dev/gemma/terms".
+  This repository does not redistribute the model (users download it from Hugging Face). The settings screen shows this license when you choose the model and in the download confirmation.
 
 ### Reference voices, Voice Design and the watermark
 
@@ -362,7 +429,7 @@ Listening page: `I:\koemado-tmp\tts_compare\listen.html` (a path on the developm
 One `speech serve` can hold TTS, STT and VAD at once (one port).
 This app still runs **TTS and STT as separate processes**.
 - **Different devices**: `--device` applies to every model in one process.
-  The mid default is "TTS on GPU, STT on GPU for parakeet / 0.6B and on CPU for 1.7B", so on an 8 GB PC the devices cannot be the same.
+  The mid default is "TTS on GPU, STT on GPU for haas-ja, parakeet and 0.6B and on CPU for 1.7B", so on an 8 GB PC the devices cannot be the same.
 - **Different restarts**: speech.cpp reads reference voices at start, so the TTS restarts whenever a voice is added.
   In one process the STT would stop each time, and switching the STT model would stop the TTS.
 - **VRAM does not change**: the models are loaded separately, so one process does not reduce VRAM (a little per-process context memory might be saved; not measured).
@@ -377,7 +444,7 @@ Peak per-process dedicated memory.
 | TTS | STT | LLM | TTS | STT | Peak of the sum | Within 7 GB (7,168 MiB) |
 |---|---|---|---|---|---|---|
 | **Python version (default)** | CPU (parakeet) | 3,518 MiB | 2,410 MiB | 0 | 5,929 MiB | yes |
-| Python version | parakeet-ja (GPU), the default | 3,518 MiB | 2,448 MiB | 705 MiB | **6,671 MiB** | yes |
+| Python version | parakeet-ja (GPU) | 3,518 MiB | 2,448 MiB | 705 MiB | **6,671 MiB** | yes |
 | Python version | qwen3-asr-0.6b (GPU) | 3,518 MiB | 2,498 MiB | 1,041 MiB | 7,057 MiB | yes (margin about 110 MiB) |
 | Python version | qwen3-asr-1.7b (GPU) | 3,518 MiB | 2,442 MiB | 2,321 MiB | 8,281 MiB | **no** |
 | speech.cpp version (Q8_0) | CPU (parakeet) | 3,518 MiB | 1,596 MiB | 0 | 5,114 MiB | yes |
@@ -385,19 +452,20 @@ Peak per-process dedicated memory.
 | speech.cpp version | qwen3-asr-0.6b (GPU) | 3,518 MiB | 1,609 MiB | 1,041 MiB | 6,169 MiB | yes |
 | speech.cpp version | qwen3-asr-1.7b (GPU) | 3,518 MiB | 1,600 MiB | 2,321 MiB | 7,439 MiB | **no (slightly over)** |
 
-- The default combination (Python TTS, STT parakeet-ja on GPU) is 6,671 MiB, within 7 GB.
+- The default STT is haas-ja. Its VRAM is about the same as parakeet-ja (on an RTX 4090 it grows by +678 MiB after loading with a peak of +721 MiB; parakeet-ja +685 MiB and +722 MiB), so the mid total should be about the same as the parakeet-ja row below (about 6.7 GB with the Python TTS; the mid total with haas-ja was not measured).
+  The combination of Python TTS and parakeet-ja on the GPU is 6,671 MiB, within 7 GB.
 - With the Python TTS, qwen3-asr-0.6b on the GPU is 7,057 MiB, right at 7 GB.
-  So on mid the "auto" device puts only parakeet on the GPU and qwen3-asr on the CPU (you can still choose the GPU in the settings screen, with a warning).
+  So on mid the "auto" device puts only parakeet-ja and haas-ja on the GPU and qwen3-asr on the CPU (you can still choose the GPU in the settings screen, with a warning).
 - The speech.cpp version uses about 0.8 GB less VRAM, so the mid LLM could take about 2 more expert layers (about 0.8 GB); this change leaves the LLM settings alone.
 
 ### How to switch
 
-- In the "Speech synthesis engine" block at the top of the settings screen's **"Voice" tab**, choose the engine (auto / Python version / speech.cpp) and, for the speech.cpp version, the model (`irodori-tts-mf` / `irodori-tts`), then press "Save and apply".
+- In the "Speech synthesis engine" block at the top of the settings screen's **"Voice" tab**, choose the engine (auto / Python version / speech.cpp) and, for the speech.cpp version, the model (`irodori-tts-mf` / `irodori-tts` / `irodori-tts-large` / `qwen3-tts-0.6b` / `qwen3-tts-1.7b`), then press "Save and apply".
   A model that is not downloaded is fetched after you confirm its size (with progress, cancel and SHA-256 verification).
   Changing them restarts only the TTS.
 - `setup.bat --tts auto|python|speechcpp|both`: the default `auto` is the Python version.
   `speechcpp` installs only the speech.cpp version (when Vulkan works), and `both` installs both.
-- Settings are in `config/settings.json` under `tts` (`engine` / `model` / `mf_steps` / `num_steps` / `seed` / `voice`).
+- Settings are in `config/settings.json` under `tts` (`engine` / `model` / `mf_steps` / `num_steps` / `seed` / `voice` / `speaker`).
 
 ![Voice (speech.cpp)](docs/screenshots/settings_voice_speechcpp.png)
 
@@ -413,7 +481,9 @@ For testing, `KOEMADO_SIMULATE_NO_VULKAN=1` (run time) or `setup.bat --simulate 
 Irodori v4.1 changes its speaking style and emotion when emoji are put in the input text ([EMOJI_ANNOTATIONS](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small/blob/main/EMOJI_ANNOTATIONS.md); repeating an emoji strengthens the effect).
 koemado puts the LLM's expression tag (such as `[face:joy]`) and the emoji the LLM writes inside a sentence into the **TTS input only**.
 **Emoji never appear in the conversation page's subtitles, the desktop character's speech bubble, the conversation log (SQLite) or memory** (they are removed after the TTS input is built).
-It works with both the Python and the speech.cpp TTS (we confirmed that speech.cpp's tokenizer accepts emoji).
+It works with both the Python and the speech.cpp Irodori TTS (we confirmed that speech.cpp's tokenizer accepts emoji).
+Qwen3-TTS cannot read emoji, so the emoji are removed, and only the 1.7B model turns the emotion into a speaking-style instruction (`instructions`); the 0.6B model gets no emotion (see "More models" under "Speech synthesis (TTS)").
+We have not yet checked whether emoji work with `irodori-tts-large`.
 
 ### Method A: expression tag to emoji (on by default)
 
@@ -671,7 +741,7 @@ For example, on a PC with 8 GB VRAM and 32 GB RAM the hardware limit is about 24
 
 Settings are stored in `config/settings.json` (voice, LLM) and `characters/` (characters). `.env` (`app/.env`) holds only low-level values such as ports and is rebuilt by `start.bat`.
 
-**Speech recognition**: engine (auto / speech.cpp / faster-whisper), model (parakeet-ja / qwen3-asr-0.6b / qwen3-asr-1.7b), device (auto / GPU / CPU) and frequently used words (for qwen3-asr). A model that is not downloaded yet is fetched after you confirm its size, and only the STT restarts. See the "Speech recognition (STT)" section.
+**Speech recognition**: engine (auto / speech.cpp / faster-whisper), model (parakeet-ja / haas-ja / qwen3-asr-0.6b / qwen3-asr-1.7b), device (auto / GPU / CPU) and frequently used words (for qwen3-asr and haas-ja). A model that is not downloaded yet is fetched after you confirm its size, and only the STT restarts. See the "Speech recognition (STT)" section.
 
 ## Expression and lip-sync assets
 
@@ -737,7 +807,7 @@ Tips for making them with image generation (inpainting):
 | It does not react when I speak in the browser | Check the browser's microphone permission (the lock icon left of the address bar). `http://127.0.0.1` is treated as allowed for the microphone. You also need to allow the browser under Windows "Privacy, then Microphone" |
 | Out of VRAM (`CUDA out of memory`, or the LLM or TTS does not start) | Close other apps (games, 3D software, browser hardware acceleration). In the LLM tab choose a lighter profile (low), or increase `--n-cpu-moe` (`profiles.py`) to use less VRAM |
 | Replies are slow | The bundled LLM processes whatever does not fit in VRAM on the CPU. Use low, or an external inference server. TTS gets faster with a smaller num_steps |
-| Recognition is poor (proper nouns, kanji) | In the settings screen's "Speech recognition" tab, switch to qwen3-asr-0.6b or 1.7B. You can also register frequently used words as hints (comparison in the "Speech recognition (STT)" section) |
+| Recognition is poor (proper nouns, kanji) | In the settings screen's "Speech recognition" tab, switch from the default haas-ja to qwen3-asr-0.6b / 1.7B (if you use parakeet-ja, try haas-ja too). You can also register frequently used words as hints (comparison in the "Speech recognition (STT)" section) |
 | Speech recognition does not work, or faster-whisper is in use | `vulkan-1.dll` may be missing (reinstalling the GPU driver restores it) or `stt\speechcpp\speech.exe` may be absent. The reason is in the admin log (stt). When Vulkan works, run `setup.bat --stt both` |
 | Port already in use | `setup.bat` and `start.bat` switch to a free port automatically (defaults: LLM 8081 / TTS 8088 / STT 8002 / app 8100; 8000 and 8080 are avoided) |
 | Startup fails | Open the admin console (`http://127.0.0.1:8099/`, or the tray's "logs and state") and look at the logs. The files are `logs\llm.log`, `tts.log`, `stt.log`, `app.log` and `supervisor.log`. When reporting, send the zip from "Download a bundle for bug reports" (keys are masked) |
@@ -792,7 +862,7 @@ Hand only long jobs (file operations, code execution, long research) to a separa
 
 ## Ethical restrictions of Irodori-TTS (summary)
 
-Irodori-TTS (MIT license) has the following usage restrictions in addition to the license. Please follow them in this project too.
+Irodori-TTS (v4.1 Small is under the MIT license; v4 Large is under the Gemma Terms of Use) has the following usage restrictions in addition to the license. Please follow them in this project too.
 
 1. **No impersonation**: do not clone or imitate the voice of a real individual, such as a voice actor, celebrity or public figure, without their explicit consent.
 2. **No disinformation**: do not create synthetic speech (deepfakes) meant to deceive others or spread false information.
@@ -810,11 +880,14 @@ The bundled voice (`voices/mio_bright`) was made with Voice Design using a text 
 | [AIAvatarKit](https://github.com/uezo/aiavatarkit) | Voice conversation base, browser UI | Apache-2.0 |
 | [Irodori-TTS](https://github.com/Aratako/Irodori-TTS) / [Irodori-TTS-Server](https://github.com/Aratako/Irodori-TTS-Server) | Speech synthesis (the Python version is the default; the speech.cpp version is an option) | MIT |
 | [Irodori-TTS v4.1 Small (GGUF, sakasegawa)](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-GGUF) / [MF](https://huggingface.co/sakasegawa/Irodori-TTS-v4.1-Small-MF-GGUF) | TTS model (optional; for speech.cpp) | MIT (with ethical restrictions; the codec (DACVAE) is MIT / Apache-2.0) |
+| [Irodori-TTS v4 Large (GGUF, sakasegawa)](https://huggingface.co/sakasegawa/Irodori-TTS-v4-Large-GGUF) (original: [Aratako/Irodori-TTS-v4-Large](https://huggingface.co/Aratako/Irodori-TTS-v4-Large)) | TTS model (optional; for speech.cpp) | **Gemma Terms of Use** (commercial use allowed; make users follow the [Gemma Prohibited Use Policy](https://ai.google.dev/gemma/prohibited_use_policy)) + Irodori's ethical restrictions. The codec is MIT / Apache-2.0 |
+| [Qwen3-TTS-12Hz CustomVoice](https://huggingface.co/Qwen/Qwen3-TTS-12Hz-1.7B-CustomVoice) 0.6B / 1.7B (GGUF: sakasegawa) | TTS model (optional; for speech.cpp; 9 fixed speakers) | Apache-2.0 (c) Alibaba Qwen |
 | [Irodori-TTS-v4.1-Small (quantized)](https://huggingface.co/Aratako/Irodori-TTS-v4.1-Small-Quantized) | TTS model | MIT (with ethical restrictions) |
 | [Semantic-DACVAE-Japanese-32dim](https://huggingface.co/Aratako/Semantic-DACVAE-Japanese-32dim) / [DACVAE](https://github.com/facebookresearch/dacvae) | TTS codec | MIT / Apache-2.0 |
 | [SilentCipher](https://github.com/sony/silentcipher) | Watermark for generated audio (Python version only) | MIT |
 | [speech.cpp](https://github.com/nyosegawa/speech.cpp) | STT and TTS (default; Vulkan) | MIT |
-| [parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja) (GGUF: sakasegawa) | STT model (default) | **CC-BY-4.0 (c) NVIDIA; attribution required** |
+| [parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja) (GGUF: sakasegawa) | STT model (optional) | **CC-BY-4.0 (c) NVIDIA; attribution required** |
+| [Haas-ja v1.0](https://huggingface.co/third-intelligence/Haas-ja-v1.0) (GGUF: sakasegawa) | STT model (default) | Apache-2.0 (c) Third Intelligence |
 | [Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) 0.6B / 1.7B (GGUF: sakasegawa) | STT model (optional) | Apache-2.0 |
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (Whisper small) | STT (fallback for PCs without Vulkan) | MIT |
 | [silero-vad](https://github.com/snakers4/silero-vad) | Voice activity detection | MIT |

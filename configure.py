@@ -14,6 +14,7 @@ import hf_hub  # noqa: E402
 import hf_dl  # noqa: E402
 import profiles  # noqa: E402
 import stt_engine  # noqa: E402
+import tts_engine  # noqa: E402
 import settings_store as ss  # noqa: E402
 import tools_store as ts  # noqa: E402
 
@@ -34,13 +35,21 @@ def pick(title: str, options: list[tuple[str, str]]) -> str | None:
     return options[int(ans) - 1][0]
 
 
+def tts_resolved(s: dict) -> dict | None:
+    """いまの TTS の動かし方（固定の話者のモデルかを知るため）。config.json が読めなければ None"""
+    try:
+        return tts_engine.resolve(json.loads((ROOT / "config.json").read_text(encoding="utf-8")), s, ROOT)
+    except Exception:
+        return None
+
+
 def show():
     s = ss.load_settings(ROOT)
     llm = ss.masked(s)["llm"]
     print("\n=== 現在の設定 ===")
     try:
         char = ss.active_character(s, ROOT)
-        print(f"  キャラクター: {char.get('name')}（{char['id']}、{str(char.get('age')) + ' 歳' if char.get('age') is not None else '年齢未設定'}）  声: {ss.effective_voice(s, char)}")
+        print(f"  キャラクター: {char.get('name')}（{char['id']}、{str(char.get('age')) + ' 歳' if char.get('age') is not None else '年齢未設定'}）  声: {ss.effective_voice(s, char, ROOT, tts_resolved(s))}")
     except Exception as e:
         print(f"  キャラクター: 読み込めません（{e}）")
     print(f"  表示方法: {ss.DISPLAY_MODES[s['display']['mode']]}")
@@ -68,6 +77,14 @@ def _apply(patch: dict):
 
 def menu_voice():
     s = ss.load_settings(ROOT)
+    res = tts_resolved(s)
+    if res and res["voice_kind"] == "speakers":
+        print(f"\nいまの音声合成は {res['model']['short']}（固定の話者のモデル）です。参照音声の声は使えません（設定画面の「声」で Irodori に切り替えると使えます）。")
+        sp = pick("使う話者を選んでください", [(k, f"{k}  {v['desc']}") for k, v in res["speakers"].items()])
+        if sp:
+            _apply({"tts": {"speaker": sp}})
+            print(f"話者を {sp} にしました。次の発話から変わります。")
+        return
     voices = ss.list_voices(ROOT)
     if not voices:
         print("参照音声がありません（tts/voices/ に wav / flac / mp3 / ogg / opus を置いてください）。")
@@ -319,7 +336,7 @@ def menu_stt():
     if eng:
         patch["engine"] = eng
     if (eng or st["engine"]) != "faster-whisper":
-        key = pick(f"speech.cpp のモデル（いまは「{st['model']}」）", [(k, f"{m['label']} ・ {m['size_bytes'] / 1e6:.0f}MB ・ CER {m['cer']} ・ {'取得済み' if stt_engine.model_present(ROOT, k) else '未取得'} ・ {m['license']}") for k, m in stt_engine.MODELS.items()])
+        key = pick(f"speech.cpp のモデル（いまは「{st['model']}」）", [(k, f"{m['label']} ・ {m['size_bytes'] / 1e6:.0f}MB ・ CER {m['cer']}（{m['cer_set']}） ・ {'取得済み' if stt_engine.model_present(ROOT, k) else '未取得'} ・ {m['license']}") for k, m in stt_engine.MODELS.items()])
         if key:
             patch["model"] = key
         dev = pick(f"デバイス（いまは「{st['device']}」）", list(stt_engine.DEVICES.items()))
@@ -327,7 +344,7 @@ def menu_stt():
             patch["device"] = dev
         m = stt_engine.MODELS[key or st["model"]]
         if m["hint"]:
-            h = ask("よく使う言葉（固有名詞のヒント。読点区切り。空欄で変えない）", "")
+            h = ask("よく使う言葉（固有名詞のヒント。読点区切り" + ("。読みを付けるときは「表記=読み,読み」" if m.get("hint_kind") == "keywords" else "") + "。空欄で変えない）", "")
             if h:
                 patch["hints"] = h
         if ok and not stt_engine.model_present(ROOT, key or st["model"]):

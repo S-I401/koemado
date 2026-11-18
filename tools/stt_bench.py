@@ -53,6 +53,9 @@ CONFIGS = {
     "qwen06-cpu": ("speech.cpp qwen3-asr-0.6b（CPU）", "speechcpp", "qwen3-asr-0.6b", "cpu"),
     "qwen17-cpu": ("speech.cpp qwen3-asr-1.7b（CPU）", "speechcpp", "qwen3-asr-1.7b", "cpu"),
     "qwen17-gpu-hint": ("speech.cpp qwen3-asr-1.7b（GPU、固有名詞のヒントあり）", "speechcpp", "qwen3-asr-1.7b", "gpu"),
+    "haas-gpu": ("speech.cpp haas-ja（GPU）", "speechcpp", "haas-ja", "gpu"),
+    "haas-cpu": ("speech.cpp haas-ja（CPU）", "speechcpp", "haas-ja", "cpu"),
+    "haas-gpu-hint": ("speech.cpp haas-ja（GPU、keywords あり）", "speechcpp", "haas-ja", "gpu"),
 }
 
 
@@ -115,7 +118,9 @@ def multipart(fields: dict, files: dict) -> tuple[bytes, str]:
     boundary = uuid.uuid4().hex
     out = io.BytesIO()
     for k, v in fields.items():
-        out.write(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode("utf-8"))
+        # list は 1 項目 1 フィールドで書き出す（httpx と同じ。haas-ja の keywords[] はこの形）
+        for item in (v if isinstance(v, (list, tuple)) else [v]):
+            out.write(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{item}\r\n'.encode("utf-8"))
     for k, (name, data, ctype) in files.items():
         out.write(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"; filename="{name}"\r\nContent-Type: {ctype}\r\n\r\n'.encode("utf-8"))
         out.write(data)
@@ -124,10 +129,9 @@ def multipart(fields: dict, files: dict) -> tuple[bytes, str]:
     return out.getvalue(), f"multipart/form-data; boundary={boundary}"
 
 
-def transcribe(port: int, wav: bytes, prompt: str = "", model: str = "") -> tuple[str, float]:
+def transcribe(port: int, wav: bytes, hint: dict | None = None, model: str = "") -> tuple[str, float]:
     fields = {"language": "ja"}
-    if prompt:
-        fields["prompt"] = prompt
+    fields.update(hint or {})        # stt_engine.hint_form の結果（qwen3-asr は prompt、haas-ja は keywords[]）
     if model:
         fields["model"] = model
     body, ctype = multipart(fields, {"file": ("voice.wav", wav, "audio/wav")})
@@ -223,11 +227,12 @@ def cmd_run(args):
         print(f"[{key}] 起動中…", flush=True)
         proc, boot = start_server(key, port)
         try:
-            prompt = args.hints if key.endswith("hint") else ""
+            # 「よく使う言葉」は、アプリと同じ stt_engine.hint_form で作る（モデルによって prompt / keywords[]。parakeet には何も足さない）
+            hint = stt_engine.hint_form(stt_engine.MODELS[model], "", args.hints) if key.endswith("hint") and engine == "speechcpp" else {}
             first, times, cers, cers2, cers3, texts = None, [], [], [], [], []
             for rep in range(args.repeat + 1):          # 0 回目は、ウォームアップとして別に数える
                 for m, wav in wavs:
-                    text, sec = transcribe(port, wav, prompt, "" if engine == "speechcpp" else model)
+                    text, sec = transcribe(port, wav, hint, "" if engine == "speechcpp" else model)
                     if rep == 0:
                         if m is wavs[0][0]:
                             first = sec

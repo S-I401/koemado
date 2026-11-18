@@ -12,6 +12,7 @@ setup.py / ctl.py / supervisor.py / 設定画面 / app/run.py が共有する）
 import ctypes
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -38,17 +39,30 @@ SPEECHCPP = {
 }
 
 # ---- 認識モデル（speech.cpp の v0.11.0 のカタログと同じ。Q8_0。revision / sha256 は speech models --json の値）----
-# id: speech serve の /v1/models が返す id（カタログの名前とは違い、GGUF が持つモデル名）。cer: Common Voice 8.0 日本語の test（4,483 発話）の CER（speech.cpp の docs による。Q8_0）
+# id: speech serve の /v1/models が返す id（カタログの名前とは違い、GGUF が持つモデル名 general.name）。
+# cer: 既定は Common Voice 8.0 日本語の test（4,483 発話）の CER（speech.cpp の docs による。Q8_0）。haas-ja は、Common Voice 26.0 で学習していて
+#   CV8 の数字が公表されていないので、FLEURS 日本語 test（650 発話）の値を、データセット名つきで入れている（CV8 の値と並べて比べないこと）。
+# hint: 「よく使う言葉」を渡せるか。hint_kind: prompt（qwen3-asr。prompt として渡す）/ keywords（haas。keywords[] として渡す）
 MODELS = {
     "parakeet-ja": {
         "id": "parakeet-tdt_ctc-0.6b-ja",
-        "label": "parakeet-ja（速い・既定）",
+        "label": "parakeet-ja（速い・かな書きになりやすい）",
         "short": "parakeet-tdt_ctc-0.6b-ja",
         "repo": "sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF", "revision": "f7cb5387e1e76385456b7a792054565ecf177417",
         "file": "parakeet-tdt_ctc-0.6B-ja-Q8_0.gguf", "size_bytes": 661012416,
         "sha256": "6ff90c5240f0778dfb44816916eb3c8e634645e120170d6ae43c0f50a11d79d0",
-        "hint": False, "cer": "7.9%",
+        "hint": False, "hint_kind": None, "cer": "7.9%", "cer_set": "Common Voice 8.0",
         "license": "CC-BY-4.0", "upstream": "nvidia/parakeet-tdt_ctc-0.6b-ja", "credit": "NVIDIA",
+    },
+    "haas-ja": {
+        "id": "Haas-ja-v1.0",
+        "label": "haas-ja（高精度・日本語専用・固有名詞のキーワード可・既定）",
+        "short": "Haas-ja v1.0",
+        "repo": "sakasegawa/Haas-ja-v1.0-GGUF", "revision": "6b965d5007ba780585de51549d57a8c1c0d67c7e",
+        "file": "Haas-616M-ja-v1.0-Q8_0.gguf", "size_bytes": 656381472,
+        "sha256": "cd5f60b2f1c411404b83fca4a65e3ce30a26d9e951b6a346529e65f22758afeb",
+        "hint": True, "hint_kind": "keywords", "cer": "4.39%", "cer_set": "FLEURS ja",
+        "license": "Apache-2.0", "upstream": "third-intelligence/Haas-ja-v1.0", "credit": "Third Intelligence",
     },
     "qwen3-asr-0.6b": {
         "id": "Qwen3-ASR-0.6B",
@@ -57,7 +71,7 @@ MODELS = {
         "repo": "sakasegawa/Qwen3-ASR-0.6B-GGUF", "revision": "ee78f8709547f39bea3b924a16c72403826cac92",
         "file": "Qwen3-ASR-0.6B-Q8_0.gguf", "size_bytes": 841502336,
         "sha256": "416e10c15b4a3d9002bd337d18fc450233fdf68502b6e10d1379d2789838afd0",
-        "hint": True, "cer": "11.9%",
+        "hint": True, "hint_kind": "prompt", "cer": "11.9%", "cer_set": "Common Voice 8.0",
         "license": "Apache-2.0", "upstream": "Qwen/Qwen3-ASR-0.6B", "credit": "Alibaba Qwen",
     },
     "qwen3-asr-1.7b": {
@@ -67,26 +81,31 @@ MODELS = {
         "repo": "sakasegawa/Qwen3-ASR-1.7B-GGUF", "revision": "81e2423d24073cdeeccb5951df16accc89e075a2",
         "file": "Qwen3-ASR-1.7B-Q8_0.gguf", "size_bytes": 2176109216,
         "sha256": "5f219b78a1d9c3b9e97da27708b36f8a0bc1bfc1650b541c0a6dbaf87c9a62d0",
-        "hint": True, "cer": "9.5%",
+        "hint": True, "hint_kind": "prompt", "cer": "9.5%", "cer_set": "Common Voice 8.0",
         "license": "Apache-2.0", "upstream": "Qwen/Qwen3-ASR-1.7B", "credit": "Alibaba Qwen",
     },
 }
-DEFAULT_MODEL = "parakeet-ja"
+DEFAULT_MODEL = "haas-ja"
+# 既定のモデルのファイルが無い（既定を parakeet-ja から haas-ja に変える前に導入した PC。setup.bat をもう一度実行すると入る）ときの代わり
+LEGACY_DEFAULT_MODEL = "parakeet-ja"
 ENGINES = {"auto": "自動（speech.cpp が使えれば speech.cpp、使えなければ faster-whisper）",
            "speechcpp": "speech.cpp", "faster-whisper": "faster-whisper（従来。CPU）"}
 DEVICES = {"auto": "自動（プロファイルの既定）", "gpu": "GPU（Vulkan）", "cpu": "CPU"}
 # STT を GPU に載せたときの VRAM のピーク（MiB）。mid の構成（LLM + TTS + STT をすべて起動。VRAM 8GB の模擬）で、GPU Process Memory の
-# 専有メモリを STT のプロセスだけ測った最大値（parakeet 705 / qwen3-asr-0.6b 1041 / qwen3-asr-1.7b 2321）。余裕を少し足して丸めている
-STT_VRAM_MIB = {"parakeet-ja": 710, "qwen3-asr-0.6b": 1050, "qwen3-asr-1.7b": 2330}
+# 専有メモリを STT のプロセスだけ測った最大値（parakeet 705 / qwen3-asr-0.6b 1041 / qwen3-asr-1.7b 2321）。余裕を少し足して丸めている。
+# haas-ja は RTX 4090（speech.cpp v0.11.0、Vulkan）で、読み込み後 +678 / ピーク +721MiB（同じ測り方で parakeet は +685 / +722）。parakeet と同じ丸め方で 730
+STT_VRAM_MIB = {"parakeet-ja": 710, "haas-ja": 730, "qwen3-asr-0.6b": 1050, "qwen3-asr-1.7b": 2330}
 # デバイスが「自動」のとき GPU を使ってよいモデル（プロファイルごと）。根拠（mid の実測、VRAM 8GB 模擬）:
 #   LLM 3518 + TTS 2410 = 5929MiB（STT が CPU）。これに STT を足した合計が 7GB（7168MiB）以下になるものだけを GPU にする
 #   （parakeet 6647、qwen3-asr-0.6b 6967 は収まる。qwen3-asr-1.7b は 8281 で 8GB のカードに収まらない）。
 #   high は VRAM が 20GB 以上あり、LLM が --fit-target の余白（STT の分を足す）を残すので、どれも GPU でよい。
-#   low は VRAM 6GB 級で、LLM + TTS でほぼ埋まるので、CPU（parakeet は CPU でも 0.3〜1 秒）。
-#   external / strata（LLM を別に動かす）は、Strata の余白（TTS 用）に収まる parakeet だけ GPU。
-# mid: TTS が既定の Python 版のとき、0.6B を GPU にすると合計 7,057MiB で 7GB すれすれなので、自動では parakeet だけ GPU（設定画面で選べるが警告が出る）
-AUTO_GPU = {"high": set(STT_VRAM_MIB), "mid": {"parakeet-ja"}, "low": set(), "external": set(STT_VRAM_MIB), "strata": {"parakeet-ja"}}
-AUTO_GPU_OTHER = {"parakeet-ja"}
+#   low は VRAM 6GB 級で、LLM + TTS でほぼ埋まるので、CPU（parakeet・haas-ja は CPU でも 0.3〜1 秒）。
+#   external / strata（LLM を別に動かす）は、Strata の余白（TTS 用）に収まる parakeet・haas-ja だけ GPU。
+# mid: TTS が既定の Python 版のとき、0.6B を GPU にすると合計 7,057MiB で 7GB すれすれなので、自動では parakeet-ja・haas-ja だけ GPU（設定画面で選べるが警告が出る）。
+#   haas-ja は parakeet-ja と VRAM がほぼ同じ（ピーク +721 と +722MiB）なので、同じ扱い
+_SMALL_GPU = {"parakeet-ja", "haas-ja"}
+AUTO_GPU = {"high": set(STT_VRAM_MIB), "mid": set(_SMALL_GPU), "low": set(), "external": set(STT_VRAM_MIB), "strata": set(_SMALL_GPU)}
+AUTO_GPU_OTHER = set(_SMALL_GPU)
 
 
 def auto_device(profile: str, model_key: str) -> str:
@@ -216,6 +235,50 @@ def build_prompt(char_name: str, hints: str) -> str:
     return "、".join(terms)[:HINT_MAX_CHARS]
 
 
+_KEYWORD_SEP = re.compile(r"[\n\r、，;；]+")
+KEYWORDS_MAX = 50
+
+
+def build_keywords(char_name: str, hints: str) -> list[str]:
+    """haas の keywords[]（話し言葉の固有名詞など。1 語が 1 項目）。キャラクターの名前を先頭に、「よく使う言葉」を足す。
+    区切りは読点・改行・セミコロン。「表記=読み,読み」（例: Haas=ハース,ハウス）の形も書ける（読みの区切りの半角カンマは、= があるときだけ残す）。
+    1 項目に改行は入れられない（speech.cpp が拒否する）。多く並べるほど、言っていない言葉を書く可能性が増えるので、50 項目まで"""
+    out: list[str] = []
+    parts = [(char_name or "").strip()]
+    for part in _KEYWORD_SEP.split(hints or ""):
+        part = part.strip()
+        if "=" in part:
+            parts.append(part)
+        else:
+            parts.extend(x.strip() for x in part.replace("，", ",").split(","))
+    for t in parts:
+        t = " ".join(t.split())              # 空白・改行をそろえる
+        if t and t.split("=", 1)[0].strip() and t not in out:
+            out.append(t)
+    return out[:KEYWORDS_MAX]
+
+
+def hint_form(model: dict, char_name: str, hints: str) -> dict:
+    """文字起こしの要求（multipart）に足す「よく使う言葉」。qwen3-asr は prompt、haas は keywords[]、parakeet は受け付けないので何も足さない"""
+    kind = model.get("hint_kind")
+    if kind == "prompt":
+        p = build_prompt(char_name, hints)
+        return {"prompt": p} if p else {}
+    if kind == "keywords":
+        k = build_keywords(char_name, hints)
+        return {"keywords[]": k} if k else {}
+    return {}
+
+
+def hint_preview(kind: str, char_name: str, hints: str) -> str:
+    """設定画面に見せる、いま渡る「よく使う言葉」（kind: prompt / keywords）"""
+    if kind == "prompt":
+        return build_prompt(char_name, hints)
+    if kind == "keywords":
+        return "、".join(build_keywords(char_name, hints))
+    return ""
+
+
 def resolve(cfg: dict, settings: dict, root, probe: bool = True) -> dict:
     """STT の実際の動かし方。戻り値:
     engine (speechcpp / faster-whisper)、model_key、model（MODELS の項目）、device（gpu / cpu）、device_name（speech の --device の値）、
@@ -225,6 +288,11 @@ def resolve(cfg: dict, settings: dict, root, probe: bool = True) -> dict:
     key = st["model"] if st["model"] in MODELS else DEFAULT_MODEL
     want = st["engine"] if st["engine"] in ENGINES else "auto"
     fallback = ""
+    if (want != "faster-whisper" and key == DEFAULT_MODEL and not model_present(root, key)
+            and model_present(root, LEGACY_DEFAULT_MODEL) and speechcpp_usable(root)[0]):
+        # 既定が parakeet-ja だった版で導入した PC（モデルを選んでいない設定）。haas-ja が入るまでは、入っている parakeet-ja で動かす
+        fallback = f"既定の認識モデル（{MODELS[key]['file']}）が未取得なので、導入済みの {LEGACY_DEFAULT_MODEL} で動かします（setup.bat をもう一度実行すると取得します）。"
+        key = LEGACY_DEFAULT_MODEL
     engine = "speechcpp"
     if want == "faster-whisper":
         engine = "faster-whisper"

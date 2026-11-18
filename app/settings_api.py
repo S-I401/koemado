@@ -162,9 +162,9 @@ async def tts_synth(text: str, voice: str, num_steps: int, caption: str | None =
     s = ss.load_settings(ROOT)
     res = tts_engine.resolve(cfg(), s, ROOT)
     if res["engine"] == "speechcpp":
-        # MeanFlow は steps が少ない（mf_steps）。画面の num_steps は rf と Python 版のもの
+        # MeanFlow は steps が少ない（mf_steps）。画面の num_steps は rf と Python 版のもの。Qwen3-TTS は steps を受け付けない（speech_body が入れない）
         steps = tts_engine.steps_for(s, res["model_key"]) if res["model_key"] == "irodori-tts-mf" else num_steps
-        body = tts_engine.speech_body(text, voice, steps, seed, (caption or "")[:tts_engine.CAPTION_MAX_CHARS * 2] or None)
+        body = tts_engine.speech_body(text, voice, steps, seed, (caption or "")[:tts_engine.CAPTION_MAX_CHARS * 2] or None, res["model_key"])
     else:
         irodori = {"num_steps": num_steps}
         if caption:
@@ -200,7 +200,17 @@ def spawn_detached(args: list[str]):
 
 
 def tts_is_speechcpp() -> bool:
-    return tts_engine.resolve(cfg(), ss.load_settings(ROOT), ROOT)["engine"] == "speechcpp"
+    """参照音声を起動時に読む speech.cpp の TTS か（固定の話者の Qwen3-TTS は参照音声を読まないので、含めない）"""
+    r = tts_engine.resolve(cfg(), ss.load_settings(ROOT), ROOT)
+    return r["engine"] == "speechcpp" and r["voice_kind"] == "reference"
+
+
+def tts_speakers_only() -> bool:
+    """いまの TTS が、固定の話者だけのモデル（Qwen3-TTS）か。参照音声の追加・Voice Design はできない"""
+    return tts_engine.resolve(cfg(), ss.load_settings(ROOT), ROOT)["voice_kind"] == "speakers"
+
+
+NO_CLONE_MSG = "いまの音声合成モデル（Qwen3-TTS）は、固定の話者だけで、参照音声の声は使えません。参照音声を使うときは、設定画面の「声」で Irodori のモデルに切り替えてください。"
 
 
 def check_voice_wav(data: bytes) -> str | None:
@@ -443,6 +453,15 @@ def make_router(page_path: Path) -> APIRouter:
         v = ss.load_settings(ROOT)["llm"].get("vision", {})
         return JSONResponse({"enabled": bool(v.get("enabled")), "store_images": bool(v.get("store_images"))}, headers={"Cache-Control": "no-store"})
 
+    def _tts_voice_view(res: dict) -> dict:
+        """声のタブの出し分け用。kind = reference（参照音声の一覧）/ speakers（モデルが持つ名前つきの話者の一覧。参照音声は使えない）"""
+        out = {"kind": res["voice_kind"], "model": res["model_key"], "label": res["model"]["short"], "speakers": []}
+        if res["voice_kind"] == "speakers":
+            out["speakers"] = [{"id": k, "lang": v["lang"], "gender": v["gender"], "desc": v["desc"]} for k, v in res["speakers"].items()]
+            out["default_speaker"] = res["model"].get("default_speaker")
+            out["emotion"] = res["model"].get("emotion", "none")
+        return out
+
     # ---- 状態 ----
     @r.get("/settings/api/state")
     async def state():
@@ -455,12 +474,14 @@ def make_router(page_path: Path) -> APIRouter:
             active = {}
         resolved = ss.resolve_llm(c, s, ROOT)
         model_file = Path(resolved["model_path"]) if resolved["mode"] == "bundled" else None
+        tts_res = tts_engine.resolve(c, s, ROOT)
         return {
             "settings": ss.masked(s),
             "hardware": hardware(),
             "installed_profile": c["profile"],
             "llama_installed": (ROOT / "llama.cpp" / "llama-server.exe").exists(),
-            "active_voice": ss.effective_voice(s, active),
+            "active_voice": ss.effective_voice(s, active, ROOT, tts_res),
+            "tts_voice": _tts_voice_view(tts_res),
             "active_character": active.get("id"),
             "esp_char_block": ss.esp_character_block(active or None),
             "voices": ss.list_voices(ROOT),
@@ -509,6 +530,9 @@ def make_router(page_path: Path) -> APIRouter:
     async def voice_preview(voice: str, num_steps: int = 0, text: str = ""):
         if not ss.valid_voice_id(voice) and voice != "none":
             raise HTTPException(400, "声の ID が不正です。")
+        res = tts_engine.resolve(cfg(), ss.load_settings(ROOT), ROOT)
+        if res["voice_kind"] == "speakers" and voice not in res["speakers"]:
+            raise HTTPException(400, f"{res['model']['short']} の話者ではありません（{' / '.join(res['speakers'])}）。")
         steps = num_steps or ss.load_settings(ROOT)["tts"]["num_steps"]
         wav = await tts_synth((text or PREVIEW_TEXT)[:200], voice, int(steps), seed=ss.load_settings(ROOT)["tts"]["seed"])
         return Response(wav, media_type="audio/wav", headers={"Cache-Control": "no-store"})
@@ -516,6 +540,8 @@ def make_router(page_path: Path) -> APIRouter:
     @r.post("/settings/api/voices/upload")
     async def voice_upload(request: Request, file: UploadFile = File(...), name: str = Form(...), consent: str = Form("")):
         guard_write(request)
+        if tts_speakers_only():
+            raise HTTPException(400, NO_CLONE_MSG)
         if consent != "yes":
             raise HTTPException(400, "実在の人物の声は、本人の同意がある場合だけ使えます。同意の確認にチェックしてください。")
         if not ss.valid_voice_id(name):
@@ -558,6 +584,8 @@ def make_router(page_path: Path) -> APIRouter:
     @r.post("/settings/api/voices/design")
     async def voice_design(request: Request):
         guard_write(request)
+        if tts_speakers_only():
+            raise HTTPException(400, "Voice Design は、Irodori のモデルでだけ使えます（Qwen3-TTS は固定の話者です）。")
         body = await request.json()
         caption = (body.get("caption") or "").strip()
         if not caption:
@@ -575,6 +603,8 @@ def make_router(page_path: Path) -> APIRouter:
     @r.post("/settings/api/voices/design/save")
     async def voice_design_save(request: Request):
         guard_write(request)
+        if tts_speakers_only():
+            raise HTTPException(400, NO_CLONE_MSG)
         body = await request.json()
         token, name = str(body.get("token", "")), body.get("name", "")
         if not re.fullmatch(r"[0-9a-f]{12}", token):
@@ -1229,7 +1259,7 @@ def make_router(page_path: Path) -> APIRouter:
         out = []
         for k, m in stt_engine.MODELS.items():
             out.append({"key": k, "label": m["label"], "short": m["short"], "size_bytes": m["size_bytes"], "present": stt_engine.model_present(ROOT, k),
-                        "hint": m["hint"], "cer": m["cer"], "license": m["license"], "credit": m["credit"], "upstream": m["upstream"],
+                        "hint": m["hint"], "hint_kind": m.get("hint_kind"), "cer": m["cer"], "cer_set": m.get("cer_set", ""), "license": m["license"], "credit": m["credit"], "upstream": m["upstream"],
                         "repo": m["repo"], "file": m["file"], "vram_mib": stt_engine.STT_VRAM_MIB[k]})
         return out
 
@@ -1257,6 +1287,7 @@ def make_router(page_path: Path) -> APIRouter:
             "auto_device": {k: stt_engine.auto_device(c.get("profile"), k) for k in stt_engine.MODELS},
             "models": _stt_models_view(),
             "prompt_preview": stt_engine.build_prompt(char, s["stt"].get("hints", "")),
+            "keywords_preview": stt_engine.hint_preview("keywords", char, s["stt"].get("hints", "")),
             "character": char,
             "disk_free_gib": hardware()["disk_free_gib"],
         }
@@ -1268,7 +1299,7 @@ def make_router(page_path: Path) -> APIRouter:
     @r.post("/settings/api/stt/apply")
     async def stt_apply(request: Request):
         """音声認識の設定を保存する。モデルが未取得なら保存せず need_download を返す（確認のうえ /stt/download で取得してから、もう一度呼ぶ）。
-        エンジン・モデル・デバイスが変わったときは STT だけを再起動する（hints だけの変更は再起動しない）"""
+        エンジン・モデル・デバイスが変わったときは STT を再起動する（LLM の余白が変わるときは LLM も。hints だけの変更は再起動しない）"""
         guard_write(request)
         b = await request.json()
         cur = ss.load_settings(ROOT)["stt"]
@@ -1294,9 +1325,20 @@ def make_router(page_path: Path) -> APIRouter:
         except (ValueError, KeyError) as e:
             raise HTTPException(400, str(e))
         changed = any(new[k] != cur[k] for k in ("engine", "model", "device"))
+        # LLM が fit モードのとき、--fit-target の余白は GPU に載せた STT の分も含めて llama-server の起動時に決まる。余白が変わるなら LLM も再起動する
+        llm_too = False
         if changed:
-            spawn_detached([str(ROOT / "app" / ".venv" / "Scripts" / "python.exe"), str(ROOT / "ctl.py"), "restart", "stt"])
-        return {"ok": True, "restarting": changed}
+            def stt_margin(settings: dict) -> int:
+                r = stt_engine.resolve(cfg(), settings, ROOT, probe=False)
+                return stt_engine.STT_VRAM_MIB.get(r["model_key"], 0) if r["engine"] == "speechcpp" and r["device"] == "gpu" else 0
+            try:
+                after = ss.load_settings(ROOT)
+                if ss.resolve_llm(cfg(), after, ROOT).get("fit_target_mib"):
+                    llm_too = stt_margin({**after, "stt": cur}) != stt_margin(after)
+            except Exception:
+                llm_too = False
+            spawn_detached([str(ROOT / "app" / ".venv" / "Scripts" / "python.exe"), str(ROOT / "ctl.py"), "restart", "llm,stt" if llm_too else "stt"])
+        return {"ok": True, "restarting": changed, "llm_restarting": llm_too}
 
     @r.post("/settings/api/stt/download")
     async def stt_download(request: Request):
@@ -1363,7 +1405,10 @@ def make_router(page_path: Path) -> APIRouter:
         for k, m in tts_engine.TTS_MODELS.items():
             f = tts_engine.model_file(k)
             out.append({"key": k, "label": m["label"], "short": m["short"], "size_bytes": f["size_bytes"], "file": f["file"], "present": tts_engine.model_present(ROOT, k),
-                        "upstream": m["upstream"], "default_steps": m["default_steps"]})
+                        "upstream": m["upstream"], "default_steps": m["default_steps"], "license": m["license"], "license_note": m.get("license_note", ""),
+                        "credit": m["credit"], "note": m["note"], "voice_kind": m["voice_kind"], "speechcpp_only": m["speechcpp_only"], "vram_mib": m["vram_mib"],
+                        "uses_steps": m["steps_setting"] is not None, "emotion": m["emotion"],
+                        "repo": m["repo"]})
         return out
 
     def _tts_state_sync() -> dict:
@@ -1372,14 +1417,15 @@ def make_router(page_path: Path) -> APIRouter:
         res = tts_engine.resolve(c, s, ROOT)
         vk_ok, vk_why = stt_engine.vulkan_loader_found()
         return {
-            "settings": {k: s["tts"].get(k) for k in ("engine", "model", "mf_steps", "num_steps", "seed")},
-            "effective": {"engine": res["engine"], "label": res["label"], "model": res["model_key"], "fallback": res["fallback"]},
+            "settings": {k: s["tts"].get(k) for k in ("engine", "model", "mf_steps", "num_steps", "seed", "speaker")},
+            "effective": {"engine": res["engine"], "label": res["label"], "model": res["model_key"], "fallback": res["fallback"], "voice_kind": res["voice_kind"]},
             "healthy": ctl.check_health(c, "tts"),
             "vulkan": {"ok": vk_ok, "why": vk_why},
             "speechcpp_installed": stt_engine.speechcpp_installed(ROOT),
             "python_installed": tts_engine.python_installed(ROOT),
             "models": _tts_models_view(),
             "voice_formats": ["wav"] if res["engine"] == "speechcpp" else [e.lstrip(".") for e in ss.AUDIO_EXTS],
+            "profile": c.get("profile"), "vram_gib": c["gpu"]["vram_mib"] / 1024,
             "disk_free_gib": hardware()["disk_free_gib"],
         }
 
@@ -1396,27 +1442,37 @@ def make_router(page_path: Path) -> APIRouter:
         new = {"engine": str(b.get("engine", cur["engine"])), "model": str(b.get("model", cur["model"])), "mf_steps": int(b.get("mf_steps", cur["mf_steps"]))}
         if new["engine"] not in tts_engine.ENGINES or new["model"] not in tts_engine.TTS_MODELS:
             raise HTTPException(400, "エンジンかモデルの指定が不正です。")
+        if new["engine"] == "python" and tts_engine.TTS_MODELS[new["model"]]["speechcpp_only"]:
+            new["model"] = tts_engine.DEFAULT_MODEL      # Python 版は Irodori の Small 専用（モデルの選択は使わない）。speech.cpp 専用のモデルは、選ばれたままにしない
         if new["engine"] == "python":
             if not tts_engine.python_installed(ROOT):
                 raise HTTPException(400, "Python 版の Irodori-TTS-Server が導入されていません。setup.bat --tts both を実行すると追加できます。")
         else:
             ok, why = stt_engine.speechcpp_usable(ROOT)
             if not ok:
-                if new["engine"] == "speechcpp" or not tts_engine.python_installed(ROOT):
-                    raise HTTPException(400, why)
+                if new["engine"] == "speechcpp" or tts_engine.TTS_MODELS[new["model"]]["speechcpp_only"] or not tts_engine.python_installed(ROOT):
+                    raise HTTPException(400, why + ("（このモデルは speech.cpp でしか動きません）" if tts_engine.TTS_MODELS[new["model"]]["speechcpp_only"] else ""))
             elif not tts_engine.model_present(ROOT, new["model"]):
                 m = tts_engine.TTS_MODELS[new["model"]]
                 f = tts_engine.model_file(new["model"])
-                return {"ok": False, "need_download": {"model": new["model"], "label": m["label"], "size_bytes": f["size_bytes"], "file": f["file"], "license": "MIT",
-                                                      "free_gib": hardware()["disk_free_gib"]}}
+                return {"ok": False, "need_download": {"model": new["model"], "label": m["label"], "size_bytes": f["size_bytes"], "file": f["file"], "license": m["license"],
+                                                      "license_note": m.get("license_note", ""), "vram_mib": m["vram_mib"], "free_gib": hardware()["disk_free_gib"]}}
         try:
             ss.update_settings({"tts": new}, ROOT)
         except (ValueError, KeyError) as e:
             raise HTTPException(400, str(e))
         changed = any(new[k] != cur[k] for k in ("engine", "model"))
+        # LLM が fit モードのとき、--fit-target の余白は TTS の分も含めて llama-server の起動時に決まる。余白が変わるなら LLM も再起動する
+        llm_too = False
         if changed:
-            spawn_detached([str(ROOT / "app" / ".venv" / "Scripts" / "python.exe"), str(ROOT / "ctl.py"), "restart", "tts"])
-        return {"ok": True, "restarting": changed}
+            try:
+                after = ss.load_settings(ROOT)
+                if ss.resolve_llm(cfg(), after, ROOT).get("fit_target_mib"):
+                    llm_too = tts_engine.vram_extra_mib(tts_engine.resolve(cfg(), {**after, "tts": cur}, ROOT)) !=                         tts_engine.vram_extra_mib(tts_engine.resolve(cfg(), after, ROOT))
+            except Exception:
+                llm_too = False
+            spawn_detached([str(ROOT / "app" / ".venv" / "Scripts" / "python.exe"), str(ROOT / "ctl.py"), "restart", "llm,tts" if llm_too else "tts"])
+        return {"ok": True, "restarting": changed, "llm_restarting": llm_too}
 
     @r.post("/settings/api/tts/download")
     async def tts_download(request: Request):
