@@ -118,7 +118,9 @@ def multipart(fields: dict, files: dict) -> tuple[bytes, str]:
     boundary = uuid.uuid4().hex
     out = io.BytesIO()
     for k, v in fields.items():
-        out.write(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{v}\r\n'.encode("utf-8"))
+        # list は 1 項目 1 フィールドで書き出す（httpx と同じ。haas-ja の keywords[] はこの形）
+        for item in (v if isinstance(v, (list, tuple)) else [v]):
+            out.write(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"\r\n\r\n{item}\r\n'.encode("utf-8"))
     for k, (name, data, ctype) in files.items():
         out.write(f'--{boundary}\r\nContent-Disposition: form-data; name="{k}"; filename="{name}"\r\nContent-Type: {ctype}\r\n\r\n'.encode("utf-8"))
         out.write(data)
