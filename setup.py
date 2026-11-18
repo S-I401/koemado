@@ -922,10 +922,16 @@ class Installer:
                 tts.mkdir(parents=True, exist_ok=True)
                 run(["git", "init", "--quiet"], cwd=tts, env=self.env)
                 run(["git", "remote", "add", "origin", PINNED["tts_repo"]], cwd=tts, env=self.env)
-            run(["git", "fetch", "origin"], cwd=tts, env=self.env, check=not fresh)
-            # 新規のときは、リポジトリにも voices\ があって同名のファイルとぶつかる（-f で上書きする）。同梱の声はあとで置き直す
-            run(["git", "checkout", "--quiet"] + (["-f"] if fresh else []) + [commit], cwd=tts, env=self.env)
-            if fresh:
+            # まだ 1 つもコミットが無い（HEAD が未作成）= 前回、init のあとで取得か checkout まで進めなかった。新規と同じに扱う
+            # （そうしないと、再実行のとき tts\voices とぶつかって checkout が止まり、tts\.git を手で消すまで進めない）
+            unborn = subprocess.run(["git", "rev-parse", "--verify", "--quiet", "HEAD"], cwd=tts, env=self.env,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL).returncode != 0
+            first = fresh or unborn
+            # 初回は取得が必須（失敗したら止める）。2 回目以降は、コミットがすでに手元にあればオフラインでも進める
+            run(["git", "fetch", "origin"], cwd=tts, env=self.env, check=first)
+            # 初回は、リポジトリにも voices\ があって同名のファイルとぶつかる（-f で上書きする）。同梱の声はあとで置き直す
+            run(["git", "checkout", "--quiet"] + (["-f"] if first else []) + [commit], cwd=tts, env=self.env)
+            if first:
                 self.install_voices()
             self.uv_run(["sync", "--frozen", "--extra", "cu128", "--python", PINNED["tts_python"]], cwd=tts)
             marker.write_text(commit)
