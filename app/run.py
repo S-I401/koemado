@@ -230,6 +230,10 @@ TOOL_PROMPT = "\n\n".join(tool_prompt_sections)    # 起動中は変わらない
 async def get_system_prompt(context_id, user_id, system_prompt_params):
     char = current_character()
     inline_emoji = voice_emotion.merged_config(settings(), char)["inline_emoji"]["enabled"]     # 方式 B: 話し方の絵文字
+    try:    # Qwen3-TTS 0.6B は感情を声に乗せられないので、絵文字を LLM に出させない（1.7B は絵文字を instructions にする）
+        inline_emoji = inline_emoji and tts_engine.emotion_mode(tts_engine.resolve(CFG, settings(), ROOT)) != "none"
+    except Exception:
+        pass
     base = ss.compose_system_prompt(char, ROOT, tools={"weather": USE_WEATHER, "memory": USE_MEMORY}, inline_emoji=inline_emoji)
     parts = [base]
     if TOOL_PROMPT:
@@ -244,24 +248,32 @@ async def get_system_prompt(context_id, user_id, system_prompt_params):
 # 起動後に増えた声は、設定画面が TTS を再起動して使えるようにする）----
 def make_tts_request(text: str, style_info: dict = None, language: str = None) -> httpx.Request:
     s = settings()
-    try:
-        voice = ss.effective_voice(s, current_character())
-    except Exception:
-        voice = s["tts"]["voice"]
-    url = os.environ["TTS_BASE_URL"].rstrip("/") + "/audio/speech"
-    # 感情の絵文字（方式 A: 表情タグ → 絵文字、方式 B: LLM が入れた話し方の絵文字。使ってよいもの以外は取り除く）は、TTS への入力にだけ入れる
+    r = tts_engine.resolve(CFG, s, ROOT)
     try:
         char = current_character()
     except Exception:
         char = None
+    try:
+        voice = ss.effective_voice(s, char, ROOT, r)
+    except Exception:
+        voice = tts_engine.pick_speaker(r, s["tts"].get("speaker")) if r["voice_kind"] == "speakers" else s["tts"]["voice"]
+    url = os.environ["TTS_BASE_URL"].rstrip("/") + "/audio/speech"
+    # 感情の絵文字（方式 A: 表情タグ → 絵文字、方式 B: LLM が入れた話し方の絵文字。使ってよいもの以外は取り除く）は、TTS への入力にだけ入れる
     raw_text = text
-    text = voice_emotion.tts_text(text, style_info, voice_emotion.merged_config(s, char))
+    vcfg = voice_emotion.merged_config(s, char)
+    instructions = None
+    mode = tts_engine.emotion_mode(r)
+    if mode == "emoji":
+        text = voice_emotion.tts_text(text, style_info, vcfg)
+    else:
+        # Qwen3-TTS は絵文字を読めない: 文から取り除く。1.7B だけ、感情を instructions（話し方の指示）にして送る（0.6B は instructions を拒否する）
+        text, ins = voice_emotion.tts_text_and_instruction(text, style_info, vcfg, mode == "instructions")
+        instructions = ins or None
     if os.getenv("KOEMADO_LOG_TTS_INPUT") == "1":      # 試験用: TTS への入力（絵文字つき）をログに出す
-        logger.warning("TTS_INPUT %s", json.dumps({"raw": raw_text, "styled": (style_info or {}).get("styled_text"), "tts": text}, ensure_ascii=False))
-    r = tts_engine.resolve(CFG, s, ROOT)
+        logger.warning("TTS_INPUT %s", json.dumps({"raw": raw_text, "styled": (style_info or {}).get("styled_text"), "tts": text, "instructions": instructions}, ensure_ascii=False))
     if r["engine"] == "speechcpp":
-        # model は送らない（speech.cpp は、起動中のモデルと同じ id か、省略を受け付ける）
-        body = tts_engine.speech_body(text, voice, tts_engine.steps_for(s, r["model_key"]), s["tts"].get("seed"))
+        # model は送らない（speech.cpp は、起動中のモデルと同じ id か、省略を受け付ける）。モデルが受け付けない項目（Qwen3-TTS の steps など）は入れない
+        body = tts_engine.speech_body(text, voice, tts_engine.steps_for(s, r["model_key"]), s["tts"].get("seed"), instructions, r["model_key"])
         return httpx.Request("POST", url, json=body)
     irodori = {"num_steps": int(s["tts"]["num_steps"])}
     if s["tts"].get("seed") is not None:
@@ -279,7 +291,8 @@ class LocalSpeechRecognizer(OpenAISpeechRecognizer):
     AIAvatarKit 0.9.2 の OpenAISpeechRecognizer は model / language / file しか送らないので、transcribe を差し替える。
     - speech.cpp は、model を省略するか、起動中のモデルの id と同じにする必要がある（別の id は 404）。
       設定画面でモデルを切り替えたあとも合うように、model は送らない（起動中のモデルを使う）。
-    - prompt を受け付けるのは qwen3-asr だけ（parakeet は拒否する）ので、そのときだけ送る。
+    - 「よく使う言葉」は、qwen3-asr には prompt、haas-ja には keywords[]（1 語ごとに 1 項目）として送る。parakeet は拒否するので送らない
+      （stt_engine.hint_form）。
     - 設定は毎回読む（hints の変更は次の発話から反映される。エンジン・モデル・デバイスは STT の再起動で反映される）。
     """
 
@@ -289,14 +302,11 @@ class LocalSpeechRecognizer(OpenAISpeechRecognizer):
             st = {**stt_engine.default_stt_settings(), **(settings().get("stt") or {})}
             r = stt_engine.resolve(CFG, settings(), ROOT, probe=False)
             if r["engine"] == "speechcpp":
-                if r["model"]["hint"]:
-                    try:
-                        name = current_character().get("name", "")
-                    except Exception:
-                        name = ""
-                    prompt = stt_engine.build_prompt(name, st["hints"])
-                    if prompt:
-                        form["prompt"] = prompt
+                try:
+                    name = current_character().get("name", "")
+                except Exception:
+                    name = ""
+                form.update(stt_engine.hint_form(r["model"], name, st["hints"]))
             else:
                 form["model"] = CFG.get("stt", {}).get("model", "small")
         except Exception:

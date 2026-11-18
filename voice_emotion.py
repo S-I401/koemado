@@ -121,6 +121,52 @@ def tts_text(text: str, style_info: dict | None, cfg: dict) -> str:
     return prefix + text if prefix else text
 
 
+# ---- Qwen3-TTS 1.7B: 絵文字は読めないので、感情を instructions（話し方の指示。短い日本語）にする。0.6B は instructions を受け付けないので、絵文字を取り除くだけ ----
+# 方式 B の絵文字 → 話し方の句（「…話してください。」の前に並べる）
+EMOJI_INSTRUCTIONS = {
+    "🤭": "くすくす笑うように", "😏": "甘えるように", "🥺": "少し声を震わせて自信なさげに", "🫶": "優しく", "😭": "泣きそうな声で",
+    "😪": "眠そうに気だるげに", "⏸️": "間を置きながら", "😰": "慌てた様子で", "😆": "嬉しそうに弾んだ声で", "😠": "怒った口調で",
+    "😲": "驚いたように", "😟": "心配そうに", "🫣": "照れたように", "🙄": "呆れたように", "😊": "楽しげに", "😎": "得意げに",
+    "👌": "軽く相づちを打つように", "🙏": "お願いするように", "😌": "ほっとしたように", "🤔": "考え込むように", "😮‍💨": "ため息まじりに",
+}
+# 方式 A の表情タグ → 話し方の句（neutral は指示なし）。対応表（絵文字）をユーザーが変えた表情は、その絵文字から作る
+FACE_INSTRUCTIONS = {
+    "joy": "明るく楽しげに", "fun": "嬉しそうに弾んだ声で", "angry": "怒った口調で", "sorrow": "悲しげに少し沈んだ声で", "surprised": "驚いたように",
+}
+INSTRUCTION_MAX_PHRASES = 2
+_EMOJI_INSTRUCTIONS_BY_KEY = {_key(e): v for e, v in EMOJI_INSTRUCTIONS.items()}
+
+
+def _instruction_text(phrases: list[str]) -> str:
+    return "、".join(phrases[:INSTRUCTION_MAX_PHRASES]) + "話してください。" if phrases else ""
+
+
+def tts_text_and_instruction(text: str, style_info: dict | None, cfg: dict, with_instruction: bool) -> tuple[str, str]:
+    """絵文字を読めない TTS（Qwen3-TTS）に渡す (文, instructions)。文からは絵文字をすべて取り除く。
+    with_instruction が True（1.7B）のときは、LLM が文中に入れた話し方の絵文字（方式 B）か、表情タグ（方式 A）から instructions を作る
+    （文中の絵文字があれば、方式 A は使わない。Irodori と同じ）。False（0.6B）のときは instructions は空"""
+    text = text or ""
+    if not with_instruction:
+        return strip_all(text) or "", ""
+    phrases: list[str] = []
+    if cfg["inline_emoji"].get("enabled"):
+        for m in EMOJI_RE.finditer(text):
+            ph = _EMOJI_INSTRUCTIONS_BY_KEY.get(_key(m.group(0)))
+            if ph and ph not in phrases:
+                phrases.append(ph)
+    if not phrases:
+        fe = cfg["face_emoji"]
+        face = parse_face((style_info or {}).get("styled_text"))
+        if fe.get("enabled") and face:
+            emojis = (fe.get("map") or {}).get(face) or []          # 対応表を空にした表情は、付けない設定なので、指示も付けない
+            ph = FACE_INSTRUCTIONS.get(face) if emojis else None
+            if ph is None:
+                ph = next((_EMOJI_INSTRUCTIONS_BY_KEY[k] for k in (_key(e) for e in emojis) if k in _EMOJI_INSTRUCTIONS_BY_KEY), None)
+            if ph:
+                phrases.append(("とても" if int(fe.get("strength") or 1) >= 2 else "") + ph)
+    return strip_all(text) or "", _instruction_text(phrases)
+
+
 def prompt_section() -> str:
     """方式 B: システムプロンプトに入れる、使ってよい絵文字の一覧"""
     items = " ".join(f"{e}（{m}）" for e, m in ALLOWED.items())

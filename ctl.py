@@ -225,6 +225,10 @@ def llama_command(cfg: dict, root: Path = ROOT) -> list[str]:
                 margin += stt_engine.STT_VRAM_MIB[r["model_key"]]
         except Exception:
             pass
+        try:       # プロファイルの余白が見込む TTS（約 2.8GB）より大きい TTS（Irodori v4 Large など）を speech.cpp で動かすときは、その分も残す
+            margin += tts_engine.vram_extra_mib(tts_resolved(cfg, root))
+        except Exception:
+            pass
         cmd += ["--fit", "on", "--fit-target", str(margin)]
     return cmd
 

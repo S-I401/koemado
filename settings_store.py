@@ -94,17 +94,19 @@ DEFAULT_SETTINGS = {
         "vision": {"enabled": False, "store_images": False},
     },
     # 音声合成。engine: auto（Python 版を優先。未導入なら speech.cpp）/ python（既定）/ speechcpp。
-    # model: irodori-tts-mf（MeanFlow。mf_steps = 4 が標準で速い）/ irodori-tts（Rectified Flow。num_steps で品質と速さを選ぶ。Python 版と同じモデル）。
-    # num_steps は Python 版と irodori-tts（rf）の steps。モデル・エンジンの変更は TTS の再起動で反映、声と steps と seed は次の発話から
-    "tts": {"voice": "mio_bright", "num_steps": 24, "seed": 42, "engine": "auto", "model": tts_engine.DEFAULT_MODEL, "mf_steps": 4},
+    # model: irodori-tts-mf（MeanFlow。mf_steps = 4 が標準で速い）/ irodori-tts（Rectified Flow。num_steps で品質と速さを選ぶ。Python 版と同じモデル）/
+    #   irodori-tts-large（v4 Large 3.4B。speech.cpp だけ）/ qwen3-tts-0.6b・qwen3-tts-1.7b（固定の 9 話者。speech.cpp だけ。参照音声は使わない）。
+    # voice は参照音声の声（Irodori）。speaker は Qwen3-TTS のときの話者（日本語は ono_anna。キャラクターの voice が参照音声の声のときも、こちらを使う）。
+    # num_steps は Python 版と irodori-tts・irodori-tts-large（rf）の steps。モデル・エンジンの変更は TTS の再起動で反映、声と steps と seed は次の発話から
+    "tts": {"voice": "mio_bright", "speaker": tts_engine.DEFAULT_SPEAKER, "num_steps": 24, "seed": 42, "engine": "auto", "model": tts_engine.DEFAULT_MODEL, "mf_steps": 4},
     # 感情を声に乗せる（Irodori の絵文字。絵文字は TTS への入力にだけ入れ、画面・記録・記憶には出さない）。
     # face_emoji（方式 A）: 表情タグ → 絵文字の対応表（値は候補のリスト）。strength: 1 = 先頭の 1 つ、2 = 先頭の 2 つ（1 つなら重ねる）。
     # inline_emoji（方式 B）: LLM が話し方の絵文字を文中に入れる（システムプロンプトに使ってよい一覧を入れる。それ以外は TTS に渡す前に取り除く）。
     # キャラごとの上書きは character.yaml の voice_emotion: {face: true/false, inline: true/false}
     "voice_emotion": {"face_emoji": {"enabled": True, "strength": 1, "map": voice_emotion.DEFAULT_FACE_MAP}, "inline_emoji": {"enabled": True}},
     # 音声認識。engine: auto（speech.cpp が使えれば speech.cpp、使えなければ faster-whisper）/ speechcpp / faster-whisper。
-    # model: parakeet-ja / qwen3-asr-0.6b / qwen3-asr-1.7b（speech.cpp のとき）。device: auto（プロファイルの既定）/ gpu / cpu。
-    # hints: よく使う言葉（固有名詞など。qwen3-asr のときだけ prompt として渡す）。モデル・デバイス・エンジンの変更は STT の再起動で反映、hints は次の発話から
+    # model: parakeet-ja / haas-ja / qwen3-asr-0.6b / qwen3-asr-1.7b（speech.cpp のとき）。device: auto（プロファイルの既定）/ gpu / cpu。
+    # hints: よく使う言葉（固有名詞など。qwen3-asr は prompt、haas-ja は keywords として渡す。parakeet は受け付けない）。モデル・デバイス・エンジンの変更は STT の再起動で反映、hints は次の発話から
     "stt": {"engine": "auto", "model": stt_engine.DEFAULT_MODEL, "device": "auto", "hints": ""},
     # Hugging Face のトークン（任意。config/settings.json にだけ保存。画面・ログ・報告には出さない）
     "hf": {"token": ""},
@@ -252,6 +254,9 @@ def validate_settings(s: dict):
         raise ValueError("音声合成のエンジンは auto / speechcpp / python のどれかです。")
     if t.get("model") not in tts_engine.TTS_MODELS:
         raise ValueError("音声合成のモデルは " + " / ".join(tts_engine.TTS_MODELS) + " のどれかです。")
+    t["speaker"] = str(t.get("speaker") or tts_engine.DEFAULT_SPEAKER)
+    if not valid_voice_id(t["speaker"]):
+        raise ValueError("話者の名前は半角の英数字・_・- で 40 文字以内にしてください。")
     t["mf_steps"] = int(t.get("mf_steps") or 4)
     if not 1 <= t["mf_steps"] <= 16:
         raise ValueError("mf_steps は 1〜16 の範囲で指定してください。")
@@ -695,8 +700,12 @@ def _voice_exists(voice: str, root: Path = ROOT) -> bool:
         return False
 
 
-def effective_voice(settings: dict, char: dict | None, root: Path = ROOT) -> str:
-    """使う声。キャラ、設定の順に選ぶ。声のファイルが無い（削除された旧版の mio_a など）ときは mio_bright にする"""
+def effective_voice(settings: dict, char: dict | None, root: Path = ROOT, tts: dict | None = None) -> str:
+    """使う声。キャラ、設定の順に選ぶ。声のファイルが無い（削除された旧版の mio_a など）ときは mio_bright にする。
+    tts（tts_engine.resolve の結果）が固定の話者のモデル（Qwen3-TTS）のときは、話者を返す: キャラの voice か設定の speaker がそのモデルの話者ならそれ、
+    参照音声の声（mio_bright など）のときは、既定の話者（日本語の ono_anna）にする"""
+    if tts and tts.get("voice_kind") == "speakers":
+        return tts_engine.pick_speaker(tts, (char or {}).get("voice"), settings["tts"].get("speaker"))
     voice = (char or {}).get("voice") or settings["tts"]["voice"]
     return voice if _voice_exists(voice, root) else FALLBACK_VOICE
 
