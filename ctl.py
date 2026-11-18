@@ -192,6 +192,7 @@ def base_env(cfg: dict, root: Path = ROOT) -> dict:
         "PYTHONIOENCODING": "utf-8",
         "HF_HOME": str(root / "hf-home"),
         "HF_HUB_DISABLE_TELEMETRY": "1",
+        "SPEECH_NO_UPDATE_CHECK": "1",    # speech.cpp 0.8.6 以降の更新確認（端末のとき 1 日 1 回 github.com に問い合わせる）を止める
         "TORCH_HOME": str(root / "torch-home"),
         "CUDA_VISIBLE_DEVICES": str(cfg["gpu"]["index"]),
     })

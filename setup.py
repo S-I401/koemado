@@ -105,7 +105,7 @@ SIZES_GB = {
     "tts_gguf": (1.12, 1.12),    # 1,199,474,528 バイト
     "tts_env": (3.2, 6.0),       # PyTorch cu128 + 依存（展開後の実測 5.2GB）+ Python 3.10
     "tts_models": (1.3, 1.4),
-    "speechcpp": (0.03, 0.1),    # zip 30.5MB → 展開後 約 93MB（zip は展開後に消す）
+    "speechcpp": (0.03, 0.1),    # zip 29.7MB → 展開後 約 93MB（zip は展開後に消す）
     "stt_asr": (0.62, 0.62),     # 661,012,416 バイト
     "stt_env": (0.1, 0.3),
     "stt_model": (0.5, 0.5),
@@ -992,8 +992,18 @@ class Installer:
                                  creationflags=0x08000000).stdout.strip()
             if pin["version"] not in ver:
                 say(f"  [警告] speech.exe を起動できないか、バージョンが想定と違います: {ver!r}（Vulkan のローダーが無い可能性があります）")
-            shutil.rmtree(dest, ignore_errors=True)
+            # 入れ替え: 先に旧版を .old へ退避する（起動中の speech.exe があると Windows は改名を拒むので、そのときは旧版を残したまま中止する）
+            old = dest.with_name(dest.name + ".old")
+            shutil.rmtree(old, ignore_errors=True)
+            if dest.exists():
+                try:
+                    dest.replace(old)
+                except OSError as e:
+                    shutil.rmtree(tmp, ignore_errors=True)
+                    die(f"stt\\speechcpp を入れ替えられません（{e}）。speech.cpp が起動中の可能性があります。\n"
+                        "  stop.bat で止めてから、もう一度 setup.bat を実行してください（今の版はそのまま残っています）。")
             tmp.replace(dest)
+            shutil.rmtree(old, ignore_errors=True)
             (dest / ".setup_ok").write_text(pin["sha256"])
             zpath.unlink(missing_ok=True)
             say(f"  展開しました: {dest}（{ver}）")

@@ -153,7 +153,7 @@ If there is not enough free disk space, it drops one level.
 
 ### Pinned versions
 
-llama.cpp `b11443` (CUDA 12 build) / Irodori-TTS-Server `61012c7` (follows `uv.lock`; default) and Irodori-TTS v4.1 Small int8 (`Aratako/Irodori-TTS-v4.1-Small-Quantized`) / speech.cpp version (optional): Irodori-TTS v4.1 Small GGUF Q8_0 (`sakasegawa/Irodori-TTS-v4.1-Small-GGUF` `a8d7c01`; the MF one is `...-MF-GGUF` `205ab07`) / aiavatar 0.9.1 / fastmcp 4.0.11 / ddgs 9.16.0 / speech.cpp v0.8.4 (`speech-0.8.4-windows-x64-vulkan.zip`, SHA-256 `c35e75e6...`) / parakeet-tdt_ctc-0.6B-ja Q8_0 (`sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF` `f7cb538`) / Qwen3-ASR 0.6B and 1.7B Q8_0 (`sakasegawa/Qwen3-ASR-*-GGUF`) / faster-whisper 1.2.1 (small, CPU int8; fallback for PCs without Vulkan) / pystray 0.19.5 / pillow 12.3.0 / PySide6 6.11.2 (Essentials / Addons; Qt WebEngine) / shiboken6 6.11.2. Dependency versions are pinned in `app/requirements.txt` and `stt/requirements.txt`.
+llama.cpp `b11443` (CUDA 12 build) / Irodori-TTS-Server `61012c7` (follows `uv.lock`; default) and Irodori-TTS v4.1 Small int8 (`Aratako/Irodori-TTS-v4.1-Small-Quantized`) / speech.cpp version (optional): Irodori-TTS v4.1 Small GGUF Q8_0 (`sakasegawa/Irodori-TTS-v4.1-Small-GGUF` `66fe2cd`; the MF one is `...-MF-GGUF` `9db7da1`) / aiavatar 0.9.1 / fastmcp 4.0.11 / ddgs 9.16.0 / speech.cpp v0.11.0 (`speech-0.11.0-windows-x64-vulkan.zip`, SHA-256 `b64f4981...`) / parakeet-tdt_ctc-0.6B-ja Q8_0 (`sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF` `f7cb538`) / Qwen3-ASR 0.6B and 1.7B Q8_0 (`sakasegawa/Qwen3-ASR-*-GGUF`) / faster-whisper 1.2.1 (small, CPU int8; fallback for PCs without Vulkan) / pystray 0.19.5 / pillow 12.3.0 / PySide6 6.11.2 (Essentials / Addons; Qt WebEngine) / shiboken6 6.11.2. Dependency versions are pinned in `app/requirements.txt` and `stt/requirements.txt`.
 
 ## Speech recognition (STT)
 
@@ -161,7 +161,7 @@ Speech to text uses `speech serve` from [speech.cpp](https://github.com/nyosegaw
 It needs no Python and no CUDA: it uses your GPU through **Vulkan** (`vulkan-1.dll`, which the NVIDIA / AMD / Intel GPU driver installs), and it also runs on the CPU.
 The old faster-whisper (Whisper small, CPU) stays as a fallback for PCs where Vulkan is not available.
 
-- Install: `setup.bat` unpacks the official release `speech-0.8.4-windows-x64-vulkan.zip` (about 30 MB) into `stt\speechcpp\`.
+- Install: `setup.bat` unpacks the official release `speech-0.11.0-windows-x64-vulkan.zip` (about 30 MB) into `stt\speechcpp\`.
   The official `install.ps1` is not used because it edits PATH.
   The zip is unpacked only when its SHA-256 matches **both** the release's `SHA256SUMS` and the value pinned in `stt_engine.py`.
   The recognition model (GGUF) is fetched with `hf download` into `models\stt\` at a pinned commit and its SHA-256 is verified too (on a mismatch the file is deleted).
