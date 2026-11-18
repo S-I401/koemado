@@ -51,25 +51,26 @@ GIB = 1024 ** 3
 # ---- 固定するバージョン（動作確認したもの） ----
 PINNED = {
     # llama.cpp: 動作確認したリリースタグ。アセットは名前のパターンで選ぶ（CUDA 12 系の x64 ビルド）
-    "llama_tag": "b11443",
+    "llama_tag": "b12487",
     "llama_asset_patterns": [
         r"^llama-{tag}-bin-win-cuda-12\.\d+-x64\.zip$",
         r"^cudart-llama-bin-win-cuda-12\.\d+-x64\.zip$",
     ],
     # Irodori-TTS-Server: 動作確認したコミット（uv.lock も同じコミットのものを使う）
     "tts_repo": "https://github.com/Aratako/Irodori-TTS-Server.git",
-    "tts_commit": "61012c760f22f7b4a6c21c5c5f8f9e148120b6f9",
+    "tts_commit": "ce06bebd0ed243cc0fb6999ef7827b6e45d0d9d2",
     # 公式の int8 量子化チェックポイント（MIT）
     "tts_hf_checkpoint": "Aratako/Irodori-TTS-v4.1-Small-Quantized/int8-weight-only",
     # AIAvatarKit: ブラウザ UI（examples/websocket/html）を、この版のタグから取る
-    "aiavatar_ui_tarball": "https://github.com/uezo/aiavatarkit/archive/refs/tags/v0.9.1.tar.gz",
-    "aiavatar_ui_prefix": "aiavatarkit-0.9.1/examples/websocket/html",
+    "aiavatar_ui_tarball": "https://github.com/uezo/aiavatarkit/archive/refs/tags/v0.9.2.tar.gz",
+    "aiavatar_ui_prefix": "aiavatarkit-0.9.2/examples/websocket/html",
     # サンプルキャラクター（ミオ）の画像: 同じタグの examples/websocket/html/images/（AIAvatarKit は Apache-2.0）。
     # koemado のリポジトリには入れず、導入時にここから取得する。環境変数 KOEMADO_SAMPLE_TARBALL_URL で取得先を差し替えられる（取得失敗のテスト用）
-    "aiavatar_sample_tarball": "https://github.com/uezo/aiavatarkit/archive/refs/tags/v0.9.1.tar.gz",
-    "aiavatar_sample_prefix": "aiavatarkit-0.9.1/examples/websocket/html/images",
+    "aiavatar_sample_tarball": "https://github.com/uezo/aiavatarkit/archive/refs/tags/v0.9.2.tar.gz",
+    "aiavatar_sample_prefix": "aiavatarkit-0.9.2/examples/websocket/html/images",
     # git が無い PC 向けの持ち運べる Git（uv が git 依存の取得に使う）
-    "mingit_url": "https://github.com/git-for-windows/git/releases/download/v2.47.1.windows.2/MinGit-2.47.1.2-64-bit.zip",
+    "mingit_url": "https://github.com/git-for-windows/git/releases/download/v2.56.1.windows.1/MinGit-2.56.1-64-bit.zip",
+    "mingit_sha256": "4a92850b6e917da4fd010669b614b55dccf5b0ec333a534cc4be4700dfefdafd",   # リリースに載っている digest
     "stt_model": "small",       # faster-whisper（予備）のモデル
     "python": "3.12",
     "tts_python": "3.10",   # Irodori-TTS-Server の uv.lock は 3.10/3.11 の wheel を前提にしている（sentencepiece 0.1.99 は 3.12 の wheel が無い）
@@ -101,7 +102,7 @@ SIZE_LABELS = {
 }
 # (ダウンロード量, ディスク使用量) の概算 GiB。ディスクは展開後で、導入中のキャッシュ分を含む
 SIZES_GB = {
-    "llama.cpp": (0.64, 1.9),    # zip 2 本 → 展開後 1.2GB（zip は展開後に消す）
+    "llama.cpp": (0.67, 2.0),    # zip 2 本（321,604,361 + 391,443,627 バイト）→ 展開後 約 1.3GB（推定。zip は展開後に消す）
     "tts_gguf": (1.12, 1.12),    # 1,199,474,528 バイト
     "tts_env": (3.2, 6.0),       # PyTorch cu128 + 依存（展開後の実測 5.2GB）+ Python 3.10
     "tts_models": (1.3, 1.4),
@@ -525,7 +526,7 @@ def strata_partial_gb(install: Path) -> float:
 def plan_strata(install: Path, vision: str = "no") -> dict:
     """Strata を入れるとき: GGUF と llama.cpp は不要。Strata 本体とモデルは Strata のインストーラーが取得する"""
     st = profiles.STRATA
-    items = [_item("Strata（別途、Strata のインストーラーで約 70GB）", st["download_gb"], st["disk_gb"],
+    items = [_item("Strata（別途、Strata のインストーラーで最大約 90GB）", st["download_gb"], st["disk_gb"],
                    strata_installed(install), strata_partial_gb(install))]
     if vision in ("gpu", "cpu") and not strata_installed(install):
         items.append(_item("Strata の画像認識（エンコーダ約 0.9GB + 補助ツール）", 1.0, 1.2))
@@ -658,7 +659,7 @@ def strata_box(hw: dict, install: Path, profile: str | None = None):
     say("  おすすめ: この PC なら Strata（Qwen3.8-Flash-Next）が動きます")
     say(f"  {better}。こちらを推奨します。")
     say(line)
-    say(f"  ・ダウンロード量: 約 {st['download_gb']} GB（ディスクは約 {st['disk_gb']} GB 必要）。初回の導入は時間がかかります")
+    say(f"  ・ダウンロード量: 最大約 {st['download_gb']} GB（選ぶモデルによる。ディスクは約 {st['disk_gb']} GB 必要）。初回の導入は時間がかかります")
     if vram < 20:
         say(f"  ・この PC の VRAM は {vram:.0f}GB です。VRAM が小さいほど専門家のキャッシュが小さくなり、速度が下がります。")
         say("    目安（Strata の README、RTX 5070 12GB・RAM 64GB の実測）: IQ2_XS で約 79 tokens/s、IQ3_S で約 53 tokens/s")
@@ -722,6 +723,10 @@ class Installer:
                 say("\n[準備] git が見つからないので、持ち運べる Git（MinGit）を入れます。")
                 zpath = r / ".tools" / "mingit.zip"
                 download(PINNED["mingit_url"], zpath, "MinGit")
+                got = sha256_file(zpath)
+                if got != PINNED["mingit_sha256"]:
+                    zpath.unlink(missing_ok=True)
+                    die(f"MinGit の SHA-256 が一致しません（{got}）。ダウンロードが壊れたか、配布物が差し替えられた可能性があります。zip は削除しました。もう一度 setup.bat を実行してください。")
                 with zipfile.ZipFile(zpath) as z:
                     z.extractall(mingit)
                 zpath.unlink()
@@ -774,6 +779,17 @@ class Installer:
             asset = hit[-1]
             zpath = dl / asset["name"]
             download(asset["browser_download_url"], zpath)
+            # GitHub の API が返すアセットの digest（"sha256:…"）と照合する。digest が無いリリースでは検証を省く
+            want = str(asset.get("digest") or "")
+            if want.lower().startswith("sha256:"):
+                got = sha256_file(zpath)
+                if got != want[7:].lower():
+                    zpath.unlink(missing_ok=True)
+                    die(f"{asset['name']} の SHA-256 が一致しません。\n  取得したファイル: {got}\n  GitHub の digest: {want[7:]}\n"
+                        "  ダウンロードが壊れたか、配布物が差し替えられた可能性があります。zip は削除しました。もう一度 setup.bat を実行してください。")
+                say(f"  SHA-256 の検証: 一致（{got[:16]}…）")
+            else:
+                say("  （GitHub が digest を返さないので、SHA-256 の検証は省きます）")
             with zipfile.ZipFile(zpath) as z:
                 z.extractall(dest)
             zpath.unlink()
@@ -782,8 +798,7 @@ class Installer:
 
     # ---- Hugging Face の CLI（hf。モデルの取得はすべて hf download）----
     def install_hf_cli(self):
-        if hf_dl.hf_exe(self.root).exists():
-            return
+        # 入っていても、固定バージョン（HF_PINS）と違えば入れ直す（ensure_hf_cli が .pins で見分ける）
         say("\n[準備] Hugging Face の CLI（hf download。hf_xet 入り）を入れます。")
         hf_dl.ensure_hf_cli(self.root, self.uv, env=self.env, python=PINNED["python"], log=say)
 
@@ -1185,7 +1200,7 @@ class Installer:
         vision = getattr(self, "vision", "no") or "no"
         cmd = ["cmd", "/c", str(d / "START-HERE.bat")] + strata_installer_args(self.root, port, vision)
         say("\n[Strata] Strata のインストーラーを別ウィンドウで起動します。")
-        say("  ・モデルの選択（RAM に合わせた推奨が出ます。迷ったら Enter）とダウンロード（約 70GB）は、そのウィンドウで行います。")
+        say("  ・モデルの選択（RAM に合わせた推奨が出ます。迷ったら Enter）とダウンロード（選ぶモデルで約 70〜90GB）は、そのウィンドウで行います。")
         say("  ・ダウンロードが終わるとモデルが起動します（PC が 1〜3 分重くなります）。そのあとは start.bat から使えます。")
         say(f"  ・ポートは {port}、モデルの保存先は {data} です。画像認識: {vision}")
         say("  ・Strata のモデルがダウンロードできる RAM に合っているかは、Strata の画面の推奨に従ってください。")
@@ -1310,7 +1325,7 @@ def ask_display(args, install: Path) -> str:
 def ask_llm_kind(args, offer_strata: bool, hw: dict, install: Path, profile: str | None = None) -> str:
     """LLM の方式を決める。戻り値: bundled / external / strata
 
-    --yes や --dry-run では質問せず、同梱の LLM で続ける（Strata の約 70GB を勝手に入れない）。
+    --yes や --dry-run では質問せず、同梱の LLM で続ける（Strata の最大約 90GB を勝手に入れない）。
     """
     if args.llm:
         return args.llm
@@ -1429,7 +1444,7 @@ def main():
     ap.add_argument("--install-dir", default=str(SRC_DIR), help="インストール先（既定: このフォルダ）")
     ap.add_argument("--simulate", help='模擬入力（テスト用）例: "vram=8,ram=32,disk=60,cores=8,driver=555"')
     ap.add_argument("--weather-location", default="東京", help="天気ツールの既定の地名（既定: 東京）")
-    ap.add_argument("--llm", choices=["bundled", "external", "strata"], help="bundled=同梱の llama-server（既定） / external=自分で用意した OpenAI 互換サーバー / strata=Strata を導入して使う（VRAM 12GB・RAM 48GB 以上の PC 向け。約 70GB）")
+    ap.add_argument("--llm", choices=["bundled", "external", "strata"], help="bundled=同梱の llama-server（既定） / external=自分で用意した OpenAI 互換サーバー / strata=Strata を導入して使う（VRAM 12GB・RAM 48GB 以上の PC 向け。最大約 90GB）")
     ap.add_argument("--vision", choices=["gpu", "cpu", "no"], help="--llm strata のときの画像認識: gpu（推奨。1 枚 0.1〜0.5 秒、VRAM 約 1.4GB）/ cpu（1 枚 10〜30 秒、VRAM を使わない）/ no（使わない。既定）")
     ap.add_argument("--llm-url", default="", help="external のときの base_url（/v1 まで）")
     ap.add_argument("--llm-model", default="", help="external のときのモデル名")
@@ -1479,7 +1494,7 @@ def main():
 
     if kind == "strata":
         if not strata_eligible(hw, None, install) and not args.yes:
-            say("※ この PC は Strata の要件（VRAM 12GB・RAM 48GB・ディスク約 80GB）を満たしていません。続けると動かない可能性があります。")
+            say("※ この PC は Strata の要件（VRAM 12GB・RAM 48GB・ディスク約 100GB）を満たしていません。続けると動かない可能性があります。")
         name, notes = "strata", []
         if args.vision is None:
             args.vision = ask_vision(args)

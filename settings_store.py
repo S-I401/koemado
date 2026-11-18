@@ -33,7 +33,7 @@ EXTERNAL_PRESETS = {
         "label": "Strata",
         "base_url": "http://127.0.0.1:8080/v1",
         "reasoning": "effort", "serialize": True, "tools": True,
-        "note": "Strata は別ソフトウェアです（ライセンスは Strata 側）。1 リクエストずつしか処理せず、VRAM 12GB 以上・RAM 48GB 以上・ディスク約 80GB が必要です。起動時に 1〜3 分 PC が重くなります。",
+        "note": "Strata は別ソフトウェアです（ライセンスは Strata 側）。1 リクエストずつしか処理せず、VRAM 12GB 以上・RAM 48GB 以上・ディスク約 100GB が必要です。起動時に 1〜3 分 PC が重くなります。",
     },
     "lmstudio": {
         "label": "LM Studio",

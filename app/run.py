@@ -276,7 +276,7 @@ tts = create_instant_synthesizer(request_maker=make_tts_request, timeout=120)
 class LocalSpeechRecognizer(OpenAISpeechRecognizer):
     """OpenAISpeechRecognizer に、prompt（キャラ名と、設定画面に登録した「よく使う言葉」）を送れるようにしたもの。
 
-    AIAvatarKit 0.9.1 の OpenAISpeechRecognizer は model / language / file しか送らないので、transcribe を差し替える。
+    AIAvatarKit 0.9.2 の OpenAISpeechRecognizer は model / language / file しか送らないので、transcribe を差し替える。
     - speech.cpp は、model を省略するか、起動中のモデルの id と同じにする必要がある（別の id は 404）。
       設定画面でモデルを切り替えたあとも合うように、model は送らない（起動中のモデルを使う）。
     - prompt を受け付けるのは qwen3-asr だけ（parakeet は拒否する）ので、そのときだけ送る。

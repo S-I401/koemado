@@ -68,24 +68,24 @@ NVIDIA GPU が無い PC では、TTS が 1 文あたり十数秒かかり会話�
 
 ### Strata を使う（VRAM 12GB・RAM 48GB 以上の PC で推奨）
 
-**VRAM 12GB 以上かつ RAM 48GB 以上**で、ディスクに Strata の分（約 80GB）の空きもあるときは、プロファイル（high / mid / low）に関係なく、
+**VRAM 12GB 以上かつ RAM 48GB 以上**で、ディスクに Strata の分（約 100GB）の空きもあるときは、プロファイル（high / mid / low）に関係なく、
 setup が [Strata](https://github.com/Niko1221/Strata)（Qwen3.8-Flash-Next）を案内します。\
 同梱の LLM（mid なら Gemma 4 26B-A4B）より返答の質が大幅に上がります。\
 VRAM が 12〜19GB の PC では、専門家のキャッシュが小さくなるぶん速度は下がります（Strata の README の実測: RTX 5070 12GB・RAM 64GB で IQ2_XS 約 79 tokens/s、IQ3_S 約 53 tokens/s）。
 
-- Strata の要件: NVIDIA（または Strata 対応の AMD。ただしこのプロジェクト自体は NVIDIA 専用）で VRAM 12GB 以上、RAM 48GB 以上（RAM 32GB では Coder 版しか載らず、日本語の雑談に弱いので案内しません）、ディスク約 80GB（ダウンロード約 70GB）。
+- Strata の要件: NVIDIA（または Strata 対応の AMD。ただしこのプロジェクト自体は NVIDIA 専用）で VRAM 12GB 以上、RAM 48GB 以上（RAM 32GB では Coder 版しか載らず、日本語の雑談に弱いので案内しません）、ディスク約 100GB（ダウンロードは選ぶモデルで約 70〜90GB。最大の IQ3_S で約 84GB + 投機デコード用のドラフト約 6GB）。
 - 注意: 別のソフトウェアです（ライセンスは Strata 側）。\
   1 リクエストずつしか処理しません。\
   起動時に 1〜3 分 PC が重くなります。
 - 選択肢: **[1]** Strata を導入して使う（`<インストール先>\strata` に取得し、Strata のインストーラーを別ウィンドウで起動。モデルの選択とダウンロードはそちらの画面）／ **[2]** すでに入っている（URL を入力）／ **[3]** 同梱の LLM（選ばれているプロファイル名つき）で続ける。
-- `--yes` では約 70GB を勝手に入れません（選ばれた同梱プロファイルで続け、案内だけ表示）。\
+- `--yes` では最大約 90GB を勝手に入れません（選ばれた同梱プロファイルで続け、案内だけ表示）。\
   `--llm strata` で [1]、`--llm external --llm-url http://127.0.0.1:8080/v1` で [2] を選べます。
 - [1] のあとは、`start.bat` が Strata を先に起動し、`/v1/models` が返るまで最大 10 分待ちます（管理画面に進捗を表示）。\
   ポートは Strata の `strata-*.json` から読みます。\
   `stop.bat` は、`start.bat` が起動した Strata だけを止めます。
 - Strata が VRAM を専門家のキャッシュで埋めてしまわないよう、**この導入先の Strata の設定にだけ** `--vram-reserve-mib 3500`（TTS 用の余白）を入れます。\
   LLM→TTS の直列化はオン、`reasoning_effort=none`、temperature 0.8 です。
-- 取得するコミットは固定しています（`82f46a8`）。\
+- 取得するコミットは固定しています（`c77572806996`、v0.2.15）。\
   Strata の更新は、`strata\UPDATE.bat` を自分で実行してください。
 - Strata のインストーラー（START-HERE.bat）は、Python が無い PC では Python 3.12 をユーザー領域に入れることがあります（Strata 側の挙動）。
 
@@ -125,7 +125,7 @@ setup.bat --profile mid --yes             プロファイルを指定し、確�
 setup.bat --install-dir D:\aiavatar       インストール先を指定（既定: このフォルダ）
 setup.bat --llm external --llm-url http://127.0.0.1:1234/v1 --llm-model モデル名
                                           外部の推論サーバーを使う（llama.cpp とモデルは入れない）
-setup.bat --llm strata                    Strata を導入して使う（high の PC 向け。約 70GB）
+setup.bat --llm strata                    Strata を導入して使う（high の PC 向け。最大約 90GB）
 setup.bat --model unsloth/Qwen3-8B-GGUF:Qwen3-8B-Q4_K_M.gguf
                                           同梱の LLM のモデルを指定する（リポジトリ:ファイル名。範囲外は選べない）
 setup.bat --model <repo>:<file> --hf-token-env   環境変数 HF_TOKEN のトークンを使う（コマンドラインにトークンは書かない）
@@ -189,7 +189,7 @@ PC のスペックから自動で選びます（`--profile` で変更可）。\
 
 ### 固定しているバージョン
 
-llama.cpp `b11443`（CUDA 12 ビルド）／ Irodori-TTS-Server `61012c7`（`uv.lock` に従う。既定）・Irodori-TTS v4.1 Small int8（`Aratako/Irodori-TTS-v4.1-Small-Quantized`）／ speech.cpp 版（選択肢）: Irodori-TTS v4.1 Small の GGUF Q8_0（`sakasegawa/Irodori-TTS-v4.1-Small-GGUF` `66fe2cd`、MF 版は `…-MF-GGUF` `9db7da1`）／ aiavatar 0.9.1 ／ fastmcp 4.0.11 ／ ddgs 9.16.0 ／ speech.cpp v0.11.0（`speech-0.11.0-windows-x64-vulkan.zip`、SHA-256 `b64f4981…`）／ parakeet-tdt_ctc-0.6B-ja Q8_0（`sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF` `f7cb538`）／ Qwen3-ASR 0.6B・1.7B Q8_0（`sakasegawa/Qwen3-ASR-*-GGUF`）／ faster-whisper 1.2.1（small, CPU int8。Vulkan が使えない PC の予備）／ pystray 0.19.5 ／ pillow 12.3.0 ／ PySide6 6.11.2（Essentials / Addons、Qt WebEngine）／ shiboken6 6.11.2。\
+llama.cpp `b12487`（CUDA 12 ビルド）／ Irodori-TTS-Server `ce06beb`（`uv.lock` に従う。既定）・Irodori-TTS v4.1 Small int8（`Aratako/Irodori-TTS-v4.1-Small-Quantized`）／ speech.cpp 版（選択肢）: Irodori-TTS v4.1 Small の GGUF Q8_0（`sakasegawa/Irodori-TTS-v4.1-Small-GGUF` `66fe2cd`、MF 版は `…-MF-GGUF` `9db7da1`）／ aiavatar 0.9.2 ／ fastmcp 4.2.1 ／ ddgs 9.16.1 ／ speech.cpp v0.11.0（`speech-0.11.0-windows-x64-vulkan.zip`、SHA-256 `b64f4981…`）／ parakeet-tdt_ctc-0.6B-ja Q8_0（`sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF` `f7cb538`）／ Qwen3-ASR 0.6B・1.7B Q8_0（`sakasegawa/Qwen3-ASR-*-GGUF`）／ faster-whisper 1.2.1（small, CPU int8。Vulkan が使えない PC の予備）／ pystray 0.19.5 ／ pillow 13.0.0 ／ PySide6 6.12.0（Essentials / Addons、Qt WebEngine）／ shiboken6 6.12.0。\
 依存のバージョンは `app/requirements.txt` と `stt/requirements.txt` で固定しています。
 
 ## 音声認識（STT）

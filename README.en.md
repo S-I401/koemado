@@ -73,17 +73,17 @@ When resuming, it shows the remaining amount, minus what is already downloaded.
 
 ### Using Strata (recommended for PCs with 12 GB+ VRAM and 48 GB+ RAM)
 
-If the PC has **at least 12 GB VRAM and at least 48 GB RAM**, and the disk has room for Strata (about 80 GB), setup offers [Strata](https://github.com/Niko1221/Strata) (Qwen3.8-Flash-Next) regardless of the profile (high / mid / low).
+If the PC has **at least 12 GB VRAM and at least 48 GB RAM**, and the disk has room for Strata (about 100 GB), setup offers [Strata](https://github.com/Niko1221/Strata) (Qwen3.8-Flash-Next) regardless of the profile (high / mid / low).
 Replies are much better than with the bundled LLM (Gemma 4 26B-A4B for mid).
 With 12 to 19 GB of VRAM the expert cache is smaller and speed drops (measured in Strata's README: RTX 5070 12 GB with 64 GB RAM gives about 79 tokens/s with IQ2_XS and about 53 tokens/s with IQ3_S).
 
-- Strata's requirements: NVIDIA (or an AMD GPU supported by Strata, but this project itself is NVIDIA-only), 12 GB+ VRAM, 48 GB+ RAM (with 32 GB RAM only the Coder edition fits, which is weak at Japanese chat, so it is not offered), about 80 GB of disk (about 70 GB download).
+- Strata's requirements: NVIDIA (or an AMD GPU supported by Strata, but this project itself is NVIDIA-only), 12 GB+ VRAM, 48 GB+ RAM (with 32 GB RAM only the Coder edition fits, which is weak at Japanese chat, so it is not offered), about 100 GB of disk (the download is about 70 to 90 GB depending on the model you pick; the largest, IQ3_S, is about 84 GB plus about 6 GB for the draft model).
 - Caveats: it is separate software (licensed by Strata). It handles one request at a time. It makes the PC sluggish for 1 to 3 minutes at startup.
 - Choices: **[1]** install Strata and use it (fetched into `<install dir>\strata`, and Strata's installer opens in a separate window; model selection and download happen there) / **[2]** already installed (enter its URL) / **[3]** continue with the bundled LLM (shown with the selected profile name).
-- `--yes` never installs the roughly 70 GB on its own (it continues with the selected bundled profile and only prints the guidance). `--llm strata` chooses [1], and `--llm external --llm-url http://127.0.0.1:8080/v1` chooses [2].
+- `--yes` never installs the up to roughly 90 GB on its own (it continues with the selected bundled profile and only prints the guidance). `--llm strata` chooses [1], and `--llm external --llm-url http://127.0.0.1:8080/v1` chooses [2].
 - After [1], `start.bat` starts Strata first and waits up to 10 minutes for `/v1/models` to respond (progress is shown in the admin console). The port is read from Strata's `strata-*.json`. `stop.bat` only stops the Strata that `start.bat` started.
 - So that Strata does not fill the VRAM with its expert cache, `--vram-reserve-mib 3500` (headroom for TTS) is written **only into the Strata settings of this install**. LLM-to-TTS serialization is on, `reasoning_effort=none`, temperature 0.8.
-- The Strata commit is pinned (`82f46a8`). Update Strata yourself with `strata\UPDATE.bat`.
+- The Strata commit is pinned (`c77572806996`, v0.2.15). Update Strata yourself with `strata\UPDATE.bat`.
 - Strata's installer (START-HERE.bat) may install Python 3.12 into your user profile on PCs without Python (that is Strata's own behavior).
 
 ### Refusal suppression for Strata (ESP) and image recognition
@@ -106,7 +106,7 @@ setup.bat --profile mid --yes             choose the profile and proceed without
 setup.bat --install-dir D:\aiavatar       choose the install location (default: this folder)
 setup.bat --llm external --llm-url http://127.0.0.1:1234/v1 --llm-model MODEL
                                           use an external inference server (no llama.cpp or model installed)
-setup.bat --llm strata                    install and use Strata (for high-end PCs; about 70 GB)
+setup.bat --llm strata                    install and use Strata (for high-end PCs; up to about 90 GB)
 setup.bat --model unsloth/Qwen3-8B-GGUF:Qwen3-8B-Q4_K_M.gguf
                                           choose the bundled LLM's model (repository:file; models outside the range are refused)
 setup.bat --model <repo>:<file> --hf-token-env   use the HF_TOKEN environment variable (never put a token on the command line)
@@ -153,7 +153,7 @@ If there is not enough free disk space, it drops one level.
 
 ### Pinned versions
 
-llama.cpp `b11443` (CUDA 12 build) / Irodori-TTS-Server `61012c7` (follows `uv.lock`; default) and Irodori-TTS v4.1 Small int8 (`Aratako/Irodori-TTS-v4.1-Small-Quantized`) / speech.cpp version (optional): Irodori-TTS v4.1 Small GGUF Q8_0 (`sakasegawa/Irodori-TTS-v4.1-Small-GGUF` `66fe2cd`; the MF one is `...-MF-GGUF` `9db7da1`) / aiavatar 0.9.1 / fastmcp 4.0.11 / ddgs 9.16.0 / speech.cpp v0.11.0 (`speech-0.11.0-windows-x64-vulkan.zip`, SHA-256 `b64f4981...`) / parakeet-tdt_ctc-0.6B-ja Q8_0 (`sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF` `f7cb538`) / Qwen3-ASR 0.6B and 1.7B Q8_0 (`sakasegawa/Qwen3-ASR-*-GGUF`) / faster-whisper 1.2.1 (small, CPU int8; fallback for PCs without Vulkan) / pystray 0.19.5 / pillow 12.3.0 / PySide6 6.11.2 (Essentials / Addons; Qt WebEngine) / shiboken6 6.11.2. Dependency versions are pinned in `app/requirements.txt` and `stt/requirements.txt`.
+llama.cpp `b12487` (CUDA 12 build) / Irodori-TTS-Server `ce06beb` (follows `uv.lock`; default) and Irodori-TTS v4.1 Small int8 (`Aratako/Irodori-TTS-v4.1-Small-Quantized`) / speech.cpp version (optional): Irodori-TTS v4.1 Small GGUF Q8_0 (`sakasegawa/Irodori-TTS-v4.1-Small-GGUF` `66fe2cd`; the MF one is `...-MF-GGUF` `9db7da1`) / aiavatar 0.9.2 / fastmcp 4.2.1 / ddgs 9.16.1 / speech.cpp v0.11.0 (`speech-0.11.0-windows-x64-vulkan.zip`, SHA-256 `b64f4981...`) / parakeet-tdt_ctc-0.6B-ja Q8_0 (`sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF` `f7cb538`) / Qwen3-ASR 0.6B and 1.7B Q8_0 (`sakasegawa/Qwen3-ASR-*-GGUF`) / faster-whisper 1.2.1 (small, CPU int8; fallback for PCs without Vulkan) / pystray 0.19.5 / pillow 13.0.0 / PySide6 6.12.0 (Essentials / Addons; Qt WebEngine) / shiboken6 6.12.0. Dependency versions are pinned in `app/requirements.txt` and `stt/requirements.txt`.
 
 ## Speech recognition (STT)
 

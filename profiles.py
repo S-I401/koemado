@@ -190,13 +190,13 @@ def custom_ctx(size_bytes: int | None, hw_cap: float | None) -> int:
 
 # ---- Strata（別ソフトウェア。MIT。Qwen3.8-Flash-Next を普通のゲーミング PC で動かす）----
 # 要件は Strata の README と docs/MODELS.md から: VRAM 12GB 以上、RAM 48GB 以上（IQ2_XS 以上の全エキスパート版）、
-# ディスク約 80GB（プロファイルは問わない。mid でも案内する）。RAM 32GB では Coder 版（半分の専門家を削ったコード向け）しか載らず、日本語の雑談に弱いので案内しない。
+# ディスク約 100GB（最大の IQ3_S で、モデル約 84GB と投機デコード用のドラフト約 6GB。プロファイルは問わない。mid でも案内する）。RAM 32GB では Coder 版（半分の専門家を削ったコード向け）しか載らず、日本語の雑談に弱いので案内しない。
 STRATA = {
     "repo": "https://github.com/Niko1221/Strata.git",
-    "commit": "82f46a8c8f475f001ad76d92f58f4a4f8ffb0253",
+    "commit": "c77572806996349b49995e4f98d41b5294d36a21",   # v0.2.15（2026-11-16）
     "min_vram_gib": 12,
     "min_ram_gib": 48,
-    "disk_gb": 80,
-    "download_gb": 70,
+    "disk_gb": 100,   # 最大の IQ3_S（約 83.6GB）+ ドラフト・展開の余裕。選ぶモデルが小さければもっと少ない
+    "download_gb": 90,   # 最大の IQ3_S（約 83.6GB）+ ドラフト約 6GB
     "default_port": 8080,
 }

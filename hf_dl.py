@@ -22,7 +22,7 @@ from pathlib import Path
 
 import hf_hub
 
-HF_PINS = ["huggingface_hub[hf_xet]==2.1.1", "hf-xet==1.7.0"]
+HF_PINS = ["huggingface_hub[hf_xet]==2.4.0", "hf-xet==1.8.0"]
 CREATE_NO_WINDOW = 0x08000000
 INCOMPLETE_RE = re.compile(r"\.([0-9a-f]{40,64})\.[0-9A-Za-z]+\.incomplete$")
 CHUNK = 32 * 1024 * 1024
@@ -46,29 +46,57 @@ def hf_exe(root) -> Path:
     return Path(root) / "tools" / "hf-venv" / "Scripts" / "hf.exe"
 
 
+def _pins_text() -> str:
+    return "".join(pin + "\n" for pin in HF_PINS)
+
+
+_pins_failed = False   # このプロセスで固定バージョンへの入れ替えに失敗したら、同じ試行を繰り返さない
+
+
 def ensure_hf_cli(root, uv: str | None = None, env: dict | None = None, python: str | None = None, log=print) -> Path:
-    """tools\\hf-venv に hf.exe（バージョン固定）を入れる。無ければ作る"""
+    """tools\\hf-venv に hf.exe（バージョン固定）を入れる。無ければ作る。
+    入れた固定バージョンは tools\\hf-venv\\.pins に控え、HF_PINS が変わったら（アップデート後など）入れ直す。
+    入れ直しに失敗したときは、今ある hf.exe をそのまま使う（ダウンロードを止めない）"""
+    global _pins_failed
     root = Path(root)
     exe = hf_exe(root)
-    if exe.exists():
-        return exe
     venv = exe.parent.parent
-    log("  Hugging Face の CLI（hf、hf_xet 入り）を入れます…")
+    marker = venv / ".pins"
+    fresh = not exe.exists()
+    if not fresh:
+        try:
+            if marker.read_text(encoding="utf-8") == _pins_text() or _pins_failed:
+                return exe
+        except OSError:
+            if _pins_failed:
+                return exe
+        log("  Hugging Face の CLI（hf、hf_xet 入り）を固定バージョンに入れ直します…")
+    else:
+        log("  Hugging Face の CLI（hf、hf_xet 入り）を入れます…")
     uv = uv or next((str(p) for p in (root / "tools" / "uv.exe",) if p.exists()), None) or shutil.which("uv")
     kw = {"env": env, "capture_output": True, "text": True, "errors": "replace", "creationflags": CREATE_NO_WINDOW, "stdin": subprocess.DEVNULL}
-    steps = []
+    py = venv / "Scripts" / "python.exe"
     if uv:
-        py = venv / "Scripts" / "python.exe"
-        steps = [[uv, "venv", str(venv), "--allow-existing"] + (["--python", python] if python else []), [uv, "pip", "install", "--python", str(py)] + HF_PINS]
+        steps = [[uv, "pip", "install", "--python", str(py)] + HF_PINS]
+        if fresh:
+            steps.insert(0, [uv, "venv", str(venv), "--allow-existing"] + (["--python", python] if python else []))
     else:
-        py = venv / "Scripts" / "python.exe"
-        steps = [[sys.executable, "-m", "venv", str(venv)], [str(py), "-m", "pip", "install", "-q"] + HF_PINS]
-    for cmd in steps:
-        r = subprocess.run(cmd, **kw)
-        if r.returncode != 0:
-            raise RuntimeError("hf の導入に失敗しました: " + (r.stderr or r.stdout or "")[-300:])
-    if not exe.exists():
-        raise RuntimeError("hf.exe が見つかりません。")
+        steps = [[str(py), "-m", "pip", "install", "-q"] + HF_PINS]
+        if fresh:
+            steps.insert(0, [sys.executable, "-m", "venv", str(venv)])
+    try:
+        for cmd in steps:
+            r = subprocess.run(cmd, **kw)
+            if r.returncode != 0:
+                raise RuntimeError("hf の導入に失敗しました: " + (r.stderr or r.stdout or "")[-300:])
+        if not exe.exists():
+            raise RuntimeError("hf.exe が見つかりません。")
+        marker.write_text(_pins_text(), encoding="utf-8")
+    except RuntimeError as e:
+        if fresh:
+            raise
+        _pins_failed = True
+        log(f"  （hf の入れ直しに失敗したので、今ある hf を使います: {e}）")
     return exe
 
 
