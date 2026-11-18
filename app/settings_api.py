@@ -1451,9 +1451,17 @@ def make_router(page_path: Path) -> APIRouter:
         except (ValueError, KeyError) as e:
             raise HTTPException(400, str(e))
         changed = any(new[k] != cur[k] for k in ("engine", "model"))
+        # LLM が fit モードのとき、--fit-target の余白は TTS の分も含めて llama-server の起動時に決まる。余白が変わるなら LLM も再起動する
+        llm_too = False
         if changed:
-            spawn_detached([str(ROOT / "app" / ".venv" / "Scripts" / "python.exe"), str(ROOT / "ctl.py"), "restart", "tts"])
-        return {"ok": True, "restarting": changed}
+            try:
+                after = ss.load_settings(ROOT)
+                if ss.resolve_llm(cfg(), after, ROOT).get("fit_target_mib"):
+                    llm_too = tts_engine.vram_extra_mib(tts_engine.resolve(cfg(), {**after, "tts": cur}, ROOT)) !=                         tts_engine.vram_extra_mib(tts_engine.resolve(cfg(), after, ROOT))
+            except Exception:
+                llm_too = False
+            spawn_detached([str(ROOT / "app" / ".venv" / "Scripts" / "python.exe"), str(ROOT / "ctl.py"), "restart", "llm,tts" if llm_too else "tts"])
+        return {"ok": True, "restarting": changed, "llm_restarting": llm_too}
 
     @r.post("/settings/api/tts/download")
     async def tts_download(request: Request):
