@@ -1299,7 +1299,7 @@ def make_router(page_path: Path) -> APIRouter:
     @r.post("/settings/api/stt/apply")
     async def stt_apply(request: Request):
         """音声認識の設定を保存する。モデルが未取得なら保存せず need_download を返す（確認のうえ /stt/download で取得してから、もう一度呼ぶ）。
-        エンジン・モデル・デバイスが変わったときは STT だけを再起動する（hints だけの変更は再起動しない）"""
+        エンジン・モデル・デバイスが変わったときは STT を再起動する（LLM の余白が変わるときは LLM も。hints だけの変更は再起動しない）"""
         guard_write(request)
         b = await request.json()
         cur = ss.load_settings(ROOT)["stt"]
@@ -1325,9 +1325,20 @@ def make_router(page_path: Path) -> APIRouter:
         except (ValueError, KeyError) as e:
             raise HTTPException(400, str(e))
         changed = any(new[k] != cur[k] for k in ("engine", "model", "device"))
+        # LLM が fit モードのとき、--fit-target の余白は GPU に載せた STT の分も含めて llama-server の起動時に決まる。余白が変わるなら LLM も再起動する
+        llm_too = False
         if changed:
-            spawn_detached([str(ROOT / "app" / ".venv" / "Scripts" / "python.exe"), str(ROOT / "ctl.py"), "restart", "stt"])
-        return {"ok": True, "restarting": changed}
+            def stt_margin(settings: dict) -> int:
+                r = stt_engine.resolve(cfg(), settings, ROOT, probe=False)
+                return stt_engine.STT_VRAM_MIB.get(r["model_key"], 0) if r["engine"] == "speechcpp" and r["device"] == "gpu" else 0
+            try:
+                after = ss.load_settings(ROOT)
+                if ss.resolve_llm(cfg(), after, ROOT).get("fit_target_mib"):
+                    llm_too = stt_margin({**after, "stt": cur}) != stt_margin(after)
+            except Exception:
+                llm_too = False
+            spawn_detached([str(ROOT / "app" / ".venv" / "Scripts" / "python.exe"), str(ROOT / "ctl.py"), "restart", "llm,stt" if llm_too else "stt"])
+        return {"ok": True, "restarting": changed, "llm_restarting": llm_too}
 
     @r.post("/settings/api/stt/download")
     async def stt_download(request: Request):

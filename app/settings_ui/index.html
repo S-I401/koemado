@@ -1561,7 +1561,7 @@ async function saveStt() {
     return;
   }
   if (r.restarting) {
-    msg($("sttMsg"), "info", "音声認識を再起動しています…");
+    msg($("sttMsg"), "info", r.llm_restarting ? "音声認識と LLM を再起動しています（LLM の余白を変えるため。LLM の読み込みで数分かかることがあります）…" : "音声認識を再起動しています…");
     await new Promise((res) => setTimeout(res, 5000));
     for (let i = 0; i < 300; i++) {
       await new Promise((res) => setTimeout(res, 2000));
