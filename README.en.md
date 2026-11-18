@@ -148,12 +148,12 @@ If there is not enough free disk space, it drops one level.
 | low | 6 GB+ / 16 GB+ | Gemma 4 E4B (QAT q4_0) | 4.8 GiB | about 19 GB |
 
 - **mid** keeps most of the MoE experts' weights on the CPU side so that VRAM holds about 3.6 GB for the LLM plus about 2.7 GB (peak) for TTS (on an 8 GB GPU, leaving room for the Windows desktop).
-- Disk breakdown: llama.cpp about 1.2 GB, the TTS runtime (PyTorch CUDA) about 5.2 GB, the TTS models (Irodori int8 and codec) about 1.4 GB, STT (speech.cpp about 0.1 GB plus parakeet about 0.7 GB), other environments about 1 GB (with the speech.cpp TTS, the runtime and models, about 6.6 GB, become a GGUF of about 1.2 GB; on a PC without Vulkan STT is faster-whisper, about 0.8 GB; the download cache is removed at the end of setup).
+- Disk breakdown: llama.cpp about 1.2 GB, the TTS runtime (PyTorch CUDA) about 5.2 GB, the TTS models (Irodori int8 and codec) about 1.4 GB, STT (speech.cpp about 0.1 GB plus haas-ja about 0.7 GB), other environments about 1 GB (with the speech.cpp TTS, the runtime and models, about 6.6 GB, become a GGUF of about 1.2 GB; on a PC without Vulkan STT is faster-whisper, about 0.8 GB; the download cache is removed at the end of setup).
 - To swap a model, edit the table in `profiles.py`. If you register a Hugging Face token, you can also pick any GGUF from a list in the settings screen, within the range of your profile (see "Model browser" below).
 
 ### Pinned versions
 
-llama.cpp `b12487` (CUDA 12 build) / Irodori-TTS-Server `ce06beb` (follows `uv.lock`; default) and Irodori-TTS v4.1 Small int8 (`Aratako/Irodori-TTS-v4.1-Small-Quantized`) / speech.cpp version (optional): Irodori-TTS v4.1 Small GGUF Q8_0 (`sakasegawa/Irodori-TTS-v4.1-Small-GGUF` `66fe2cd`; the MF one is `...-MF-GGUF` `9db7da1`) / aiavatar 0.9.2 / fastmcp 4.2.1 / ddgs 9.16.1 / speech.cpp v0.11.0 (`speech-0.11.0-windows-x64-vulkan.zip`, SHA-256 `b64f4981...`) / parakeet-tdt_ctc-0.6B-ja Q8_0 (`sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF` `f7cb538`) / Qwen3-ASR 0.6B and 1.7B Q8_0 (`sakasegawa/Qwen3-ASR-*-GGUF`) / faster-whisper 1.2.1 (small, CPU int8; fallback for PCs without Vulkan) / pystray 0.19.5 / pillow 13.0.0 / PySide6 6.12.0 (Essentials / Addons; Qt WebEngine) / shiboken6 6.12.0. Dependency versions are pinned in `app/requirements.txt` and `stt/requirements.txt`.
+llama.cpp `b12487` (CUDA 12 build) / Irodori-TTS-Server `ce06beb` (follows `uv.lock`; default) and Irodori-TTS v4.1 Small int8 (`Aratako/Irodori-TTS-v4.1-Small-Quantized`) / speech.cpp version (optional): Irodori-TTS v4.1 Small GGUF Q8_0 (`sakasegawa/Irodori-TTS-v4.1-Small-GGUF` `66fe2cd`; the MF one is `...-MF-GGUF` `9db7da1`) / aiavatar 0.9.2 / fastmcp 4.2.1 / ddgs 9.16.1 / speech.cpp v0.11.0 (`speech-0.11.0-windows-x64-vulkan.zip`, SHA-256 `b64f4981...`) / Haas-ja v1.0 Q8_0 (default; `sakasegawa/Haas-ja-v1.0-GGUF` `6b965d5`) / parakeet-tdt_ctc-0.6B-ja Q8_0 (optional; `sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF` `f7cb538`) / Qwen3-ASR 0.6B and 1.7B Q8_0 (`sakasegawa/Qwen3-ASR-*-GGUF`) / faster-whisper 1.2.1 (small, CPU int8; fallback for PCs without Vulkan) / pystray 0.19.5 / pillow 13.0.0 / PySide6 6.12.0 (Essentials / Addons; Qt WebEngine) / shiboken6 6.12.0. Dependency versions are pinned in `app/requirements.txt` and `stt/requirements.txt`.
 
 ## Speech recognition (STT)
 
@@ -175,8 +175,8 @@ The old faster-whisper (Whisper small, CPU) stays as a fallback for PCs where Vu
 
 | Setting name | Model | Size | CER (published) | Notes | License |
 |---|---|---|---|---|---|
-| `parakeet-ja` (default) | [parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) (`parakeet-tdt_ctc-0.6B-ja-Q8_0.gguf`) | 661 MB | 7.9% | Fast. Tends to write in kana. No `prompt` | CC-BY-4.0 (c) NVIDIA |
-| `haas-ja` | [Haas-ja v1.0](https://huggingface.co/sakasegawa/Haas-ja-v1.0-GGUF) (`Haas-616M-ja-v1.0-Q8_0.gguf`, Third Intelligence) | 656 MB | 4.39% (**FLEURS**; no Common Voice 8.0 figure is published) | Japanese only, with punctuation. More accurate than parakeet-ja (5.00% on FLEURS). Accepts proper nouns as `keywords` (readings can be given). VRAM is about the same as parakeet (estimate: about 0.8 GB; not measured) | Apache-2.0 |
+| `parakeet-ja` | [parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF) (`parakeet-tdt_ctc-0.6B-ja-Q8_0.gguf`) | 661 MB | 7.9% | Fast. Tends to write in kana. No `prompt` | CC-BY-4.0 (c) NVIDIA |
+| `haas-ja` (default) | [Haas-ja v1.0](https://huggingface.co/sakasegawa/Haas-ja-v1.0-GGUF) (`Haas-616M-ja-v1.0-Q8_0.gguf`, Third Intelligence) | 656 MB | 4.39% (**FLEURS**; no Common Voice 8.0 figure is published) | Japanese only, with punctuation. More accurate than parakeet-ja (5.00% on FLEURS). Accepts proper nouns as `keywords` (readings can be given). VRAM is about the same as parakeet (measured peak +721 MiB; see "VRAM" below) | Apache-2.0 |
 | `qwen3-asr-0.6b` | [Qwen3-ASR 0.6B](https://huggingface.co/sakasegawa/Qwen3-ASR-0.6B-GGUF) (`Qwen3-ASR-0.6B-Q8_0.gguf`) | 842 MB | 11.9% | Light, writes kanji. Accepts hints for proper nouns | Apache-2.0 |
 | `qwen3-asr-1.7b` | [Qwen3-ASR 1.7B](https://huggingface.co/sakasegawa/Qwen3-ASR-1.7B-GGUF) (`Qwen3-ASR-1.7B-Q8_0.gguf`) | 2.18 GB | 9.5% | Most accurate. Accepts hints. Uses 2.3 GB of VRAM | Apache-2.0 |
 | faster-whisper small | [Systran/faster-whisper-small](https://huggingface.co/Systran/faster-whisper-small) | about 0.5 GB | - | The old engine. CPU. Fallback when Vulkan is missing | MIT |
@@ -184,7 +184,9 @@ The old faster-whisper (Whisper small, CPU) stays as a fallback for PCs where Vu
 CER is the value speech.cpp publishes (Q8_0), and **`haas-ja` alone uses a different dataset**:
 `parakeet-ja` and `qwen3-asr` are on the Common Voice 8.0 Japanese test set (4,483 utterances), `haas-ja` on the FLEURS Japanese test set (650 utterances), because Haas was trained on Common Voice 26.0 and no Common Voice 8.0 figure is published.
 **CERs from different datasets cannot be compared.** On FLEURS, haas-ja is 4.39%, parakeet-ja 5.00% and ReazonSpeech 7.95% (speech.cpp's docs).
-`haas-ja`, like the other optional models, is downloaded only when you choose it in the settings screen (`setup.bat` does not install it).
+The default `haas-ja` is installed by `setup.bat`. The other models, such as `parakeet-ja`, are downloaded only when you choose them in the settings screen.
+A PC set up when `parakeet-ja` was the default has only `parakeet-ja`.
+If you update without having chosen a model in the settings, the app keeps running on the installed `parakeet-ja` until `haas-ja` is present (the admin screen shows the reason). Running `setup.bat` again downloads `haas-ja` and switches over. If you have chosen a model in the settings, that choice is kept.
 The GGUF files were converted by speech.cpp's author (sakasegawa); the repositories and file names are linked above and the commits are pinned in `stt_engine.py`.
 
 ### Comparison
@@ -223,8 +225,27 @@ The PC is a Ryzen 7 7800X3D (8 threads) with an RTX 4090 (Vulkan).
   With a GPU to spare, the 0.6B model takes under 0.1 s at about 6%.
 - The published Common Voice CERs rank them the other way (parakeet 7.9% < Qwen3-ASR 1.7B 9.5%).
   This test is only 12 synthesized sentences (no real human voices, no noisy room), and the difference comes mostly from kanji versus kana spelling.
-- **Against the friend's feedback ("recognition is bad"), we recommend qwen3-asr-0.6b or 1.7b rather than the default parakeet-ja.**
-  To change the default, edit `DEFAULT_MODEL` in `stt_engine.py` (one line; it can also be changed in the settings screen).
+- **Against the friend's feedback ("recognition is bad"), we recommend haas-ja (now the default) or qwen3-asr-0.6b / 1.7b rather than parakeet-ja.**
+  The default is set by `DEFAULT_MODEL` in `stt_engine.py` (it can also be changed in the settings screen).
+
+#### Why the default is now haas-ja
+
+Separately from the table above, we compared only haas-ja and parakeet-ja on 12 Japanese sentences synthesized with Irodori (about 5 s per utterance).
+CER is measured after removing spaces and punctuation, NFKC normalization and turning kanji numerals into Arabic numerals.
+RTX 4090, speech.cpp v0.11.0 (Vulkan). The sentences and conditions are not necessarily the same as in the table above, so do not line the numbers up against it.
+
+| Setup | CER | Exact | Per utterance | Startup |
+|---|---|---|---|---|
+| haas-ja (GPU) | **6.3%** | **7 / 12** | 0.023 s | 1.5 s |
+| parakeet-ja (GPU) | 10.9% | 3 / 12 | 0.027 s | 5.1 s |
+| haas-ja (CPU) | - | - | 0.22 s | - |
+| parakeet-ja (CPU) | - | - | 0.22 s | - |
+
+- haas-ja has the lower CER (6.3% vs 10.9%), starts faster and is slightly faster on the GPU, so **the default changed from parakeet-ja to haas-ja**.
+  CPU speed is the same (about 0.22 s for both).
+- VRAM is about 0.7 GB for both (after loading on the GPU haas-ja grows by +678 MiB with a peak of +721 MiB; parakeet-ja by +685 MiB and +722 MiB).
+  So the profiles that use the GPU automatically (mid, Strata and so on) treat haas-ja like parakeet-ja.
+- `parakeet-ja` can still be chosen in the settings screen.
 
 ### VRAM and the default device per profile
 
@@ -239,13 +260,13 @@ On the mid setup (simulating 8 GB of VRAM, with the LLM, TTS and STT all running
 
 With the device set to "auto" the defaults are:
 
-| Profile | parakeet-ja | qwen3-asr-0.6b | qwen3-asr-1.7b | Reason |
+| Profile | parakeet-ja / haas-ja | qwen3-asr-0.6b | qwen3-asr-1.7b | Reason |
 |---|---|---|---|---|
 | high | GPU | GPU | GPU | 20 GB or more of VRAM. The margin that the LLM leaves with `--fit-target` is enlarged by the STT's share |
-| mid | GPU | CPU | **CPU** | With the default Python TTS, 0.6B on the GPU reaches 7,057 MiB with little margin, so auto uses the CPU (only parakeet on the GPU). 1.7B does not fit in 8 GB (about 1.8 s per utterance on CPU) |
-| low | CPU | CPU | CPU | A 6 GB card is expected to be nearly full with the LLM and TTS (not measured on real hardware). parakeet takes 0.3 s on CPU |
+| mid | GPU | CPU | **CPU** | With the default Python TTS, 0.6B on the GPU reaches 7,057 MiB with little margin, so auto uses the CPU (only parakeet-ja and haas-ja on the GPU). 1.7B does not fit in 8 GB (about 1.8 s per utterance on CPU) |
+| low | CPU | CPU | CPU | A 6 GB card is expected to be nearly full with the LLM and TTS (not measured on real hardware). parakeet-ja and haas-ja take 0.3 s or less on CPU |
 | External LLM | GPU | GPU | GPU | The LLM runs elsewhere, so there is VRAM to spare |
-| Strata | GPU | CPU | CPU | Only parakeet fits in the margin (about 1 GB) that Strata leaves for TTS |
+| Strata | GPU | CPU | CPU | Only parakeet-ja and haas-ja fit in the margin (about 1 GB) that Strata leaves for TTS |
 
 ### How to switch
 
@@ -408,7 +429,7 @@ Listening page: `I:\koemado-tmp\tts_compare\listen.html` (a path on the developm
 One `speech serve` can hold TTS, STT and VAD at once (one port).
 This app still runs **TTS and STT as separate processes**.
 - **Different devices**: `--device` applies to every model in one process.
-  The mid default is "TTS on GPU, STT on GPU for parakeet / 0.6B and on CPU for 1.7B", so on an 8 GB PC the devices cannot be the same.
+  The mid default is "TTS on GPU, STT on GPU for haas-ja, parakeet and 0.6B and on CPU for 1.7B", so on an 8 GB PC the devices cannot be the same.
 - **Different restarts**: speech.cpp reads reference voices at start, so the TTS restarts whenever a voice is added.
   In one process the STT would stop each time, and switching the STT model would stop the TTS.
 - **VRAM does not change**: the models are loaded separately, so one process does not reduce VRAM (a little per-process context memory might be saved; not measured).
@@ -423,7 +444,7 @@ Peak per-process dedicated memory.
 | TTS | STT | LLM | TTS | STT | Peak of the sum | Within 7 GB (7,168 MiB) |
 |---|---|---|---|---|---|---|
 | **Python version (default)** | CPU (parakeet) | 3,518 MiB | 2,410 MiB | 0 | 5,929 MiB | yes |
-| Python version | parakeet-ja (GPU), the default | 3,518 MiB | 2,448 MiB | 705 MiB | **6,671 MiB** | yes |
+| Python version | parakeet-ja (GPU) | 3,518 MiB | 2,448 MiB | 705 MiB | **6,671 MiB** | yes |
 | Python version | qwen3-asr-0.6b (GPU) | 3,518 MiB | 2,498 MiB | 1,041 MiB | 7,057 MiB | yes (margin about 110 MiB) |
 | Python version | qwen3-asr-1.7b (GPU) | 3,518 MiB | 2,442 MiB | 2,321 MiB | 8,281 MiB | **no** |
 | speech.cpp version (Q8_0) | CPU (parakeet) | 3,518 MiB | 1,596 MiB | 0 | 5,114 MiB | yes |
@@ -431,9 +452,10 @@ Peak per-process dedicated memory.
 | speech.cpp version | qwen3-asr-0.6b (GPU) | 3,518 MiB | 1,609 MiB | 1,041 MiB | 6,169 MiB | yes |
 | speech.cpp version | qwen3-asr-1.7b (GPU) | 3,518 MiB | 1,600 MiB | 2,321 MiB | 7,439 MiB | **no (slightly over)** |
 
-- The default combination (Python TTS, STT parakeet-ja on GPU) is 6,671 MiB, within 7 GB.
+- The default STT is haas-ja. Its VRAM is about the same as parakeet-ja (on an RTX 4090 it grows by +678 MiB after loading with a peak of +721 MiB; parakeet-ja +685 MiB and +722 MiB), so the mid total should be about the same as the parakeet-ja row below (about 6.7 GB with the Python TTS; the mid total with haas-ja was not measured).
+  The combination of Python TTS and parakeet-ja on the GPU is 6,671 MiB, within 7 GB.
 - With the Python TTS, qwen3-asr-0.6b on the GPU is 7,057 MiB, right at 7 GB.
-  So on mid the "auto" device puts only parakeet on the GPU and qwen3-asr on the CPU (you can still choose the GPU in the settings screen, with a warning).
+  So on mid the "auto" device puts only parakeet-ja and haas-ja on the GPU and qwen3-asr on the CPU (you can still choose the GPU in the settings screen, with a warning).
 - The speech.cpp version uses about 0.8 GB less VRAM, so the mid LLM could take about 2 more expert layers (about 0.8 GB); this change leaves the LLM settings alone.
 
 ### How to switch
@@ -785,7 +807,7 @@ Tips for making them with image generation (inpainting):
 | It does not react when I speak in the browser | Check the browser's microphone permission (the lock icon left of the address bar). `http://127.0.0.1` is treated as allowed for the microphone. You also need to allow the browser under Windows "Privacy, then Microphone" |
 | Out of VRAM (`CUDA out of memory`, or the LLM or TTS does not start) | Close other apps (games, 3D software, browser hardware acceleration). In the LLM tab choose a lighter profile (low), or increase `--n-cpu-moe` (`profiles.py`) to use less VRAM |
 | Replies are slow | The bundled LLM processes whatever does not fit in VRAM on the CPU. Use low, or an external inference server. TTS gets faster with a smaller num_steps |
-| Recognition is poor (proper nouns, kanji) | In the settings screen's "Speech recognition" tab, switch to haas-ja or qwen3-asr-0.6b / 1.7B. You can also register frequently used words as hints (comparison in the "Speech recognition (STT)" section) |
+| Recognition is poor (proper nouns, kanji) | In the settings screen's "Speech recognition" tab, switch from the default haas-ja to qwen3-asr-0.6b / 1.7B (if you use parakeet-ja, try haas-ja too). You can also register frequently used words as hints (comparison in the "Speech recognition (STT)" section) |
 | Speech recognition does not work, or faster-whisper is in use | `vulkan-1.dll` may be missing (reinstalling the GPU driver restores it) or `stt\speechcpp\speech.exe` may be absent. The reason is in the admin log (stt). When Vulkan works, run `setup.bat --stt both` |
 | Port already in use | `setup.bat` and `start.bat` switch to a free port automatically (defaults: LLM 8081 / TTS 8088 / STT 8002 / app 8100; 8000 and 8080 are avoided) |
 | Startup fails | Open the admin console (`http://127.0.0.1:8099/`, or the tray's "logs and state") and look at the logs. The files are `logs\llm.log`, `tts.log`, `stt.log`, `app.log` and `supervisor.log`. When reporting, send the zip from "Download a bundle for bug reports" (keys are masked) |
@@ -864,8 +886,8 @@ The bundled voice (`voices/mio_bright`) was made with Voice Design using a text 
 | [Semantic-DACVAE-Japanese-32dim](https://huggingface.co/Aratako/Semantic-DACVAE-Japanese-32dim) / [DACVAE](https://github.com/facebookresearch/dacvae) | TTS codec | MIT / Apache-2.0 |
 | [SilentCipher](https://github.com/sony/silentcipher) | Watermark for generated audio (Python version only) | MIT |
 | [speech.cpp](https://github.com/nyosegawa/speech.cpp) | STT and TTS (default; Vulkan) | MIT |
-| [parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja) (GGUF: sakasegawa) | STT model (default) | **CC-BY-4.0 (c) NVIDIA; attribution required** |
-| [Haas-ja v1.0](https://huggingface.co/third-intelligence/Haas-ja-v1.0) (GGUF: sakasegawa) | STT model (optional) | Apache-2.0 (c) Third Intelligence |
+| [parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja) (GGUF: sakasegawa) | STT model (optional) | **CC-BY-4.0 (c) NVIDIA; attribution required** |
+| [Haas-ja v1.0](https://huggingface.co/third-intelligence/Haas-ja-v1.0) (GGUF: sakasegawa) | STT model (default) | Apache-2.0 (c) Third Intelligence |
 | [Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) 0.6B / 1.7B (GGUF: sakasegawa) | STT model (optional) | Apache-2.0 |
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (Whisper small) | STT (fallback for PCs without Vulkan) | MIT |
 | [silero-vad](https://github.com/snakers4/silero-vad) | Voice activity detection | MIT |

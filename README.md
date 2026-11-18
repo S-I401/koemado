@@ -183,13 +183,13 @@ PC のスペックから自動で選びます（`--profile` で変更可）。\
 | low | 6GB 以上 / 16GB 以上 | Gemma 4 E4B（QAT q4_0） | 4.8 GiB | 約 20GB |
 
 - **mid** は MoE モデルの専門家（experts）の重みの大部分を CPU 側に置き、VRAM を LLM 約 3.6GB + TTS 約 2.5GB（Python 版。speech.cpp 版なら約 1.6GB）に収めます（VRAM 8GB の GPU で、Windows のデスクトップ分を残すため）。
-- 容量の内訳: llama.cpp 約 1.2GB、TTS の実行環境（PyTorch CUDA）約 5.2GB、TTS のモデル（Irodori int8・codec）約 1.4GB、STT（speech.cpp 約 0.1GB + parakeet 約 0.7GB）、その他の環境約 1GB（TTS を speech.cpp 版にすると、実行環境とモデルの約 6.6GB が、GGUF 約 1.2GB に変わります。Vulkan が使えない PC は、STT が faster-whisper で約 0.8GB。ダウンロードのキャッシュは導入の最後に消します）。
+- 容量の内訳: llama.cpp 約 1.2GB、TTS の実行環境（PyTorch CUDA）約 5.2GB、TTS のモデル（Irodori int8・codec）約 1.4GB、STT（speech.cpp 約 0.1GB + haas-ja 約 0.7GB）、その他の環境約 1GB（TTS を speech.cpp 版にすると、実行環境とモデルの約 6.6GB が、GGUF 約 1.2GB に変わります。Vulkan が使えない PC は、STT が faster-whisper で約 0.8GB。ダウンロードのキャッシュは導入の最後に消します）。
 - モデルの差し替えは `profiles.py` の表を直します。\
   Hugging Face のトークンを登録すると、設定画面で GGUF の一覧から、プロファイルの範囲内で自由に選べます（「モデルブラウザ」の節）。
 
 ### 固定しているバージョン
 
-llama.cpp `b12487`（CUDA 12 ビルド）／ Irodori-TTS-Server `ce06beb`（`uv.lock` に従う。既定）・Irodori-TTS v4.1 Small int8（`Aratako/Irodori-TTS-v4.1-Small-Quantized`）／ speech.cpp 版（選択肢）: Irodori-TTS v4.1 Small の GGUF Q8_0（`sakasegawa/Irodori-TTS-v4.1-Small-GGUF` `66fe2cd`、MF 版は `…-MF-GGUF` `9db7da1`）／ aiavatar 0.9.2 ／ fastmcp 4.2.1 ／ ddgs 9.16.1 ／ speech.cpp v0.11.0（`speech-0.11.0-windows-x64-vulkan.zip`、SHA-256 `b64f4981…`）／ parakeet-tdt_ctc-0.6B-ja Q8_0（`sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF` `f7cb538`）／ Qwen3-ASR 0.6B・1.7B Q8_0（`sakasegawa/Qwen3-ASR-*-GGUF`）／ faster-whisper 1.2.1（small, CPU int8。Vulkan が使えない PC の予備）／ pystray 0.19.5 ／ pillow 13.0.0 ／ PySide6 6.12.0（Essentials / Addons、Qt WebEngine）／ shiboken6 6.12.0。\
+llama.cpp `b12487`（CUDA 12 ビルド）／ Irodori-TTS-Server `ce06beb`（`uv.lock` に従う。既定）・Irodori-TTS v4.1 Small int8（`Aratako/Irodori-TTS-v4.1-Small-Quantized`）／ speech.cpp 版（選択肢）: Irodori-TTS v4.1 Small の GGUF Q8_0（`sakasegawa/Irodori-TTS-v4.1-Small-GGUF` `66fe2cd`、MF 版は `…-MF-GGUF` `9db7da1`）／ aiavatar 0.9.2 ／ fastmcp 4.2.1 ／ ddgs 9.16.1 ／ speech.cpp v0.11.0（`speech-0.11.0-windows-x64-vulkan.zip`、SHA-256 `b64f4981…`）／ Haas-ja v1.0 Q8_0（既定。`sakasegawa/Haas-ja-v1.0-GGUF` `6b965d5`）／ parakeet-tdt_ctc-0.6B-ja Q8_0（選択肢。`sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF` `f7cb538`）／ Qwen3-ASR 0.6B・1.7B Q8_0（`sakasegawa/Qwen3-ASR-*-GGUF`）／ faster-whisper 1.2.1（small, CPU int8。Vulkan が使えない PC の予備）／ pystray 0.19.5 ／ pillow 13.0.0 ／ PySide6 6.12.0（Essentials / Addons、Qt WebEngine）／ shiboken6 6.12.0。\
 依存のバージョンは `app/requirements.txt` と `stt/requirements.txt` で固定しています。
 
 ## 音声認識（STT）
@@ -213,8 +213,8 @@ CPU でも動きます。\
 
 | 設定の名前 | モデル | サイズ | CER（公表値） | 特徴 | ライセンス |
 |---|---|---|---|---|---|
-| `parakeet-ja`（既定） | [parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF)（`parakeet-tdt_ctc-0.6B-ja-Q8_0.gguf`） | 661MB | 7.9% | 速い。<br><br><br><br>かな書きになりやすい。<br><br><br><br>`prompt` は使えません | CC-BY-4.0（© NVIDIA） |
-| `haas-ja` | [Haas-ja v1.0](https://huggingface.co/sakasegawa/Haas-ja-v1.0-GGUF)（`Haas-616M-ja-v1.0-Q8_0.gguf`、Third Intelligence） | 656MB | 4.39%（**FLEURS**。Common Voice 8.0 の値は公表されていません） | 日本語専用で、句読点つき。<br>parakeet-ja より正確（FLEURS で 5.00%）。<br>固有名詞を `keywords` で渡せます（読みも指定可）。<br>VRAM は parakeet とほぼ同じ（見積もり約 0.8GB。未測定） | Apache-2.0 |
+| `parakeet-ja` | [parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF)（`parakeet-tdt_ctc-0.6B-ja-Q8_0.gguf`） | 661MB | 7.9% | 速い。<br><br><br><br>かな書きになりやすい。<br><br><br><br>`prompt` は使えません | CC-BY-4.0（© NVIDIA） |
+| `haas-ja`（既定） | [Haas-ja v1.0](https://huggingface.co/sakasegawa/Haas-ja-v1.0-GGUF)（`Haas-616M-ja-v1.0-Q8_0.gguf`、Third Intelligence） | 656MB | 4.39%（**FLEURS**。Common Voice 8.0 の値は公表されていません） | 日本語専用で、句読点つき。<br>parakeet-ja より正確（FLEURS で 5.00%）。<br>固有名詞を `keywords` で渡せます（読みも指定可）。<br>VRAM は parakeet とほぼ同じ（実測でピーク +721MiB。下の「VRAM」） | Apache-2.0 |
 | `qwen3-asr-0.6b` | [Qwen3-ASR 0.6B](https://huggingface.co/sakasegawa/Qwen3-ASR-0.6B-GGUF)（`Qwen3-ASR-0.6B-Q8_0.gguf`） | 842MB | 11.9% | 軽く、漢字で書ける。<br><br><br><br>固有名詞のヒントを渡せます | Apache-2.0 |
 | `qwen3-asr-1.7b` | [Qwen3-ASR 1.7B](https://huggingface.co/sakasegawa/Qwen3-ASR-1.7B-GGUF)（`Qwen3-ASR-1.7B-Q8_0.gguf`） | 2.18GB | 9.5% | 最も正確。<br><br><br><br>ヒント可。<br><br><br><br>VRAM は 2.3GB 使います | Apache-2.0 |
 | faster-whisper small | [Systran/faster-whisper-small](https://huggingface.co/Systran/faster-whisper-small) | 約 0.5GB | - | 従来。<br><br><br><br>CPU。<br><br><br><br>Vulkan が使えない PC の予備 | MIT |
@@ -222,7 +222,9 @@ CPU でも動きます。\
 CER は speech.cpp が公表している値（Q8_0）で、**`haas-ja` だけ、データセットが違います**。\
 `parakeet-ja` と `qwen3-asr` は Common Voice 8.0 日本語 test（4,483 発話）、`haas-ja` は FLEURS 日本語 test（650 発話）です（Haas は Common Voice 26.0 で学習していて、Common Voice 8.0 の値が公表されていません）。\
 **データセットが違う CER どうしは比べられません。** FLEURS では、haas-ja 4.39%、parakeet-ja 5.00%、ReazonSpeech 7.95% です（speech.cpp の docs）。\
-`haas-ja` も、`parakeet-ja` と同じく設定画面で選んだときだけ取得します（`setup.bat` は入れません）。\
+既定の `haas-ja` は `setup.bat` が入れます。`parakeet-ja` などほかのモデルは、設定画面で選んだときだけ取得します。\
+既定が `parakeet-ja` だった版で導入した PC は、`parakeet-ja` しか入っていません。\
+そのまま更新しても、設定でモデルを選んでいなければ、`haas-ja` が入るまでは入っている `parakeet-ja` で動きます（管理画面に理由が出ます）。`setup.bat` をもう一度実行すると `haas-ja` を取得して、切り替わります。設定でモデルを選んでいるときは、その選択のままです。\
 モデルの GGUF は、speech.cpp の作者（sakasegawa）が変換したものです（リポジトリとファイル名は上のリンク先、コミットは `stt_engine.py` に固定）。
 
 ### 比べてみた結果
@@ -264,8 +266,27 @@ PC は Ryzen 7 7800X3D（8 スレッド）+ RTX 4090（Vulkan）です。
 - 公表されている Common Voice の CER（parakeet 7.9% < Qwen3-ASR 1.7B 9.5%）とは、順位が逆です。\
   この試験は、合成音声の 12 文だけです（実際の人の声・雑音のある部屋ではありません）。\
   差を決めたのは、主に漢字とかなの書き分けです。
-- **友人のフィードバック（「認識が悪い」）への対策としては、既定の parakeet-ja より、qwen3-asr-0.6b か 1.7b を勧めます。**\
-  既定を変えるときは、`stt_engine.py` の `DEFAULT_MODEL` を 1 行直します（設定画面でも切り替えられます）。
+- **友人のフィードバック（「認識が悪い」）への対策としては、parakeet-ja より、haas-ja（いまの既定）か qwen3-asr-0.6b / 1.7b を勧めます。**\
+  既定は、`stt_engine.py` の `DEFAULT_MODEL` で決めています（設定画面でも切り替えられます）。
+
+#### 既定を haas-ja に変えた理由
+
+上の表とは別に、Irodori で合成した日本語 12 文（約 5 秒の発話）で、haas-ja と parakeet-ja だけを比べました。\
+CER は、空白と句読点を除き、NFKC で正規化し、漢数字を算用数字にそろえた文字列で測っています。\
+RTX 4090、speech.cpp v0.11.0（Vulkan）です。上の表と文や条件が同じとは限らないので、表の数字とは並べて比べません。
+
+| 構成 | CER | 完全一致 | 1 発話あたり | 起動 |
+|---|---|---|---|---|
+| haas-ja（GPU） | **6.3%** | **7 / 12** | 0.023 秒 | 1.5 秒 |
+| parakeet-ja（GPU） | 10.9% | 3 / 12 | 0.027 秒 | 5.1 秒 |
+| haas-ja（CPU） | - | - | 0.22 秒 | - |
+| parakeet-ja（CPU） | - | - | 0.22 秒 | - |
+
+- haas-ja のほうが、CER が低く（6.3% 対 10.9%）、起動も速く、GPU の認識も少し速いので、**既定を parakeet-ja から haas-ja に変えました**。\
+  CPU の速さは同じです（どちらも約 0.22 秒）。
+- VRAM は、どちらも約 0.7GB です（GPU に載せたあとの増え方は haas-ja が +678MiB、ピークが +721MiB。parakeet-ja は +685MiB と +722MiB）。\
+  そのため、自動で GPU を使うプロファイル（mid・Strata など）も、parakeet-ja と同じ扱いにしています。
+- `parakeet-ja` は、これまでどおり設定画面で選べます。
 
 ### VRAM と、プロファイルごとの既定のデバイス
 
@@ -280,13 +301,13 @@ mid の構成（VRAM 8GB の模擬。LLM・TTS・STT をすべて起動して、
 
 デバイスが「自動」のときの既定は、次のとおりです。
 
-| プロファイル | parakeet-ja | qwen3-asr-0.6b | qwen3-asr-1.7b | 根拠 |
+| プロファイル | parakeet-ja / haas-ja | qwen3-asr-0.6b | qwen3-asr-1.7b | 根拠 |
 |---|---|---|---|---|
 | high | GPU | GPU | GPU | VRAM 20GB 以上。<br><br><br><br>LLM が `--fit-target` で残す余白に、STT の分を足します |
-| mid | GPU | CPU | **CPU** | TTS が Python 版（既定）のとき、0.6B を GPU にすると 7,057MiB で余裕が少ないので、自動では CPU（parakeet だけ GPU）。<br><br><br><br>1.7B は 8GB に収まらない（CPU でも 1 発話 約 1.8 秒） |
-| low | CPU | CPU | CPU | VRAM 6GB 級は、LLM と TTS でほぼ埋まる見込み（実機では未測定）。<br><br><br><br>parakeet は CPU でも 0.3 秒 |
+| mid | GPU | CPU | **CPU** | TTS が Python 版（既定）のとき、0.6B を GPU にすると 7,057MiB で余裕が少ないので、自動では CPU（parakeet-ja と haas-ja だけ GPU）。<br><br><br><br>1.7B は 8GB に収まらない（CPU でも 1 発話 約 1.8 秒） |
+| low | CPU | CPU | CPU | VRAM 6GB 級は、LLM と TTS でほぼ埋まる見込み（実機では未測定）。<br><br><br><br>parakeet-ja・haas-ja は CPU でも 0.3 秒以下 |
 | 外部の LLM | GPU | GPU | GPU | LLM を別に動かすので、VRAM に余裕がある |
-| Strata | GPU | CPU | CPU | Strata が TTS 用に残す余白（約 1GB）に収まる parakeet だけ |
+| Strata | GPU | CPU | CPU | Strata が TTS 用に残す余白（約 1GB）に収まる parakeet-ja・haas-ja だけ |
 
 ### 切り替え方
 
@@ -450,7 +471,7 @@ VRAM の数字は、speech.cpp の docs にある RTX 2080（Vulkan、Q8_0）の
 `speech serve` は、1 つのプロセスに TTS・STT・VAD を同時に持てます（ポートが 1 つになります）。\
 それでもこのアプリは、**TTS と STT を別のプロセス**にしています。
 - **デバイスを別に選びたい**: `--device` は、1 つのプロセスの全モデルに共通です。\
-  mid の既定は「TTS は GPU、STT は parakeet / 0.6B なら GPU、1.7B なら CPU」で、VRAM 8GB の PC では、デバイスを揃えられません。
+  mid の既定は「TTS は GPU、STT は haas-ja・parakeet / 0.6B なら GPU、1.7B なら CPU」で、VRAM 8GB の PC では、デバイスを揃えられません。
 - **再起動を別にしたい**: speech.cpp は参照音声を起動時に読むので、声を追加するたびに TTS を再起動します。\
   1 つのプロセスだと、そのたびに STT も止まります。\
   STT のモデルを切り替えるときも、TTS が止まってしまいます。
@@ -466,7 +487,7 @@ VRAM の数字は、speech.cpp の docs にある RTX 2080（Vulkan、Q8_0）の
 | TTS | STT | LLM | TTS | STT | 合計の最大 | 7GB（7,168MiB）以下 |
 |---|---|---|---|---|---|---|
 | **Python 版（既定）** | CPU（parakeet） | 3,518MiB | 2,410MiB | 0 | 5,929MiB | ○ |
-| Python 版 | parakeet-ja（GPU）← 既定 | 3,518MiB | 2,448MiB | 705MiB | **6,671MiB** | ○ |
+| Python 版 | parakeet-ja（GPU） | 3,518MiB | 2,448MiB | 705MiB | **6,671MiB** | ○ |
 | Python 版 | qwen3-asr-0.6b（GPU） | 3,518MiB | 2,498MiB | 1,041MiB | 7,057MiB | ○（余裕は約 110MiB） |
 | Python 版 | qwen3-asr-1.7b（GPU） | 3,518MiB | 2,442MiB | 2,321MiB | 8,281MiB | **×** |
 | speech.cpp 版（Q8_0） | CPU（parakeet） | 3,518MiB | 1,596MiB | 0 | 5,114MiB | ○ |
@@ -474,9 +495,10 @@ VRAM の数字は、speech.cpp の docs にある RTX 2080（Vulkan、Q8_0）の
 | speech.cpp 版 | qwen3-asr-0.6b（GPU） | 3,518MiB | 1,609MiB | 1,041MiB | 6,169MiB | ○ |
 | speech.cpp 版 | qwen3-asr-1.7b（GPU） | 3,518MiB | 1,600MiB | 2,321MiB | 7,439MiB | **×（わずかに超える）** |
 
-- 既定の組み合わせ（TTS は Python 版、STT は parakeet-ja の GPU）は 6,671MiB で、7GB に収まります。
+- 既定の STT は haas-ja です。haas-ja は parakeet-ja と VRAM がほぼ同じ（RTX 4090 で、GPU に載せたあとの増え方が +678MiB、ピークが +721MiB。parakeet-ja は +685MiB と +722MiB）なので、mid の合計も下の parakeet-ja の行と同じくらい（Python 版の TTS で約 6.7GB）と見込めます（mid の構成での haas-ja の合計は測っていません）。\
+  TTS が Python 版で STT が parakeet-ja の GPU の組み合わせは、6,671MiB で、7GB に収まります。
 - TTS が Python 版のとき、qwen3-asr-0.6b を GPU にすると 7,057MiB で、7GB すれすれです。\
-  mid のデバイス「自動」では、parakeet だけを GPU にして、qwen3-asr は CPU にします（設定画面で GPU を選べますが、警告が出ます）。
+  mid のデバイス「自動」では、parakeet-ja と haas-ja だけを GPU にして、qwen3-asr は CPU にします（設定画面で GPU を選べますが、警告が出ます）。
 - speech.cpp 版は VRAM が約 0.8GB 少ないので、mid の LLM に、専門家の層をあと 2 層ぶん（約 0.8GB）載せる余地があります（この変更では、LLM の設定は変えていません）。
 
 ### 切り替え方
@@ -916,7 +938,7 @@ characters/<id>/
 | ブラウザで話しかけても反応しない | ブラウザのマイク許可（アドレスバー左の鍵アイコン）を確認してください。<br><br><br><br>`http://127.0.0.1` はマイクが使える扱いです。<br><br><br><br>Windows の「プライバシー → マイク」でブラウザを許可する必要もあります |
 | VRAM 不足（`CUDA out of memory`、LLM や TTS が起動しない） | ほかのアプリ（ゲーム・3D ソフト・ブラウザのハードウェアアクセラレーション）を閉じてください。<br><br><br><br>設定画面の LLM で、より軽いプロファイル（low）にするか、`--n-cpu-moe` を増やす（`profiles.py`）と VRAM を減らせます |
 | 返答が遅い | 同梱の LLM は VRAM に載らない分を CPU で処理します。<br><br><br><br>low にするか、外部の推論サーバーを使ってください。<br><br><br><br>TTS は num_steps を小さくすると速くなります |
-| 音声認識が悪い（固有名詞・漢字） | 設定画面の「音声認識」で、haas-ja か qwen3-asr-0.6b / 1.7B に替えてください。<br><br><br><br>よく使う言葉（固有名詞のヒント）も登録できます（比較は「音声認識（STT）」の節） |
+| 音声認識が悪い（固有名詞・漢字） | 設定画面の「音声認識」で、既定の haas-ja から qwen3-asr-0.6b / 1.7B に替えてみてください（parakeet-ja を選んでいる場合は、haas-ja も試せます）。<br><br><br><br>よく使う言葉（固有名詞のヒント）も登録できます（比較は「音声認識（STT）」の節） |
 | 音声認識が動かない・faster-whisper になっている | `vulkan-1.dll` が見つからない（GPU のドライバを入れ直すと入ります）か、`stt\speechcpp\speech.exe` が無い可能性があります。<br><br><br><br>管理画面のログ（stt）に理由が出ます。<br><br><br><br>Vulkan が使えるようになったら `setup.bat --stt both` を実行してください |
 | ポートが使用中 | `setup.bat` と `start.bat` が空きポートに自動で付け替えます（既定: LLM 8081 / TTS 8088 / STT 8002 / アプリ 8100。8000 と 8080 は避けます） |
 | 起動に失敗する | 管理画面（`http://127.0.0.1:8099/`、またはトレイの「ログ・状態」）の「ログ」を見てください。<br><br><br><br>ファイルは `logs\llm.log`・`tts.log`・`stt.log`・`app.log`・`supervisor.log` です。<br><br><br><br>報告するときは、管理画面の「不具合報告用にまとめてダウンロード」の zip を送ってください（キーは伏せ字です） |
@@ -1030,8 +1052,8 @@ Irodori-TTS（v4.1 Small は MIT ライセンス。v4 Large は Gemma Terms of U
 | [Semantic-DACVAE-Japanese-32dim](https://huggingface.co/Aratako/Semantic-DACVAE-Japanese-32dim) / [DACVAE](https://github.com/facebookresearch/dacvae) | TTS の codec | MIT / Apache-2.0 |
 | [SilentCipher](https://github.com/sony/silentcipher) | 生成音声の透かし（Python 版のみ） | MIT |
 | [speech.cpp](https://github.com/nyosegawa/speech.cpp) | STT・TTS（既定。Vulkan） | MIT |
-| [parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja)（GGUF: sakasegawa） | STT のモデル（既定） | **CC-BY-4.0（© NVIDIA。クレジットの表示が必要）** |
-| [Haas-ja v1.0](https://huggingface.co/third-intelligence/Haas-ja-v1.0)（GGUF: sakasegawa） | STT のモデル（任意） | Apache-2.0（© Third Intelligence） |
+| [parakeet-tdt_ctc-0.6b-ja](https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja)（GGUF: sakasegawa） | STT のモデル（任意） | **CC-BY-4.0（© NVIDIA。クレジットの表示が必要）** |
+| [Haas-ja v1.0](https://huggingface.co/third-intelligence/Haas-ja-v1.0)（GGUF: sakasegawa） | STT のモデル（既定） | Apache-2.0（© Third Intelligence） |
 | [Qwen3-ASR](https://huggingface.co/Qwen/Qwen3-ASR-1.7B) 0.6B / 1.7B（GGUF: sakasegawa） | STT のモデル（任意） | Apache-2.0 |
 | [faster-whisper](https://github.com/SYSTRAN/faster-whisper)（Whisper small） | STT（予備。Vulkan が使えない PC） | MIT |
 | [silero-vad](https://github.com/snakers4/silero-vad) | 音声区間検出 | MIT |

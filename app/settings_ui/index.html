@@ -1504,7 +1504,7 @@ async function loadStt() {
     </label>`).join("");
   document.querySelectorAll("input[name=sttModel]").forEach((r) => r.onchange = updateSttForm);
   $("sttEngine").onchange = updateSttForm; $("sttDevice").onchange = updateSttForm;
-  $("sttTable").innerHTML = "<tr><th>モデル</th><th>CER</th><th>大きさ</th><th>ライセンス</th><th>特徴</th></tr>" + ST.models.map((m) => `<tr><td>${esc(m.short)}</td><td>${esc(m.cer)}<br><span class="note">${esc(m.cer_set)}</span></td><td>${fmtMB(m.size_bytes)}</td><td>${esc(m.license)}</td><td>${m.key === "parakeet-ja" ? "最も速い（既定）。かな書きになりやすい" : m.key === "haas-ja" ? "日本語専用。句読点つきで、parakeet-ja より正確（FLEURS）。キーワード（読みも指定可）を渡せる。VRAM は parakeet とほぼ同じ" : m.key === "qwen3-asr-0.6b" ? "軽く、漢字で書ける。ヒント可" : "最も正確。ヒント可。VRAM 8GB 級では CPU 向き"}</td></tr>`).join("")
+  $("sttTable").innerHTML = "<tr><th>モデル</th><th>CER</th><th>大きさ</th><th>ライセンス</th><th>特徴</th></tr>" + ST.models.map((m) => `<tr><td>${esc(m.short)}</td><td>${esc(m.cer)}<br><span class="note">${esc(m.cer_set)}</span></td><td>${fmtMB(m.size_bytes)}</td><td>${esc(m.license)}</td><td>${m.key === "parakeet-ja" ? "速い。かな書きになりやすい" : m.key === "haas-ja" ? "既定。日本語専用。句読点つきで、parakeet-ja より正確（FLEURS）。このアプリの合成音声でも、parakeet-ja より速く正確。キーワード（読みも指定可）を渡せる。VRAM は parakeet とほぼ同じ" : m.key === "qwen3-asr-0.6b" ? "軽く、漢字で書ける。ヒント可" : "最も正確。ヒント可。VRAM 8GB 級では CPU 向き"}</td></tr>`).join("")
     + "<tr><td>faster-whisper small</td><td colspan=\"2\">（従来。CPU）</td><td>MIT</td><td>speech.cpp が使えない PC の予備</td></tr>";
   $("sttCredit").innerHTML = `音声認識エンジン: <a href="${esc(ST.speechcpp.home)}" target="_blank" rel="noopener noreferrer">speech.cpp</a> v${esc(ST.speechcpp.version)}（${esc(ST.speechcpp.license)}）。<br>` +
     "parakeet-tdt_ctc-0.6b-ja: <strong>© NVIDIA</strong>、<a href=\"https://creativecommons.org/licenses/by/4.0/\" target=\"_blank\" rel=\"noopener noreferrer\">CC-BY-4.0</a>（<a href=\"https://huggingface.co/nvidia/parakeet-tdt_ctc-0.6b-ja\" target=\"_blank\" rel=\"noopener noreferrer\">nvidia/parakeet-tdt_ctc-0.6b-ja</a> を GGUF に変換したもの。sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF）。この表示は、ライセンスが求めるクレジットです。<br>" +
@@ -1512,7 +1512,7 @@ async function loadStt() {
     "Haas-ja v1.0: © Third Intelligence、Apache-2.0（<a href=\"https://huggingface.co/third-intelligence/Haas-ja-v1.0\" target=\"_blank\" rel=\"noopener noreferrer\">third-intelligence/Haas-ja-v1.0</a>。GGUF: sakasegawa/Haas-ja-v1.0-GGUF）。";
   updateSttForm();
 }
-function selectedSttModel() { return (document.querySelector("input[name=sttModel]:checked") || {}).value || "parakeet-ja"; }
+function selectedSttModel() { return (document.querySelector("input[name=sttModel]:checked") || {}).value || "haas-ja"; }
 function updateSttForm() {
   if (!ST) return;
   const fw = $("sttEngine").value === "faster-whisper";

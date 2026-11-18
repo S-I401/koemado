@@ -93,7 +93,7 @@ SIZE_LABELS = {
     "tts_env": "TTS の実行環境（PyTorch CUDA 12.8 など。Python 版）",
     "tts_models": "TTS のモデル（Irodori int8・codec。Python 版）",
     "speechcpp": "STT: speech.cpp v" + stt_engine.SPEECHCPP["version"] + "（Vulkan。Python・CUDA 不要）",
-    "stt_asr": "STT のモデル（parakeet-tdt_ctc-0.6b-ja Q8_0）",
+    "stt_asr": "STT のモデル（" + stt_engine.MODELS[stt_engine.DEFAULT_MODEL]["short"] + " Q8_0）",
     "stt_env": "STT の実行環境（faster-whisper）",
     "stt_model": "STT のモデル（Whisper small）",
     "app_env": "AIAvatarKit の実行環境（デスクトップのキャラ用の Qt WebEngine を含む）",
@@ -107,7 +107,7 @@ SIZES_GB = {
     "tts_env": (3.2, 6.0),       # PyTorch cu128 + 依存（展開後の実測 5.2GB）+ Python 3.10
     "tts_models": (1.3, 1.4),
     "speechcpp": (0.03, 0.1),    # zip 29.7MB → 展開後 約 93MB（zip は展開後に消す）
-    "stt_asr": (0.62, 0.62),     # 661,012,416 バイト
+    "stt_asr": (0.61, 0.61),     # 既定モデル（haas-ja）656,381,472 バイト
     "stt_env": (0.1, 0.3),
     "stt_model": (0.5, 0.5),
     "app_env": (0.7, 1.9),       # Python 3.12 + fastmcp・ddgs などを含む。PySide6（Qt WebEngine）が約 0.3GB / 0.7GB
@@ -406,7 +406,7 @@ def tts_summary() -> str:
 
 
 def stt_summary() -> str:
-    m = {"speechcpp": "speech.cpp（Vulkan。GPU か CPU）+ parakeet-tdt_ctc-0.6b-ja",
+    m = {"speechcpp": "speech.cpp（Vulkan。GPU か CPU）+ " + stt_engine.MODELS[stt_engine.DEFAULT_MODEL]["short"],
          "faster-whisper": "faster-whisper small（CPU）", "both": "speech.cpp + faster-whisper（切り替え可）"}
     return m[STT_PLAN["mode"]]
 

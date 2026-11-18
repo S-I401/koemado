@@ -46,7 +46,7 @@ SPEECHCPP = {
 MODELS = {
     "parakeet-ja": {
         "id": "parakeet-tdt_ctc-0.6b-ja",
-        "label": "parakeet-ja（速い・既定）",
+        "label": "parakeet-ja（速い・かな書きになりやすい）",
         "short": "parakeet-tdt_ctc-0.6b-ja",
         "repo": "sakasegawa/parakeet-tdt_ctc-0.6b-ja-GGUF", "revision": "f7cb5387e1e76385456b7a792054565ecf177417",
         "file": "parakeet-tdt_ctc-0.6B-ja-Q8_0.gguf", "size_bytes": 661012416,
@@ -56,7 +56,7 @@ MODELS = {
     },
     "haas-ja": {
         "id": "Haas-ja-v1.0",
-        "label": "haas-ja（高精度・日本語専用・固有名詞のキーワード可）",
+        "label": "haas-ja（高精度・日本語専用・固有名詞のキーワード可・既定）",
         "short": "Haas-ja v1.0",
         "repo": "sakasegawa/Haas-ja-v1.0-GGUF", "revision": "6b965d5007ba780585de51549d57a8c1c0d67c7e",
         "file": "Haas-616M-ja-v1.0-Q8_0.gguf", "size_bytes": 656381472,
@@ -85,24 +85,27 @@ MODELS = {
         "license": "Apache-2.0", "upstream": "Qwen/Qwen3-ASR-1.7B", "credit": "Alibaba Qwen",
     },
 }
-DEFAULT_MODEL = "parakeet-ja"
+DEFAULT_MODEL = "haas-ja"
+# 既定のモデルのファイルが無い（既定を parakeet-ja から haas-ja に変える前に導入した PC。setup.bat をもう一度実行すると入る）ときの代わり
+LEGACY_DEFAULT_MODEL = "parakeet-ja"
 ENGINES = {"auto": "自動（speech.cpp が使えれば speech.cpp、使えなければ faster-whisper）",
            "speechcpp": "speech.cpp", "faster-whisper": "faster-whisper（従来。CPU）"}
 DEVICES = {"auto": "自動（プロファイルの既定）", "gpu": "GPU（Vulkan）", "cpu": "CPU"}
 # STT を GPU に載せたときの VRAM のピーク（MiB）。mid の構成（LLM + TTS + STT をすべて起動。VRAM 8GB の模擬）で、GPU Process Memory の
 # 専有メモリを STT のプロセスだけ測った最大値（parakeet 705 / qwen3-asr-0.6b 1041 / qwen3-asr-1.7b 2321）。余裕を少し足して丸めている。
-# haas-ja は未測定の見積もり: speech.cpp の docs の RTX 2080（Vulkan）の VRAM が parakeet 0.69GiB に対して Haas 0.78GiB なので、parakeet の実測 705 に比例させて約 800
-STT_VRAM_MIB = {"parakeet-ja": 710, "haas-ja": 800, "qwen3-asr-0.6b": 1050, "qwen3-asr-1.7b": 2330}
+# haas-ja は RTX 4090（speech.cpp v0.11.0、Vulkan）で、読み込み後 +678 / ピーク +721MiB（同じ測り方で parakeet は +685 / +722）。parakeet と同じ丸め方で 730
+STT_VRAM_MIB = {"parakeet-ja": 710, "haas-ja": 730, "qwen3-asr-0.6b": 1050, "qwen3-asr-1.7b": 2330}
 # デバイスが「自動」のとき GPU を使ってよいモデル（プロファイルごと）。根拠（mid の実測、VRAM 8GB 模擬）:
 #   LLM 3518 + TTS 2410 = 5929MiB（STT が CPU）。これに STT を足した合計が 7GB（7168MiB）以下になるものだけを GPU にする
 #   （parakeet 6647、qwen3-asr-0.6b 6967 は収まる。qwen3-asr-1.7b は 8281 で 8GB のカードに収まらない）。
 #   high は VRAM が 20GB 以上あり、LLM が --fit-target の余白（STT の分を足す）を残すので、どれも GPU でよい。
-#   low は VRAM 6GB 級で、LLM + TTS でほぼ埋まるので、CPU（parakeet は CPU でも 0.3〜1 秒）。
-#   external / strata（LLM を別に動かす）は、Strata の余白（TTS 用）に収まる parakeet だけ GPU。
-# mid: TTS が既定の Python 版のとき、0.6B を GPU にすると合計 7,057MiB で 7GB すれすれなので、自動では parakeet だけ GPU（設定画面で選べるが警告が出る）。
-#   haas-ja は未測定（見積もり 800MiB で合計は約 6,740MiB と収まる見込みだが、測るまでは自動で GPU にしない）
-AUTO_GPU = {"high": set(STT_VRAM_MIB), "mid": {"parakeet-ja"}, "low": set(), "external": set(STT_VRAM_MIB), "strata": {"parakeet-ja"}}
-AUTO_GPU_OTHER = {"parakeet-ja"}
+#   low は VRAM 6GB 級で、LLM + TTS でほぼ埋まるので、CPU（parakeet・haas-ja は CPU でも 0.3〜1 秒）。
+#   external / strata（LLM を別に動かす）は、Strata の余白（TTS 用）に収まる parakeet・haas-ja だけ GPU。
+# mid: TTS が既定の Python 版のとき、0.6B を GPU にすると合計 7,057MiB で 7GB すれすれなので、自動では parakeet-ja・haas-ja だけ GPU（設定画面で選べるが警告が出る）。
+#   haas-ja は parakeet-ja と VRAM がほぼ同じ（ピーク +721 と +722MiB）なので、同じ扱い
+_SMALL_GPU = {"parakeet-ja", "haas-ja"}
+AUTO_GPU = {"high": set(STT_VRAM_MIB), "mid": set(_SMALL_GPU), "low": set(), "external": set(STT_VRAM_MIB), "strata": set(_SMALL_GPU)}
+AUTO_GPU_OTHER = set(_SMALL_GPU)
 
 
 def auto_device(profile: str, model_key: str) -> str:
@@ -285,6 +288,11 @@ def resolve(cfg: dict, settings: dict, root, probe: bool = True) -> dict:
     key = st["model"] if st["model"] in MODELS else DEFAULT_MODEL
     want = st["engine"] if st["engine"] in ENGINES else "auto"
     fallback = ""
+    if (want != "faster-whisper" and key == DEFAULT_MODEL and not model_present(root, key)
+            and model_present(root, LEGACY_DEFAULT_MODEL) and speechcpp_usable(root)[0]):
+        # 既定が parakeet-ja だった版で導入した PC（モデルを選んでいない設定）。haas-ja が入るまでは、入っている parakeet-ja で動かす
+        fallback = f"既定の認識モデル（{MODELS[key]['file']}）が未取得なので、導入済みの {LEGACY_DEFAULT_MODEL} で動かします（setup.bat をもう一度実行すると取得します）。"
+        key = LEGACY_DEFAULT_MODEL
     engine = "speechcpp"
     if want == "faster-whisper":
         engine = "faster-whisper"
