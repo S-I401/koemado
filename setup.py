@@ -742,7 +742,7 @@ class Installer:
         say("\n[配置] プログラムのファイルをインストール先にコピーします。")
         ignore = shutil.ignore_patterns(".venv", "__pycache__", ".env", ".env.local", "data", "html", "*.db", "*.db-*",
                                         "recorded_voices", "logs")
-        for name in ["ctl.py", "supervisor.py", "profiles.py", "stt_engine.py", "tts_engine.py", "hf_hub.py", "hf_dl.py", "model_picker.py", "settings_store.py", "tools_store.py", "configure.py", "setup.py",
+        for name in ["ctl.py", "supervisor.py", "profiles.py", "stt_engine.py", "tts_engine.py", "voice_emotion.py", "hf_hub.py", "hf_dl.py", "model_picker.py", "settings_store.py", "tools_store.py", "configure.py", "setup.py",
                      "start.bat", "debug-start.bat", "stop.bat", "setup.bat", "configure.bat", "koemado.ico", "koemado.vbs", "display_env.py", "display.py", "display.bat", "start-mascot.bat", "start-browser.bat", "mascot.py", "README.md", "LICENSE"]:
             if (SRC_DIR / name).exists():
                 shutil.copy2(SRC_DIR / name, self.root / name)
@@ -915,10 +915,18 @@ class Installer:
             say("\n[TTS] Python 版は導入済み")
         else:
             say("\n[TTS] Irodori-TTS-Server（Python 版）を取得して環境を作ります（PyTorch が大きいので時間がかかります）。")
-            if not (tts / ".git").exists():
-                run(["git", "clone", PINNED["tts_repo"], tts], env=self.env)
-            run(["git", "fetch", "origin"], cwd=tts, env=self.env, check=False)
-            run(["git", "checkout", "--quiet", commit], cwd=tts, env=self.env)
+            fresh = not (tts / ".git").exists()
+            if fresh:
+                # tts\voices（install_voices）や tts\models（speech.cpp の GGUF）が先にできているので、git clone は使えない
+                # （空でないフォルダには clone できない）。その場で init して取得する
+                tts.mkdir(parents=True, exist_ok=True)
+                run(["git", "init", "--quiet"], cwd=tts, env=self.env)
+                run(["git", "remote", "add", "origin", PINNED["tts_repo"]], cwd=tts, env=self.env)
+            run(["git", "fetch", "origin"], cwd=tts, env=self.env, check=not fresh)
+            # 新規のときは、リポジトリにも voices\ があって同名のファイルとぶつかる（-f で上書きする）。同梱の声はあとで置き直す
+            run(["git", "checkout", "--quiet"] + (["-f"] if fresh else []) + [commit], cwd=tts, env=self.env)
+            if fresh:
+                self.install_voices()
             self.uv_run(["sync", "--frozen", "--extra", "cu128", "--python", PINNED["tts_python"]], cwd=tts)
             marker.write_text(commit)
         # 重みのダウンロードと動作確認（サーバーを一度起動して、読み込めたら止める）
@@ -1084,8 +1092,10 @@ class Installer:
         hub = self.root / "torch-home" / "hub" / "snakers4_silero-vad_master"
         if not hub.exists():
             say("[AIAvatarKit] 音声区間検出（silero-vad）のモデルを取得します。")
+            # skip_validation=True: 既定だと api.github.com に問い合わせる（認証なしは 1 時間 60 回まで。同じ回線の
+            # 他の利用で使い切っていると KeyError で失敗する）。取得は github.com のアーカイブからなので、問い合わせは要らない
             code = ("import torch; torch.hub.load('snakers4/silero-vad', 'silero_vad', onnx=True, "
-                    "force_onnx_cpu=True, trust_repo=True); print('ok')")
+                    "force_onnx_cpu=True, trust_repo=True, skip_validation=True); print('ok')")
             run([py, "-c", code], env=self.env)
         # ブラウザ UI
         html = app / "html"
