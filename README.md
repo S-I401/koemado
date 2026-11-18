@@ -219,7 +219,11 @@ CPU でも動きます。\
 | `qwen3-asr-1.7b` | [Qwen3-ASR 1.7B](https://huggingface.co/sakasegawa/Qwen3-ASR-1.7B-GGUF)（`Qwen3-ASR-1.7B-Q8_0.gguf`） | 2.18GB | 9.5% | 最も正確。<br><br><br><br>ヒント可。<br><br><br><br>VRAM は 2.3GB 使います | Apache-2.0 |
 | faster-whisper small | [Systran/faster-whisper-small](https://huggingface.co/Systran/faster-whisper-small) | 約 0.5GB | - | 従来。<br><br><br><br>CPU。<br><br><br><br>Vulkan が使えない PC の予備 | MIT |
 
-CER は speech.cpp が公表している値（Q8_0）で、**`haas-ja` だけ、データセットが違います**。\n`parakeet-ja` と `qwen3-asr` は Common Voice 8.0 日本語 test（4,483 発話）、`haas-ja` は FLEURS 日本語 test（650 発話）です（Haas は Common Voice 26.0 で学習していて、Common Voice 8.0 の値が公表されていません）。\n**データセットが違う CER どうしは比べられません。** FLEURS では、haas-ja 4.39%、parakeet-ja 5.00%、ReazonSpeech 7.95% です（speech.cpp の docs）。\n`haas-ja` も、`parakeet-ja` と同じく設定画面で選んだときだけ取得します（`setup.bat` は入れません）。\nモデルの GGUF は、speech.cpp の作者（sakasegawa）が変換したものです（リポジトリとファイル名は上のリンク先、コミットは `stt_engine.py` に固定）。
+CER は speech.cpp が公表している値（Q8_0）で、**`haas-ja` だけ、データセットが違います**。\
+`parakeet-ja` と `qwen3-asr` は Common Voice 8.0 日本語 test（4,483 発話）、`haas-ja` は FLEURS 日本語 test（650 発話）です（Haas は Common Voice 26.0 で学習していて、Common Voice 8.0 の値が公表されていません）。\
+**データセットが違う CER どうしは比べられません。** FLEURS では、haas-ja 4.39%、parakeet-ja 5.00%、ReazonSpeech 7.95% です（speech.cpp の docs）。\
+`haas-ja` も、`parakeet-ja` と同じく設定画面で選んだときだけ取得します（`setup.bat` は入れません）。\
+モデルの GGUF は、speech.cpp の作者（sakasegawa）が変換したものです（リポジトリとファイル名は上のリンク先、コミットは `stt_engine.py` に固定）。
 
 ### 比べてみた結果
 
@@ -303,7 +307,12 @@ mid の構成（VRAM 8GB の模擬。LLM・TTS・STT をすべて起動して、
 qwen3-asr のときは、**キャラクターの名前**と、設定画面に登録した「よく使う言葉」（読点か改行で区切る、400 文字まで）を `prompt` として送ります。\
 モデルは `prompt` を背景として使い、指示としては扱いません。\
 この試験の「ミオさん、おはようございます。」は、ヒントなしの 1.7B では「みよさ、おはようございます。」になり、ヒントありでは正しく「ミオさん、…」になりました（アプリを通した会話でも確認）。\
-`haas-ja` のときは、同じ言葉を `keywords[]`（1 語が 1 項目）として送ります（speech.cpp の OpenAI 互換 API の `keywords`）。\nHaas は、デコード中にその語の綴りを優先し、書き方も指定どおりにそろえます（キャラクターの名前も自動で加わります）。\n読みを付けるときは「表記=読み,読み」（例: `Haas=ハース,ハウス`）と書きます（項目の区切りは読点か改行で、読みの区切りは半角カンマです）。\n並べた語が多いほど、言っていない言葉を書く可能性が増えるので、必要な語だけにしてください（`keywords_guard` で、キーワードを含まない変更は取り消されます）。\n`keywords` を使うと、認識結果に時刻は付きません（このアプリは時刻を使いません）。\nparakeet は `prompt` も `keywords` も受け付けないので、送りません。
+`haas-ja` のときは、同じ言葉を `keywords[]`（1 語が 1 項目）として送ります（speech.cpp の OpenAI 互換 API の `keywords`）。\
+Haas は、デコード中にその語の綴りを優先し、書き方も指定どおりにそろえます（キャラクターの名前も自動で加わります）。\
+読みを付けるときは「表記=読み,読み」（例: `Haas=ハース,ハウス`）と書きます（項目の区切りは読点か改行で、読みの区切りは半角カンマです）。\
+並べた語が多いほど、言っていない言葉を書く可能性が増えるので、必要な語だけにしてください（`keywords_guard` で、キーワードを含まない変更は取り消されます）。\
+`keywords` を使うと、認識結果に時刻は付きません（このアプリは時刻を使いません）。\
+parakeet は `prompt` も `keywords` も受け付けないので、送りません。
 
 ### Vulkan が無い PC
 
